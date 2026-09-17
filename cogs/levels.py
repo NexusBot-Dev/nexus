@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from database import db_settings, db_levels
 from systems.exp_system import XP_COOLDOWN
 from cogs.utils import post_logging, get_lang, module_required
-from config import NEXUS_FOOTER, NEXUS_COLOR
+from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 
 log = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ class Levels(commands.Cog):
         # 3. Embed-Nachricht senden (nur bei echtem Level-Up nach oben)
         if new_level > old_level and channel and hasattr(channel, "send"):
             try:
-                color = await db_settings.get_color(guild.id) or NEXUS_COLOR
+                color = await db_settings.get_color(guild.id)
                 embed = discord.Embed(
                     title="🎉 Level Up!",
                     description=lang.get("level_up", "{user} reached **Level {level}**!").format(
@@ -160,7 +160,7 @@ class Levels(commands.Cog):
             await interaction.followup.send(lang.get("leaderboard_empty", "No entries yet."), ephemeral=True)
             return
 
-        color = await db_settings.get_color(interaction.guild_id) or NEXUS_COLOR
+        color = await db_settings.get_color(interaction.guild_id)
         embed = discord.Embed(
             title=lang.get("leaderboard_title", "🏆 Leaderboard"),
             color=color,
@@ -362,7 +362,7 @@ class Levels(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         roles_data = await db_levels.get_all_level_roles(interaction.guild_id)
-        color = await db_settings.get_color(interaction.guild_id) or NEXUS_COLOR
+        color = await db_settings.get_color(interaction.guild_id)
 
         embed = self._build_level_roles_embed(roles_data, lang, color)
         view = LevelRolesView(interaction.guild_id, lang)
