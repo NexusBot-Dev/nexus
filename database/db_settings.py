@@ -244,3 +244,10 @@ async def get_synced_hash(guild_id: int) -> str | None:
 async def set_synced_hash(guild_id: int, sync_hash: str):
     """Speichert den Hash des zuletzt bei Discord gesyncten Command-Sets."""
     await update_guild(guild_id, synced_hash=sync_hash)
+
+async def get_xp_range(guild_id: int) -> tuple[int, int]:
+    """Gibt (xp_min, xp_max) zurück — Fallback 15/25, falls kein Eintrag existiert."""
+    row = await get_guild(guild_id)
+    if row is None:
+        return 15, 25
+    return row.get("xp_min", 15), row.get("xp_max", 25)
