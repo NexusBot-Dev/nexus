@@ -158,13 +158,6 @@ async def delete_old_guilds(days: int = 7):
                 return
 
             guild_ids = [row[0] for row in rows]
-
-            # Cache säubern
-            for g_id in guild_ids:
-                _settings_cache.pop(g_id, None)
-                _settings_cache_time.pop(g_id, None)
-
-            # Erzeugt dynamisch ein passendes Format: %s, %s, %s...
             format_strings = ','.join(['%s'] * len(guild_ids))
 
             EXCLUDED_TABLES = {"premium"}
@@ -175,14 +168,31 @@ async def delete_old_guilds(days: int = 7):
             tables = [row[0] for row in await cur.fetchall() if row[0] not in EXCLUDED_TABLES]
             tables.sort(key=lambda t: t == "guild_settings")
 
-            # Effizientes Löschen aller betroffenen Datensätze in einem Rutsch
-            for table in tables:
-                await cur.execute(
-                    f"DELETE FROM {table} WHERE guild_id IN ({format_strings})",
-                    tuple(guild_ids)
+            await conn.begin()
+            try:
+                for table in tables:
+                    await cur.execute(
+                        f"DELETE FROM {table} WHERE guild_id IN ({format_strings})",
+                        tuple(guild_ids)
+                    )
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                log.error(
+                    "DSGVO-Löschung fehlgeschlagen, Rollback ausgeführt für Guilds: %s",
+                    guild_ids, exc_info=True
                 )
+                return
 
-            log.info("DSGVO: %s Guilds nach %s Tagen Inaktivität vollständig gelöscht (%s Tabellen bereinigt).", len(guild_ids), days, len(tables))
+            # Cache erst NACH erfolgreichem Commit säubern
+            for g_id in guild_ids:
+                _settings_cache.pop(g_id, None)
+                _settings_cache_time.pop(g_id, None)
+
+            log.info(
+                "DSGVO: %s Guilds nach %s Tagen Inaktivität vollständig gelöscht (%s Tabellen bereinigt).",
+                len(guild_ids), days, len(tables)
+            )
 
 async def get_enabled_modules(guild_id: int) -> list[str]:
     """Liste aller aktiven Module — berücksichtigt DEFAULT_MODULES für Keys, die (noch) nicht in der DB stehen."""
@@ -196,58 +206,3 @@ async def is_setup_complete(guild_id: int) -> bool:
     if row is None:
         return False
     return bool(row["setup_complete"])
-
-async def mark_pending_sync(guild_id: int, priority: bool = False):
-    """Merkt eine Guild für den nächsten Sync-Durchlauf vor.
-    priority=True hebt eine bereits gesetzte niedrige Priorität an, senkt aber nie zurück."""
-    if priority:
-        await update_guild(guild_id, pending_sync=True, pending_sync_priority=True)
-    else:
-        row = await get_guild(guild_id)
-        if row and row.get("pending_sync_priority"):
-            await update_guild(guild_id, pending_sync=True)
-        else:
-            await update_guild(guild_id, pending_sync=True, pending_sync_priority=False)
-
-async def get_pending_sync_guilds() -> list[int]:
-    """Gibt pending Guild-IDs zurück — priorisierte (aktive) zuerst."""
-    async with db.pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """SELECT guild_id FROM guild_settings
-                   WHERE pending_sync = TRUE
-                   ORDER BY pending_sync_priority DESC, guild_id ASC"""
-            )
-            rows = await cur.fetchall()
-            return [row[0] for row in rows]
-
-async def clear_pending_syncs(guild_ids: list[int]):
-    if not guild_ids:
-        return
-    placeholders = ",".join(["%s"] * len(guild_ids))
-    async with db.pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                f"""UPDATE guild_settings
-                    SET pending_sync = FALSE, pending_sync_priority = FALSE
-                    WHERE guild_id IN ({placeholders})""",
-                tuple(guild_ids)
-            )
-
-async def get_synced_hash(guild_id: int) -> str | None:
-    """Holt den zuletzt gesyncten Command-Hash — für den Diff-Check beim Start."""
-    row = await get_guild(guild_id)
-    if row is None:
-        return None
-    return row.get("synced_hash")
-
-async def set_synced_hash(guild_id: int, sync_hash: str):
-    """Speichert den Hash des zuletzt bei Discord gesyncten Command-Sets."""
-    await update_guild(guild_id, synced_hash=sync_hash)
-
-async def get_xp_range(guild_id: int) -> tuple[int, int]:
-    """Gibt (xp_min, xp_max) zurück — Fallback 15/25, falls kein Eintrag existiert."""
-    row = await get_guild(guild_id)
-    if row is None:
-        return 15, 25
-    return row.get("xp_min", 15), row.get("xp_max", 25)
