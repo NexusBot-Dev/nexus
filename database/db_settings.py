@@ -20,18 +20,19 @@ DEFAULT_MODULES = {
 }
 _settings_cache: dict[int, dict] = {}
 _settings_cache_time: dict[int, datetime] = {}
+_settings_cache_version: dict[int, int] = {}
 CACHE_TTL = 900
 
 async def get_guild(guild_id: int) -> dict | None:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    # Cache prüfen
     if guild_id in _settings_cache:
         age = (now - _settings_cache_time[guild_id]).total_seconds()
         if age < CACHE_TTL:
-            return _settings_cache[guild_id]
+            return dict(_settings_cache[guild_id])
 
-    # Cache abgelaufen oder leer — aus DB laden
+    version_before = _settings_cache_version.get(guild_id, 0)
+
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
@@ -43,9 +44,22 @@ async def get_guild(guild_id: int) -> dict | None:
                 row["modules"] = json.loads(row["modules"])
 
             if row:
-                _settings_cache[guild_id] = row
-                _settings_cache_time[guild_id] = now
+                if _settings_cache_version.get(guild_id, 0) == version_before:
+                    _settings_cache[guild_id] = row
+                    _settings_cache_time[guild_id] = now
             return row
+
+async def get_or_create_guild(guild_id: int) -> dict:
+    row = await get_guild(guild_id)
+    if row is not None:
+        return row
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO guild_settings (guild_id, modules) VALUES (%s, %s) ON DUPLICATE KEY UPDATE guild_id=guild_id",
+                (guild_id, json.dumps(DEFAULT_MODULES))
+            )
+    return await get_guild(guild_id)
 
 async def get_or_create_guild(guild_id: int) -> dict:
     row = await get_guild(guild_id)
@@ -65,6 +79,7 @@ async def update_guild(guild_id: int, **kwargs):
 
     _settings_cache.pop(guild_id, None)
     _settings_cache_time.pop(guild_id, None)
+    _settings_cache_version[guild_id] = _settings_cache_version.get(guild_id, 0) + 1
 
     if "modules" in kwargs:
         kwargs["modules"] = json.dumps(kwargs["modules"])

@@ -9,23 +9,38 @@ from config import _read_secret, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, IN
 from translations.command_locales import COMMAND_LOCALES
 from translations import TRANSLATIONS, LOCALE_MAP
 from datetime import datetime, timezone
+from cachetools import TTLCache
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-_dm_cooldowns: dict[int, datetime] = {}
+_dm_cooldowns: TTLCache[int, bool] = TTLCache(maxsize=10_000, ttl=1800)
 
 DEV_MODE = False
 UPLOAD_COMMANDS_DBL = False
-UPLOAD_COMMANDS_TOPGG = False
+UPLOAD_COMMANDS_TOPGG = True
 
 class NexusTranslator(app_commands.Translator):
     async def translate(self, string: app_commands.locale_str, locale: discord.Locale, context: app_commands.TranslationContext):
         lang_code = locale.value.split("-")[0]
         lang_dict = COMMAND_LOCALES.get(lang_code, COMMAND_LOCALES["en"])
         return lang_dict.get(string.message, COMMAND_LOCALES["en"].get(string.message, string.message))
+
+class NexusTree(app_commands.CommandTree):
+    """Bot-weite Absicherung: verhindert die Ausführung JEDES Commands in DMs,
+    unabhängig davon, ob der einzelne Command explizit als guild_only markiert wurde.
+    Läuft vor jedem einzelnen Command-Aufruf, für alle Cogs."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Nexus-Commands funktionieren nur auf Servern, nicht in DMs.",
+                ephemeral=True,
+            )
+            return False
+        return True
 
 class DMResponseView(discord.ui.View):
     def __init__(self):
@@ -50,10 +65,35 @@ class Nexus(commands.AutoShardedBot):
         intents.members = True
         intents.message_content = True
 
-        super().__init__(command_prefix="!", intents=intents, chunk_guilds_at_startup=False, application_id=APPLICATION_ID)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            chunk_guilds_at_startup=False,
+            application_id=APPLICATION_ID,
+            tree_cls=NexusTree,
+        )
         self.dev_guild = discord.Object(id=DEV_GUILD_ID)
         self.support_guild = discord.Object(id=SUPPORT_GUILD_ID)
         self._initial_sync_done = False
+        self.started_at = datetime.now(timezone.utc)
+
+    # ─── Loop Tasks ─────────────────────────────────────────────────────
+
+    @tasks.loop(hours=3)
+    async def cleanup_old_guilds(self):
+        await db_settings.delete_old_guilds(days=7)
+
+    @tasks.loop(hours=24)
+    async def sync_premium_entitlements(self):
+        try:
+            from systems.premium import sync_entitlements
+            removed = await sync_entitlements(self)
+            if removed:
+                log.info("[PREMIUM-SYNC] %s Guilds mit abgelaufenem Premium bereinigt.", removed)
+        except Exception:
+            log.exception("[PREMIUM-SYNC] Fehler beim täglichen Entitlement-Abgleich.")
+
+    # ─── Bot Tasks ──────────────────────────────────────────────────────
 
     async def setup_hook(self):
         await init_pool()
@@ -74,17 +114,21 @@ class Nexus(commands.AutoShardedBot):
                 await self.load_extension(f"integrations.{filename[:-3]}")
                 log.info("Integration geladen: %s", filename)
 
+        for command in self.tree.walk_commands():
+            command.guild_only = True
+        for command in self.tree.walk_commands(guild=self.support_guild):
+            command.guild_only = True
+        log.info("Alle Commands als guild_only markiert (nicht sichtbar/nutzbar in DMs).")
+
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.guild is not None:
             return
 
         user_id = message.author.id
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-        last_interaction = _dm_cooldowns.get(user_id)
-        if last_interaction and (now - last_interaction).total_seconds() < 60:
+        if user_id in _dm_cooldowns:
             return
-        _dm_cooldowns[user_id] = now
+
+        _dm_cooldowns[user_id] = True
 
         embed = discord.Embed(
             title="🤖 Nexus Support",
@@ -101,15 +145,13 @@ class Nexus(commands.AutoShardedBot):
             pass
         return
 
-    @tasks.loop(hours=3)
-    async def cleanup_old_guilds(self):
-        await db_settings.delete_old_guilds(days=7)
-
     async def on_ready(self):
         if not self.is_ready():
             return
         if not self.cleanup_old_guilds.is_running():
             self.cleanup_old_guilds.start()
+        if not self.sync_premium_entitlements.is_running():
+            self.sync_premium_entitlements.start()
 
         log.info("Nexus ist online als %s (Shards aktiv: %s)", self.user, self.shard_count)
         if UPLOAD_COMMANDS_TOPGG:
@@ -128,6 +170,7 @@ class Nexus(commands.AutoShardedBot):
             return
 
         if DEV_MODE:
+            # Dev-Mode: alle Commands sofort für die Dev-Guild, kein globaler Sync
             self.tree.copy_global_to(guild=self.dev_guild)
             try:
                 await self.tree.sync(guild=self.dev_guild)
@@ -157,7 +200,6 @@ class Nexus(commands.AutoShardedBot):
                     raise
 
         self._initial_sync_done = True
-        bot.started_at = datetime.now(timezone.utc)
 
     async def on_guild_join(self, guild: discord.Guild):
         locale = LOCALE_MAP.get(str(guild.preferred_locale), "en")
@@ -201,9 +243,8 @@ class Nexus(commands.AutoShardedBot):
 
         if grant_early_bird:
             from systems.premium import set_premium_from_discord
-            expires_at=datetime.now(timezone.utc) + timedelta(days=90)
-            await set_premium_from_discord(self, guild.id, entitlement=None, reason="Early-Bird 90 Days Gift", expires_at=expires_at)
-
+            expires_at = datetime.now(timezone.utc) + timedelta(days=90)
+            await set_premium_from_discord(self, guild.id, entitlement=None, reason="Early-Bird 90 Days Gift", expires_at=expires_at, source="gift")
         # Embed final zusammenbauen
         embed = discord.Embed(
             title=embed_title,
@@ -233,9 +274,9 @@ class Nexus(commands.AutoShardedBot):
         log.info("Nexus ist %s beigetreten — Guild-Settings angelegt.", guild.name)
 
     async def on_guild_remove(self, guild: discord.Guild):
-       from datetime import datetime, timezone
-       await db_settings.update_guild(guild.id, left_at=datetime.now(timezone.utc))
-       log.info("Nexus wurde von %s entfernt.", guild.name)
+        from datetime import datetime, timezone
+        await db_settings.update_guild(guild.id, left_at=datetime.now(timezone.utc))
+        log.info("Nexus wurde von %s entfernt.", guild.name)
 
     async def on_application_command_error(
         self,
@@ -243,9 +284,9 @@ class Nexus(commands.AutoShardedBot):
         error: Exception,
     ):
         if isinstance(error, app_commands.CheckFailure) and not isinstance(error, app_commands.MissingPermissions):
-            return
+            return  
 
-        locale = LOCALE_MAP.get(str(interaction.guild.preferred_locale), "en")
+        locale = LOCALE_MAP.get(str(interaction.guild.preferred_locale), "en") if interaction.guild else "en"
         lang_dict = TRANSLATIONS.get(locale, TRANSLATIONS["en"])
 
         log.exception("Unbehandelter Command-Fehler:", exc_info=error)
@@ -264,7 +305,7 @@ class Nexus(commands.AutoShardedBot):
 
         log.info("🎉 Neues Discord-Entitlement erstellt für Guild ID: %s", entitlement.guild_id)
 
-        await set_premium_from_discord(self, entitlement.guild_id, entitlement, reason="Discord Store Kauf")
+        await set_premium_from_discord(self, entitlement.guild_id, entitlement, reason="Discord Store Kauf", source="discord")
 
     async def on_entitlement_delete(self, entitlement: discord.Entitlement):
         """Wird aufgerufen, wenn ein Abo ausläuft, gekündigt oder von Discord rückabgewickelt wird."""
@@ -275,6 +316,16 @@ class Nexus(commands.AutoShardedBot):
 
         log.info("😢 Discord-Entitlement gelöscht/abgelaufen für Guild ID: %s", entitlement.guild_id)
         await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo beendet")
+
+    async def on_entitlement_update(self, entitlement: discord.Entitlement):
+        """Wird aufgerufen, wenn ein Abo tatsächlich endet (ends_at erreicht, nach Kündigung)."""
+        if entitlement.guild_id is None:
+            return
+
+        from systems.premium import remove_premium
+
+        log.info("💳 Discord-Entitlement beendet (ends_at erreicht) für Guild ID: %s", entitlement.guild_id)
+        await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo ausgelaufen")
 
     async def close(self):
         await close_pool()

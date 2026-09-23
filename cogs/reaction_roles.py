@@ -38,12 +38,13 @@ def parse_emoji_for_select(emoji_str: str) -> tuple[str, discord.PartialEmoji]:
 # ─── Setup Flow Views ────────────────────────────────────────────────────────
 
 class ReactionRoleCreateModal(discord.ui.Modal):
-    def __init__(self, bot, channel: discord.TextChannel, lang: dict, color: int):
+    def __init__(self, bot, channel: discord.TextChannel, lang: dict, color: int, premium: bool):
         super().__init__(title=lang.get("rr_modal_create_title", "Create Reaction Role"))
         self.bot = bot
         self.channel = channel
         self.lang = lang
         self.color = color
+        self.premium = premium
 
         self.rr_title = discord.ui.TextInput(
             label=lang.get("rr_modal_field_title", "Message Title",),
@@ -61,29 +62,62 @@ class ReactionRoleCreateModal(discord.ui.Modal):
         self.add_item(self.rr_title)
         self.add_item(self.rr_description)
 
+        if self.premium:
+            radio_group = discord.ui.RadioGroup(
+                custom_id="rr_display_mode",
+                required=True,
+                options=[
+                    discord.RadioGroupOption(
+                        label=lang.get("rr_mode_reaction_label", "Emoji reactions"),
+                        value="reaction",
+                        description=lang.get("rr_mode_reaction_desc", "Classic — users click an emoji below the message"),
+                        default=True,
+                    ),
+                    discord.RadioGroupOption(
+                        label=lang.get("rr_mode_dropdown_label", "Dropdown menu"),
+                        value="dropdown",
+                        description=lang.get("rr_mode_dropdown_desc", "Tidy overview for many roles — one click opens a personal menu"),
+                        default=False,
+                    ),
+                ],
+            )
+            self.display_mode_group = discord.ui.Label(
+                text=lang.get("rr_mode_select_label", "How should users pick their roles?"),
+                component=radio_group,
+            )
+            self.add_item(self.display_mode_group)
+        else:
+            self.display_mode_group = None
+
     async def on_submit(self, interaction: discord.Interaction):
+        display_mode = "reaction"
+        if self.display_mode_group is not None:
+            display_mode = self.display_mode_group.component.value or "reaction"
+
         embed = discord.Embed(
-            title=self.rr_title.value, 
-            description=self.rr_description.value, 
+            title=self.rr_title.value,
+            description=self.rr_description.value,
             color=self.color
         )
         embed.set_footer(text=NEXUS_FOOTER)
         msg = await self.channel.send(embed=embed)
 
         await db_reaction_roles.create_message_ref(
-            interaction.guild_id, self.channel.id, msg.id, self.rr_title.value, self.rr_description.value
+            interaction.guild_id, self.channel.id, msg.id,
+            self.rr_title.value, self.rr_description.value,
+            display_mode=display_mode,
         )
 
         setup_embed = discord.Embed(
             title=self.lang.get("rr_setup_title", "⚙️ Nexus Reaction Roles Setup"),
-            description=self.lang.get("rr_setup_description", 
+            description=self.lang.get("rr_setup_description",
                 "The target message was created in {channel}.\n"
                 "[🔗 Jump to message]({url})\n\n"
                 "Click **Add Role** to get started!",
             ).format(channel=self.channel.mention, url=msg.jump_url),
             color=self.color,
         )
-        
+
         await interaction.response.send_message(
             embed=setup_embed,
             view=ReactionRoleSetupView(self.bot, interaction.user.id, self.channel, msg, self.lang),
@@ -383,9 +417,10 @@ class ModeSelectView(discord.ui.View):
             await self._save(interaction, mode=mode, group_id=None)
 
     async def _save(self, interaction: discord.Interaction, mode: str, group_id: int | None):
-        is_prem = await is_premium(interaction.guild_id)
+        msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.message.id)
+        display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
 
-        if not is_prem:
+        if display_mode == "reaction":
             try:
                 await self.message.add_reaction(self.emoji)
             except discord.HTTPException:
@@ -404,8 +439,8 @@ class ModeSelectView(discord.ui.View):
             group_id=group_id,
         )
 
-        if is_prem:
-            await _update_premium_message(self.message, interaction.guild_id, self.message.id, self.lang)
+        if display_mode == "dropdown":
+            await _update_dropdown_message(self.message, interaction.guild_id, self.message.id, self.lang)
 
         color = await db_settings.get_color(interaction.guild_id)
         embed = discord.Embed(
@@ -528,50 +563,20 @@ class GroupSelectView(discord.ui.View):
 
 # ─── Premium Dropdown ────────────────────────────────────────────────────────
 
-async def _update_premium_message(msg: discord.Message, guild_id: int, message_id: int, lang: dict):
+async def _update_dropdown_message(msg: discord.Message, guild_id: int, message_id: int, lang: dict):
+    """Baut/aktualisiert den 'Select your roles'-Button unter einer Dropdown-Modus-Nachricht."""
     roles = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
     if not roles:
         return
 
-    options = []
-    guild = msg.guild
-
-    label_prefix = lang.get("rr_prem_label_prefix", "Role:")
-    desc_template = lang.get("rr_prem_desc_template", "Select this for the {role_name} role")
-    select_placeholder = lang.get("rr_prem_placeholder", "Select your roles...")
-
-    for rr in roles:
-        emoji_raw = rr["emoji"]
-        label_text, partial_emoji = parse_emoji_for_select(emoji_raw)
-
-        role_name = lang.get("rr_prem_name", "Unknown Role")
-        if guild:
-            role_obj = guild.get_role(rr["role_id"])
-            if role_obj:
-                role_name = role_obj.name
-
-        options.append(
-            discord.SelectOption(
-                label=f"{label_prefix} {role_name}",
-                value=str(rr["role_id"]),
-                emoji=partial_emoji,
-                description=desc_template.format(role_name=role_name),
-            )
-        )
-
-    options = options[:25]
-
     view = discord.ui.View(timeout=None)
-
-    select = discord.ui.Select(
-        placeholder=select_placeholder,
-        options=options,
-        custom_id=f"rr_{message_id}",
-        min_values=0,
-        max_values=len(options)
+    view.add_item(
+        discord.ui.Button(
+            label=lang.get("rr_dropdown_open_button", "🎭 Select your roles"),
+            style=discord.ButtonStyle.primary,
+            custom_id=f"rr_open_{message_id}",
+        )
     )
-
-    view.add_item(select)
     await msg.edit(view=view)
 
 # ─── Embed Helpers ────────────────────────────────────────────────────────────
@@ -650,11 +655,28 @@ class ReactionRoles(commands.Cog):
         if rr is None:
             return
 
-        guild  = self.bot.get_guild(payload.guild_id)
-        member = guild.get_member(payload.user_id) if guild else None
-        role   = guild.get_role(rr["role_id"]) if guild else None
+        msg_ref = await db_reaction_roles.get_message_ref(payload.guild_id, payload.message_id)
+        display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
+        if display_mode != "reaction":
+            return
 
-        if not guild or not member or not role or member.bot:
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        member = guild.get_member(payload.user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except (discord.NotFound, discord.HTTPException):
+                log.warning(
+                    "[RR] Konnte Member %s auf %s nicht auflösen (Cache-Miss + fetch fehlgeschlagen).",
+                    payload.user_id, guild.name
+                )
+                return
+
+        role = guild.get_role(rr["role_id"])
+        if not role or member.bot:
             return
 
         if add:
@@ -688,9 +710,10 @@ class ReactionRoles(commands.Cog):
     ):
         lang  = await get_lang(interaction.guild_id)
         color = await db_settings.get_color(interaction.guild_id)
+        premium = await is_premium(interaction.guild_id)
 
         await interaction.response.send_modal(
-            ReactionRoleCreateModal(self.bot, channel, lang, color)
+            ReactionRoleCreateModal(self.bot, channel, lang, color, premium)
         )
 
     @app_commands.command(name="reactionrole_list", description=app_commands.locale_str("cmd_rr_list_desc"))
@@ -717,7 +740,8 @@ class ReactionRoles(commands.Cog):
                 for rr in roles
             )
             embed.add_field(
-                name=f"Nachricht `{msg_data['message_id']}`",
+                name=f"Nachricht `{msg_data['message_id']}`" + 
+                    (f" — {msg_data['title']}" if msg_data.get('title') else ""),
                 value=role_list or "—",
                 inline=False,
             )
@@ -752,11 +776,12 @@ class ReactionRoles(commands.Cog):
 
         channel_id = msg_ref["channel_id"] if msg_ref else roles[0].get("channel_id")
         channel = interaction.guild.get_channel(channel_id)
+        display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
 
         if isinstance(channel, discord.TextChannel):
             try:
                 msg = await channel.fetch_message(msg_id)
-                if await is_premium(interaction.guild_id):
+                if display_mode == "dropdown":
                     await msg.edit(view=None)
                 else:
                     await msg.clear_reactions()
@@ -819,15 +844,75 @@ class ReactionRoles(commands.Cog):
         if interaction.response.is_done():
             return
 
+        if custom_id.startswith("rr_open_"):
+            await self._open_personal_select(interaction, custom_id)
+            return
+
+        if custom_id.startswith("rr_submit_"):
+            await self._handle_dropdown_submit(interaction, custom_id)
+            return
+
+    async def _open_personal_select(self, interaction: discord.Interaction, custom_id: str):
+        lang = await get_lang(interaction.guild_id)
+        msg_id = int(custom_id.split("rr_open_")[1])
+        roles = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
+
+        if not roles:
+            await interaction.response.send_message(
+                lang.get("rr_not_found", "This reaction role no longer exists."), ephemeral=True
+            )
+            return
+
+        member = interaction.user
+        user_role_ids = {r.id for r in member.roles}
+
+        label_prefix = lang.get("rr_prem_label_prefix", "Role:")
+        desc_template = lang.get("rr_prem_desc_template", "Select this for the {role_name} role")
+
+        options = []
+        for rr in roles:
+            role_obj = interaction.guild.get_role(rr["role_id"])
+            if not role_obj:
+                continue
+            label_text, partial_emoji = parse_emoji_for_select(rr["emoji"])
+            options.append(
+                discord.SelectOption(
+                    label=f"{label_prefix} {role_obj.name}",
+                    value=str(rr["role_id"]),
+                    emoji=partial_emoji,
+                    description=desc_template.format(role_name=role_obj.name),
+                    default=(rr["role_id"] in user_role_ids),
+                )
+            )
+
+        if not options:
+            await interaction.response.send_message(
+                lang.get("rr_not_found", "This reaction role no longer exists."), ephemeral=True
+            )
+            return
+
+        options = options[:25]
+
+        select = discord.ui.Select(
+            placeholder=lang.get("rr_prem_placeholder", "Select your roles..."),
+            options=options,
+            custom_id=f"rr_submit_{msg_id}",
+            min_values=0,
+            max_values=len(options),
+        )
+        view = discord.ui.View(timeout=300)
+        view.add_item(select)
+
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+    async def _handle_dropdown_submit(self, interaction: discord.Interaction, custom_id: str):
         await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
 
         selected_role_ids = {int(val) for val in interaction.data.get("values", [])}
         member = interaction.user
-
-        # Alle Reaktionsrollen für diese Nachricht holen
-        msg_id = int(custom_id.split("rr_")[1])
-        roles  = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
+        msg_id = int(custom_id.split("rr_submit_")[1])
+        roles = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
 
         if not roles:
             await interaction.followup.send(
@@ -835,13 +920,13 @@ class ReactionRoles(commands.Cog):
             )
             return
 
-        user_role_ids          = {r.id for r in member.roles}
-        roles_to_add           = set()
-        roles_to_remove        = set()
+        user_role_ids = {r.id for r in member.roles}
+        roles_to_add = set()
+        roles_to_remove = set()
         processed_unique_groups = set()
 
         for rr in roles:
-            role_id  = rr["role_id"]
+            role_id = rr["role_id"]
             role_obj = interaction.guild.get_role(role_id)
             if not role_obj:
                 continue
@@ -852,9 +937,7 @@ class ReactionRoles(commands.Cog):
                         group_id = rr["group_id"]
                         if group_id not in processed_unique_groups:
                             processed_unique_groups.add(group_id)
-                            group_roles = await db_reaction_roles.get_group_roles(
-                                interaction.guild_id, group_id
-                            )
+                            group_roles = await db_reaction_roles.get_group_roles(interaction.guild_id, group_id)
                             for gr in group_roles:
                                 if gr["role_id"] != role_id:
                                     other_role = interaction.guild.get_role(gr["role_id"])
@@ -868,13 +951,12 @@ class ReactionRoles(commands.Cog):
 
         try:
             if roles_to_remove:
-                await member.remove_roles(*roles_to_remove, reason="Nexus Premium Multi-Select")
+                await member.remove_roles(*roles_to_remove, reason="Nexus Dropdown Multi-Select")
             if roles_to_add:
-                await member.add_roles(*roles_to_add, reason="Nexus Premium Multi-Select")
+                await member.add_roles(*roles_to_add, reason="Nexus Dropdown Multi-Select")
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("rr_no_permission", "❌ I don't have permission to manage roles."),
-                ephemeral=True,
+                lang.get("rr_no_permission", "❌ I don't have permission to manage roles."), ephemeral=True
             )
             return
 
