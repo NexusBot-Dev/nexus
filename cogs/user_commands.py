@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from config import INVITE_URL, NEXUS_COLOR, NEXUS_FOOTER
-from database import db_levels, db_settings
+from database import db_giveaways, db_levels, db_settings, db_activity
 from emojis import NexusEmojis
 from systems.card_generator import generate_rank_card
 from systems.exp_system import xp_for_level
@@ -42,8 +42,10 @@ class DeleteDataConfirmView(discord.ui.View):
             item.disabled = True
 
         await interaction.response.defer(ephemeral=True)
-
-        await db_levels.wipe_xp(interaction.guild_id, interaction.user.id)
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(db_levels.wipe_xp(interaction.guild_id, interaction.user.id))
+            tg.create_task(db_giveaways.delete_user(interaction.guild_id, interaction.user.id))
+            tg.create_task(db_activity.delete_user(interaction.guild_id, interaction.user.id))
 
         embed = discord.Embed(
             title=self.lang.get("delete_data_title", "🗑️ Data deleted"),
@@ -51,6 +53,7 @@ class DeleteDataConfirmView(discord.ui.View):
                 "delete_data_description",
                 "The following data has been deleted from this server:\n\n"
                 "{nexus_checkmark} Level & XP\n"
+                "{nexus_checkmark} Giveaway participations\n"
                 "⚠️ Warnings are kept for moderation purposes.",
             ).format(nexus_checkmark=NexusEmojis.CHECKMARK),
             color=self.color,
@@ -179,20 +182,6 @@ class UserCommands(commands.Cog):
 
         file = discord.File(card_buffer, filename="rank.png")
         await interaction.followup.send(file=file, ephemeral=silent)
-
-    async def cog_app_command_error(
-        self,
-        interaction: discord.Interaction,
-        error: app_commands.AppCommandError,
-    ):
-        if isinstance(error, app_commands.CheckFailure) and not isinstance(error, app_commands.MissingPermissions):
-            return
-        lang = get_user_lang(interaction)
-        message = lang.get("error_occurred", "An error occurred: {error}").format(error=error)
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(UserCommands(bot))

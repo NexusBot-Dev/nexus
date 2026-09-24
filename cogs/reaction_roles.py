@@ -9,10 +9,16 @@ from systems.premium import is_premium
 from cogs.utils import get_lang, module_required
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
+from systems.hierarchy import can_manage_role, can_use_channel, format_issue
 
 log = logging.getLogger(__name__)
 
 # ─── Helper zum Parsen von Emojis ─────────────────────────────────────────────
+
+def _clip(text: str, limit: int = 100) -> str:
+    """Discord-Limit für SelectOption label/description."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
 
 def parse_emoji_for_select(emoji_str: str) -> tuple[str, discord.PartialEmoji]:
     """
@@ -100,7 +106,25 @@ class ReactionRoleCreateModal(discord.ui.Modal):
             color=self.color
         )
         embed.set_footer(text=NEXUS_FOOTER)
-        msg = await self.channel.send(embed=embed)
+
+        # Ohne Admin: Channel-Rechte vorab prüfen (Reaktions-Modus braucht zusätzlich Reaktionen)
+        needed = ["send_messages", "embed_links", "read_message_history"]
+        if display_mode == "reaction":
+            needed.append("add_reactions")
+        check = can_use_channel(self.channel, *needed)
+        if not check:
+            await interaction.response.send_message(format_issue(check, self.lang), ephemeral=True)
+            return
+
+        try:
+            msg = await self.channel.send(embed=embed)
+        except discord.HTTPException as e:
+            log.warning("[RR] Konnte RR-Nachricht in %s nicht senden: %s", self.channel.id, e)
+            await interaction.response.send_message(
+                self.lang.get("error_forbidden", "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong."),
+                ephemeral=True,
+            )
+            return
 
         await db_reaction_roles.create_message_ref(
             interaction.guild_id, self.channel.id, msg.id,
@@ -185,6 +209,12 @@ class RoleSelectView(discord.ui.View):
     )
     async def select_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
         role = select.values[0]
+
+        if role.is_default():
+            await interaction.response.send_message(
+                format_issue(can_manage_role(interaction.guild, role), self.lang), ephemeral=True
+            )
+            return
 
         if (
             interaction.user.id != interaction.guild.owner_id
@@ -271,8 +301,21 @@ class EmojiInputView(discord.ui.View):
 
                 try:
                     await self.message.remove_reaction(reaction.emoji, user)
-                except:
+                except discord.HTTPException:
                     pass
+
+                # Custom-Emoji von einem Server, auf dem Nexus nicht ist → kann Nexus nicht nutzen
+                if isinstance(reaction.emoji, discord.PartialEmoji) or (
+                    isinstance(reaction.emoji, discord.Emoji) and not reaction.emoji.is_usable()
+                ):
+                    await interaction.followup.send(
+                        self.lang.get(
+                            "rr_emoji_foreign",
+                            "❌ I can't use this emoji because it's from a server I'm not on. Please pick another one.",
+                        ),
+                        ephemeral=True,
+                    )
+                    continue
 
                 # --- FEHLER-CHECK 1: Wird DIESES EMOJI schon auf der Nachricht genutzt? ---
                 existing_rr = await db_reaction_roles.get_reaction_role(
@@ -684,21 +727,41 @@ class ReactionRoles(commands.Cog):
                 group_roles = await db_reaction_roles.get_group_roles(
                     payload.guild_id, rr["group_id"]
                 )
+                rr_msg = None
+                channel = guild.get_channel(payload.channel_id)
                 for gr in group_roles:
                     if gr["role_id"] != rr["role_id"]:
                         other_role = guild.get_role(gr["role_id"])
                         if other_role and other_role in member.roles:
-                            await member.remove_roles(other_role)
-                            channel = guild.get_channel(payload.channel_id)
+                            if not can_manage_role(guild, other_role):
+                                continue
+                            try:
+                                await member.remove_roles(other_role, reason="Nexus Reaction Roles (unique)")
+                            except discord.HTTPException as e:
+                                log.warning("[RR] Konnte Rolle %s auf %s nicht entfernen: %s", other_role.id, guild.id, e)
+                                continue
                             if isinstance(channel, discord.TextChannel):
                                 try:
-                                    msg = await channel.fetch_message(payload.message_id)
-                                    await msg.remove_reaction(gr["emoji"], member)
-                                except (discord.NotFound, discord.Forbidden):
+                                    if rr_msg is None:
+                                        rr_msg = await channel.fetch_message(payload.message_id)
+                                    await rr_msg.remove_reaction(gr["emoji"], member)
+                                except discord.HTTPException:
                                     pass
-            await member.add_roles(role)
-        else:
-            await member.remove_roles(role)
+        check = can_manage_role(guild, role)
+        if not check:
+            log.warning(
+                "[RR] Rolle %s auf %s nicht verwaltbar: %s %s",
+                role.id, guild.id, check.issue.value, check.missing,
+            )
+            return
+
+        try:
+            if add:
+                await member.add_roles(role, reason="Nexus Reaction Roles")
+            else:
+                await member.remove_roles(role, reason="Nexus Reaction Roles")
+        except discord.HTTPException as e:
+            log.warning("[RR] Rollenänderung %s für %s auf %s fehlgeschlagen: %s", role.id, member.id, guild.id, e)
 
     @app_commands.command(name="reactionrole_create", description=app_commands.locale_str("cmd_rr_create_desc"))
     @app_commands.default_permissions(manage_roles=True)
@@ -877,10 +940,10 @@ class ReactionRoles(commands.Cog):
             label_text, partial_emoji = parse_emoji_for_select(rr["emoji"])
             options.append(
                 discord.SelectOption(
-                    label=f"{label_prefix} {role_obj.name}",
+                    label=_clip(f"{label_prefix} {role_obj.name}"),
                     value=str(rr["role_id"]),
                     emoji=partial_emoji,
-                    description=desc_template.format(role_name=role_obj.name),
+                    description=_clip(desc_template.format(role_name=role_obj.name)),
                     default=(rr["role_id"] in user_role_ids),
                 )
             )
@@ -921,42 +984,74 @@ class ReactionRoles(commands.Cog):
             return
 
         user_role_ids = {r.id for r in member.roles}
-        roles_to_add = set()
-        roles_to_remove = set()
-        processed_unique_groups = set()
+        guild = interaction.guild
+
+        # 1. Pro Unique-Gruppe genau EINE Rolle festlegen.
+        #    Neu gewählte Rollen haben Vorrang vor bereits vorhandenen.
+        group_choice: dict[int, int] = {}
+        for rr in roles:
+            if rr["mode"] == "unique" and rr["group_id"] and rr["role_id"] in selected_role_ids:
+                gid = rr["group_id"]
+                prev = group_choice.get(gid)
+                if prev is None or (prev in user_role_ids and rr["role_id"] not in user_role_ids):
+                    group_choice[gid] = rr["role_id"]
+
+        roles_to_add: set[discord.Role] = set()
+        roles_to_remove: set[discord.Role] = set()
 
         for rr in roles:
-            role_id = rr["role_id"]
-            role_obj = interaction.guild.get_role(role_id)
+            role_obj = guild.get_role(rr["role_id"])
             if not role_obj:
                 continue
 
-            if role_id in selected_role_ids:
-                if role_id not in user_role_ids:
-                    if rr["mode"] == "unique" and rr["group_id"]:
-                        group_id = rr["group_id"]
-                        if group_id not in processed_unique_groups:
-                            processed_unique_groups.add(group_id)
-                            group_roles = await db_reaction_roles.get_group_roles(interaction.guild_id, group_id)
-                            for gr in group_roles:
-                                if gr["role_id"] != role_id:
-                                    other_role = interaction.guild.get_role(gr["role_id"])
-                                    if other_role and (other_role in member.roles or other_role in roles_to_add):
-                                        roles_to_remove.add(other_role)
-                                        roles_to_add.discard(other_role)
-                    roles_to_add.add(role_obj)
+            if rr["mode"] == "unique" and rr["group_id"]:
+                wanted = group_choice.get(rr["group_id"]) == rr["role_id"]
             else:
-                if role_id in user_role_ids:
-                    roles_to_remove.add(role_obj)
+                wanted = rr["role_id"] in selected_role_ids
+
+            if wanted and rr["role_id"] not in user_role_ids:
+                roles_to_add.add(role_obj)
+            elif not wanted and rr["role_id"] in user_role_ids:
+                roles_to_remove.add(role_obj)
+
+        # 2. Gruppen können über mehrere Nachrichten gehen → andere Gruppenrollen ebenfalls entfernen
+        for gid, chosen_id in group_choice.items():
+            if chosen_id in user_role_ids:
+                continue
+            for gr in await db_reaction_roles.get_group_roles(interaction.guild_id, gid):
+                other = guild.get_role(gr["role_id"])
+                if other and other.id != chosen_id and other.id in user_role_ids:
+                    roles_to_remove.add(other)
+
+        # 3. Nur Rollen anfassen, die Nexus auch verwalten darf — sonst scheitert der ganze Batch
+        skipped = [r for r in roles_to_add | roles_to_remove if not can_manage_role(guild, r)]
+        if skipped:
+            log.warning(
+                "[RR] Dropdown auf %s: %d Rolle(n) nicht verwaltbar: %s",
+                guild.id, len(skipped), [r.id for r in skipped],
+            )
+            roles_to_add -= set(skipped)
+            roles_to_remove -= set(skipped)
 
         try:
             if roles_to_remove:
                 await member.remove_roles(*roles_to_remove, reason="Nexus Dropdown Multi-Select")
             if roles_to_add:
                 await member.add_roles(*roles_to_add, reason="Nexus Dropdown Multi-Select")
-        except discord.Forbidden:
+        except discord.HTTPException as e:
+            log.warning("[RR] Dropdown-Rollenänderung auf %s fehlgeschlagen: %s", interaction.guild_id, e)
             await interaction.followup.send(
                 lang.get("rr_no_permission", "❌ I don't have permission to manage roles."), ephemeral=True
+            )
+            return
+
+        if skipped:
+            await interaction.followup.send(
+                lang.get(
+                    "rr_roles_partially_updated",
+                    "⚠️ Your roles were updated, but I couldn't change: {roles}. Please let a server admin know.",
+                ).format(roles=", ".join(r.mention for r in skipped)),
+                ephemeral=True,
             )
             return
 
@@ -966,24 +1061,6 @@ class ReactionRoles(commands.Cog):
             ),
             ephemeral=True,
         )
-
-    async def cog_app_command_error(
-        self,
-        interaction: discord.Interaction,
-        error: app_commands.AppCommandError,
-    ):
-        if isinstance(error, app_commands.CheckFailure) and not isinstance(error, app_commands.MissingPermissions):
-            return
-        lang = await get_lang(interaction.guild_id)
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                lang.get("no_permission", "No permission."), ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                lang.get("error_occurred", "An error occurred: {error}").format(error=error),
-                ephemeral=True,
-            )
 
 async def setup(bot):
     await bot.add_cog(ReactionRoles(bot))

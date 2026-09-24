@@ -5,7 +5,7 @@ from typing import Optional, Union
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timezone
-from database import db_settings, db_levels
+from database import db_settings, db_levels, db_activity
 from systems.exp_system import XP_COOLDOWN
 from cogs.utils import post_logging, get_lang, module_required
 from config import NEXUS_FOOTER
@@ -124,7 +124,8 @@ class Levels(commands.Cog):
                 for k in expired:
                     _xp_cooldown.pop(k, None)
 
-            xp_min, xp_max = await db_settings.get_xp_range(message.guild.id)
+            settings = await db_levels.get_levels_settings(message.guild.id)
+            xp_min, xp_max = settings["xp_min"], settings["xp_max"]
             amount = random.randint(min(xp_min, xp_max), max(xp_min, xp_max))
 
             result = await db_levels.add_xp(
@@ -134,6 +135,11 @@ class Levels(commands.Cog):
             )
             if result is None:
                 return
+
+            if settings["shop_enabled"]:
+                points_min, points_max = settings["points_min"], settings["points_max"]
+                points_amount = random.randint(min(points_min, points_max), max(points_min, points_max))
+                await db_activity.add_points(message.guild.id, message.author.id, points_amount)
 
             if result["new_level"] > result["old_level"]:
                 lang = await get_lang(message.guild.id)
@@ -168,7 +174,12 @@ class Levels(commands.Cog):
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         for i, entry in enumerate(entries, start=1):
             m = interaction.guild.get_member(entry["user_id"])
-            name = m.display_name if m else f"<@{entry['user_id']}>"
+            if m is None:
+                try:
+                    m = await interaction.guild.fetch_member(entry["user_id"])
+                except discord.NotFound:
+                    m = None
+            name = m.display_name if m else f"Unknown User ({entry['user_id']})"
             embed.add_field(
                 name=f"{medals.get(i, f'`#{i}`')} {name}",
                 value=f"Level {entry['level']} — {entry['xp']} XP",
@@ -382,26 +393,6 @@ class Levels(commands.Cog):
                 text += f"**Level {entry['level']}:** <@&{entry['role_id']}>\n"
             embed.description = text
         return embed
-
-    async def cog_app_command_error(
-        self,
-        interaction: discord.Interaction,
-        error: app_commands.AppCommandError,
-    ):
-        if isinstance(error, app_commands.CheckFailure) and not isinstance(error, app_commands.MissingPermissions):
-            return
-
-        lang = await get_lang(interaction.guild_id)
-
-        if isinstance(error, app_commands.MissingPermissions):
-            message = lang.get("no_permission", "No permission.")
-        else:
-            message = lang.get("error_occurred", "An error occurred: {error}").format(error=error)
-
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
 
 # ─── Views & Modals ──────────────────────────────────────────────────────────
 

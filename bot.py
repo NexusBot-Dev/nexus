@@ -8,8 +8,10 @@ from database import init_pool, close_pool, db_settings
 from config import _read_secret, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, INVITE_URL, NEXUS_FOOTER, APPLICATION_ID
 from translations.command_locales import COMMAND_LOCALES
 from translations import TRANSLATIONS, LOCALE_MAP
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from cachetools import TTLCache
+from cogs.setup import SetupView, RestoreView
+from systems.premium import remove_premium, sync_entitlements, set_premium_from_discord
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -86,7 +88,6 @@ class Nexus(commands.AutoShardedBot):
     @tasks.loop(hours=24)
     async def sync_premium_entitlements(self):
         try:
-            from systems.premium import sync_entitlements
             removed = await sync_entitlements(self)
             if removed:
                 log.info("[PREMIUM-SYNC] %s Guilds mit abgelaufenem Premium bereinigt.", removed)
@@ -148,29 +149,41 @@ class Nexus(commands.AutoShardedBot):
     async def on_ready(self):
         if not self.is_ready():
             return
+
+        # 1. Background-Tasks idempotenten Starten (laufen dauerhaft im Hintergrund)
         if not self.cleanup_old_guilds.is_running():
             self.cleanup_old_guilds.start()
         if not self.sync_premium_entitlements.is_running():
             self.sync_premium_entitlements.start()
 
         log.info("Nexus ist online als %s (Shards aktiv: %s)", self.user, self.shard_count)
+
+        # 2. Reconnect-Schutz: Alles darunter darf strikt nur EINMAL beim echten Kaltstart laufen
+        if self._initial_sync_done:
+            log.info("Reconnect erkannt — Sync und API-Uploads übersprungen.")
+            return
+
+        # 3. Externe API-Uploads nur beim initialen Start ausführen
         if UPLOAD_COMMANDS_TOPGG:
             topgg_token = _read_secret("TOPGG_TOKEN_FILE", "/run/secrets/topgg_token")
             if topgg_token:
-                from lists.topgg_stats import post_commands_to_topgg
-                await post_commands_to_topgg(self, topgg_token)
+                try:
+                    from lists.topgg_stats import post_commands_to_topgg
+                    await post_commands_to_topgg(self, topgg_token)
+                except Exception:
+                    log.exception("Fehler beim Upload der Commands zu Top.gg")
+
         if UPLOAD_COMMANDS_DBL:
             dbl_token = _read_secret("DBL_TOKEN_FILE", "/run/secrets/dbl_token")
             if dbl_token:
-                from lists.discordbotlist import post_commands_to_dbl
-                await post_commands_to_dbl(self, dbl_token)
+                try:
+                    from lists.discordbotlist import post_commands_to_dbl
+                    await post_commands_to_dbl(self, dbl_token)
+                except Exception:
+                    log.exception("Fehler beim Upload der Commands zu DiscordBotList")
 
-        if self._initial_sync_done:
-            log.info("Reconnect erkannt — Sync übersprungen (Commands bereits aktuell).")
-            return
-
+        # 4. Command-Sync mit resilientem Fehler-Handling
         if DEV_MODE:
-            # Dev-Mode: alle Commands sofort für die Dev-Guild, kein globaler Sync
             self.tree.copy_global_to(guild=self.dev_guild)
             try:
                 await self.tree.sync(guild=self.dev_guild)
@@ -179,7 +192,7 @@ class Nexus(commands.AutoShardedBot):
                 if e.status == 429:
                     log.warning("Rate Limited beim Dev-Sync — überspringe.")
                 else:
-                    raise
+                    log.exception("Fehler beim Dev-Guild Command-Sync:")
         else:
             try:
                 await self.tree.sync()
@@ -188,7 +201,7 @@ class Nexus(commands.AutoShardedBot):
                 if e.status == 429:
                     log.warning("Rate Limited beim globalen Sync — Commands bereits aktuell, überspringe.")
                 else:
-                    raise
+                    log.exception("Fehler beim globalen Command-Sync:")
 
             try:
                 await self.tree.sync(guild=self.support_guild)
@@ -197,7 +210,7 @@ class Nexus(commands.AutoShardedBot):
                 if e.status == 429:
                     log.warning("Rate Limited beim Support-Guild-Sync — überspringe.")
                 else:
-                    raise
+                    log.exception("Fehler beim Support-Guild Command-Sync:")
 
         self._initial_sync_done = True
 
@@ -211,14 +224,12 @@ class Nexus(commands.AutoShardedBot):
         except discord.Forbidden:
             log.warning("Konnte Nickname auf Guild '%s' nicht ändern (Rechte fehlen).", guild.name)
 
-        from cogs.setup import SetupView, RestoreView
         settings = await db_settings.get_guild(guild.id)
 
         embed_title = lang_dict.get("setup_hello_title")
         embed_desc = lang_dict.get("setup_hello_description")
         chosen_view_class = SetupView
         grant_early_bird = False
-        from datetime import datetime, timezone, timedelta
 
         if settings and settings["left_at"]:
             left_at = settings["left_at"].replace(tzinfo=timezone.utc)
@@ -242,7 +253,6 @@ class Nexus(commands.AutoShardedBot):
             grant_early_bird = True
 
         if grant_early_bird:
-            from systems.premium import set_premium_from_discord
             expires_at = datetime.now(timezone.utc) + timedelta(days=90)
             await set_premium_from_discord(self, guild.id, entitlement=None, reason="Early-Bird 90 Days Gift", expires_at=expires_at, source="gift")
         # Embed final zusammenbauen
@@ -254,11 +264,16 @@ class Nexus(commands.AutoShardedBot):
         embed.set_footer(text="Nexus • Setup")
 
         target_channel = guild.system_channel
-        if not target_channel or not target_channel.permissions_for(guild.me).send_messages:
+        if not target_channel or not (target_channel.permissions_for(guild.me).send_messages and target_channel.permissions_for(guild.me).embed_links):
             target_channel = next(
-                (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+                (
+                    ch for ch in guild.text_channels 
+                    if ch.permissions_for(guild.me).send_messages and ch.permissions_for(guild.me).embed_links
+                ),
                 None
             )
+
+        message_sent = False
 
         if target_channel:
             try:
@@ -266,33 +281,100 @@ class Nexus(commands.AutoShardedBot):
                     embed=embed,
                     view=chosen_view_class(guild.owner_id, lang_dict, target_channel),
                 )
+                message_sent = True
             except discord.HTTPException as e:
                 log.error("Fehler beim Senden der Setup-Nachricht auf Guild %s: %s", guild.name, e)
-        else:
-            log.warning("Konnte keine Setup-Nachricht auf Guild %s senden (kein Textkanal beschreibbar).", guild.name)
+
+        if not message_sent:
+            log.warning("Kein beschreibbarer Textkanal auf '%s' gefunden — versuche Fallback-DM an Owner.", guild.name)
+
+            owner = guild.owner
+            if owner is None:
+                try:
+                    owner = await guild.fetch_member(guild.owner_id)
+                except (discord.NotFound, discord.HTTPException):
+                    try:
+                        owner = await self.fetch_user(guild.owner_id)
+                    except (discord.NotFound, discord.HTTPException):
+                        owner = None
+
+            if owner:
+                dm_embed = discord.Embed(
+                    title=f"👋 Nexus — {guild.name}",
+                    description=lang_dict.get(
+                        "setup_no_channel_dm",
+                        "Danke, dass du mich auf **{guild}** eingeladen hast!\n\n"
+                        "⚠️ Ich konnte **in keinem Kanal eine Begrüßungsnachricht posten**, "
+                        "weil mir die Berechtigungen `Kanal anzeigen`, `Nachrichten senden` oder `Links einbetten` fehlen.\n\n"
+                        "Bitte weise mir auf dem Server entsprechende Rechte zu und nutze `/settings`, um mich einzurichten."
+                    ).format(guild=guild.name),
+                    color=NEXUS_COLOR,
+                )
+                dm_embed.set_footer(text="Nexus • Setup")
+
+                try:
+                    await owner.send(embed=dm_embed)
+                    log.info("Setup-Hinweis erfolgreich per DM an Owner %s (%s) für Guild '%s' gesendet.", owner, owner.id, guild.name)
+                except discord.Forbidden:
+                    log.warning("Konnte Owner %s (%s) keine DM schicken (DMs blockiert/deaktiviert).", owner, owner.id)
+                except discord.HTTPException as e:
+                    log.error("Fehler beim Senden der DM an Owner %s: %s", owner, e)
 
         log.info("Nexus ist %s beigetreten — Guild-Settings angelegt.", guild.name)
 
     async def on_guild_remove(self, guild: discord.Guild):
-        from datetime import datetime, timezone
         await db_settings.update_guild(guild.id, left_at=datetime.now(timezone.utc))
         log.info("Nexus wurde von %s entfernt.", guild.name)
 
     async def on_application_command_error(
         self,
         interaction: discord.Interaction,
-        error: Exception,
+        error: app_commands.AppCommandError,
     ):
-        if isinstance(error, app_commands.CheckFailure) and not isinstance(error, app_commands.MissingPermissions):
-            return  
+        original = getattr(error, "original", error)
+
+        # 1. Cog hat eigenen Handler → der hat schon geantwortet, hier nur loggen
+        cog = interaction.command.binding if interaction.command else None
+        if isinstance(cog, commands.Cog) and cog.has_app_command_error_handler():
+            if not isinstance(original, discord.Forbidden) and not isinstance(error, app_commands.CheckFailure):
+                log.exception("Command-Fehler in %s:", cog.qualified_name, exc_info=error)
+            return
 
         locale = LOCALE_MAP.get(str(interaction.guild.preferred_locale), "en") if interaction.guild else "en"
-        lang_dict = TRANSLATIONS.get(locale, TRANSLATIONS["en"])
+        lang = TRANSLATIONS.get(locale, TRANSLATIONS["en"])
 
-        log.exception("Unbehandelter Command-Fehler:", exc_info=error)
+        # 2. User fehlt ein Recht → freundliche Meldung
+        if isinstance(error, app_commands.MissingPermissions):
+            msg = lang.get("no_permission", "❌ You don't have permission to use this command.")
+
+        # 3. Andere Checks (z.B. module_required) antworten selbst → still
+        elif isinstance(error, app_commands.CheckFailure):
+            return
+
+        # 4. Nexus fehlt ein Recht / Hierarchie
+        elif isinstance(original, discord.Forbidden):
+            log.warning(
+                "Forbidden in /%s auf %s: %s",
+                interaction.command.qualified_name if interaction.command else "?",
+                interaction.guild_id, original.text,
+            )
+            msg = lang.get(
+                "error_forbidden",
+                "❌ I'm missing permissions or my role is too low for this. "
+                "Run `/diagnose` to see what's wrong.",
+            )
+
+        # 5. Alles andere
+        else:
+            log.exception("Unbehandelter Command-Fehler:", exc_info=error)
+            msg = lang.get("error_generic", "❌ Something went wrong. Please try again later.")
+
         try:
-            await interaction.response.send_message(lang_dict.get("error_occurred", "An error occurred: {error}").format(error=error), ephemeral=True)
-        except discord.InteractionResponded:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
             pass
 
     async def on_entitlement_create(self, entitlement: discord.Entitlement):
@@ -300,8 +382,6 @@ class Nexus(commands.AutoShardedBot):
         if entitlement.guild_id is None:
             log.warning("Ein User hat ein User-Abo gekauft. Nexus unterstützt aktuell nur Server-Premium.")
             return
-
-        from systems.premium import set_premium_from_discord
 
         log.info("🎉 Neues Discord-Entitlement erstellt für Guild ID: %s", entitlement.guild_id)
 
@@ -312,8 +392,6 @@ class Nexus(commands.AutoShardedBot):
         if entitlement.guild_id is None:
             return
 
-        from systems.premium import remove_premium
-
         log.info("😢 Discord-Entitlement gelöscht/abgelaufen für Guild ID: %s", entitlement.guild_id)
         await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo beendet")
 
@@ -321,8 +399,6 @@ class Nexus(commands.AutoShardedBot):
         """Wird aufgerufen, wenn ein Abo tatsächlich endet (ends_at erreicht, nach Kündigung)."""
         if entitlement.guild_id is None:
             return
-
-        from systems.premium import remove_premium
 
         log.info("💳 Discord-Entitlement beendet (ends_at erreicht) für Guild ID: %s", entitlement.guild_id)
         await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo ausgelaufen")
