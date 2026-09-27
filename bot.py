@@ -323,8 +323,11 @@ class Nexus(commands.AutoShardedBot):
         log.info("Nexus ist %s beigetreten — Guild-Settings angelegt.", guild.name)
 
     async def on_guild_remove(self, guild: discord.Guild):
-        await db_settings.update_guild(guild.id, left_at=datetime.now(timezone.utc))
-        log.info("Nexus wurde von %s entfernt.", guild.name)
+        try:
+            await db_settings.update_guild(guild.id, left_at=datetime.now(timezone.utc))
+            log.info("Nexus wurde von %s entfernt.", guild.name)
+        except Exception:
+            log.exception("left_at für Guild %s (%s) konnte nicht gesetzt werden – wird beim nächsten Sync nachgezogen.", guild.name, guild.id)
 
     async def on_application_command_error(
         self,

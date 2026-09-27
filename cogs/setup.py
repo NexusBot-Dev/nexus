@@ -13,27 +13,28 @@ log = logging.getLogger(__name__)
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async def _apply_brand_role(interaction: discord.Interaction):
-    """Erstellt oder weist die Nexus Brand Rolle zu."""
-    existing_role = discord.utils.get(interaction.guild.roles, name="Nexus")
+    """Erstellt die Nexus Brand-Rolle (oder findet sie per gespeicherter ID) und weist sie dem Bot zu."""
+    guild    = interaction.guild
+    settings = await db_settings.get_guild(guild.id) or {}
+    role_id  = settings.get("brand_role_id")
+    role     = guild.get_role(role_id) if role_id else None
+
     try:
-        bot_member = interaction.guild.get_member(interaction.client.user.id)
-        if not bot_member:
-            bot_member = await interaction.guild.fetch_member(interaction.client.user.id)
-        if existing_role:
-            if existing_role not in bot_member.roles:
-                await bot_member.add_roles(existing_role)
-        else:
-            role = await interaction.guild.create_role(
+        bot_member = guild.me or await guild.fetch_member(interaction.client.user.id)
+        if role is None:
+            role = await guild.create_role(
                 name="Nexus",
                 color=discord.Color(NEXUS_COLOR),
                 hoist=True,
+                permissions=discord.Permissions.none(),
                 reason="Nexus Setup — set brand color",
             )
-            await bot_member.add_roles(role)
-            set_position = max(1, bot_member.top_role.position - 1)
-            await role.edit(position=set_position)
+            await db_settings.update_guild(guild.id, brand_role_id=role.id)
+            await role.edit(position=max(1, bot_member.top_role.position - 1))
+        if role not in bot_member.roles:
+            await bot_member.add_roles(role, reason="Nexus Setup — brand role")
     except (discord.Forbidden, discord.HTTPException) as e:
-        log.info("Rollenfarbe konnte nicht verwaltet werden: %s", e)
+        log.info("Brand-Rolle auf %s (%s) konnte nicht verwaltet werden: %s", guild.name, guild.id, e)
 
 def _dashboard_button(guild_id: int, lang: dict[str, str]) -> discord.ui.Button:
     return discord.ui.Button(
@@ -87,6 +88,57 @@ async def _resolve_channel_and_check_perms(
 
     missing = _get_missing_channel_permissions(channel, bot_member, for_logging=for_logging)
     return channel, missing
+
+async def _validate_restored_channels(interaction: discord.Interaction) -> dict[str, str]:
+    """Prüft beim Restore die gespeicherten Channels: gelöschte werden genullt, fehlende Rechte markiert."""
+    settings = await db_settings.get_guild(interaction.guild_id) or {}
+    result: dict[str, str] = {}
+    cleanup: dict[str, None] = {}
+
+    for key, for_logging in (("log_channel_id", True), ("rules_channel_id", False), ("welcome_channel_id", False)):
+        ch_id = settings.get(key)
+        if not ch_id:
+            result[key] = "—"
+            continue
+        ch = interaction.guild.get_channel(ch_id)
+        if ch is None:
+            cleanup[key] = None
+            result[key] = "— *(gelöscht)*"
+            continue
+        _, missing = await _resolve_channel_and_check_perms(ch, interaction.guild, interaction.client.user.id, for_logging=for_logging)
+        result[key] = f"{ch.mention} ⚠️" if missing else ch.mention
+
+    if cleanup:
+        await db_settings.update_guild(interaction.guild_id, **cleanup)
+    return result
+
+async def _finish_restore(interaction: discord.Interaction, lang: dict[str, str], setup_channel=None):
+    """Gemeinsamer Abschluss für Restore (direkt oder nach der Hierarchie-Prüfung)."""
+    await _apply_brand_role(interaction)
+    channels = await _validate_restored_channels(interaction)
+
+    embed = discord.Embed(
+        title=lang.get("setup_restored_title", "{nexus_checkmark} Settings restored!").format(nexus_checkmark=NexusEmojis.CHECKMARK),
+        description=lang.get("setup_restored_desc", "Your old settings have been successfully restored."),
+        color=NEXUS_COLOR,
+    )
+    embed.add_field(name=lang.get("settings_log",     "📋 Log-Channel"),     value=channels["log_channel_id"],     inline=True)
+    embed.add_field(name=lang.get("settings_rules",   "📜 Rules-Channel"),   value=channels["rules_channel_id"],   inline=True)
+    embed.add_field(name=lang.get("settings_welcome", "👋 Welcome-Channel"), value=channels["welcome_channel_id"], inline=True)
+    if any("⚠️" in v for v in channels.values()):
+        embed.set_footer(text=lang.get("setup_restored_perm_hint", "⚠️ = Nexus is missing permissions in this channel. Check via /setup or the dashboard."))
+
+    try:
+        if setup_channel:
+            async for msg in setup_channel.history(limit=10):
+                if msg.author == interaction.guild.me and msg.components:
+                    await msg.delete(delay=1)
+                    break
+    except (discord.NotFound, discord.Forbidden):
+        pass
+
+    await interaction.response.edit_message(embed=embed, view=None)
+    log.info("Guild %s (%s) hat Einstellungen wiederhergestellt.", interaction.guild.name, interaction.guild_id)
 
 # ─── Embeds ──────────────────────────────────────────────────────────────────
 
@@ -245,21 +297,27 @@ class ChannelPermissionWarningView(discord.ui.View):
             return
 
         self.channel = channel
-        await self._proceed_next_step(interaction)
+        await db_settings.update_guild(interaction.guild_id, **{self._column: channel.id})
+        await self._proceed_next_step(interaction, channel.mention)
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary)
     async def skip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._proceed_next_step(interaction)
+        await db_settings.update_guild(interaction.guild_id, **{self._column: None})
+        await self._proceed_next_step(interaction, "—")
 
-    async def _proceed_next_step(self, interaction: discord.Interaction):
+    @property
+    def _column(self) -> str:
+        return f"{self.step_type}_channel_id"
+
+    async def _proceed_next_step(self, interaction: discord.Interaction, mention: str):
         if self.step_type == "log":
             await interaction.response.edit_message(
-                embed=await _rules_channel_embed(interaction.guild_id, self.channel.mention, self.lang),
+                embed=await _rules_channel_embed(interaction.guild_id, mention, self.lang),
                 view=RulesChannelView(self.owner_id, self.lang, self.setup_channel),
             )
         elif self.step_type == "rules":
             await interaction.response.edit_message(
-                embed=await _welcome_channel_embed(interaction.guild_id, self.channel.mention, self.lang),
+                embed=await _welcome_channel_embed(interaction.guild_id, mention, self.lang),
                 view=WelcomeChannelView(self.owner_id, self.lang, self.setup_channel),
             )
         elif self.step_type == "welcome":
@@ -305,40 +363,14 @@ class HierarchyView(discord.ui.View):
         await self._proceed(interaction)
 
     async def _proceed(self, interaction: discord.Interaction):
-        await _apply_brand_role(interaction)
         if self.is_restore:
-            embed = discord.Embed(
-                title=self.lang.get("setup_restored_title", "{nexus_checkmark} Settings restored!").format(
-                    nexus_checkmark=NexusEmojis.CHECKMARK
-                ),
-                description=self.lang.get("setup_restored_desc", "Your old settings have been successfully restored."),
-                color=NEXUS_COLOR,
-            )
-            settings = await db_settings.get_guild(interaction.guild_id)
-            if settings:
-                log_ch     = f"<#{settings['log_channel_id']}>"     if settings.get("log_channel_id")     else "—"
-                rules_ch   = f"<#{settings['rules_channel_id']}>"   if settings.get("rules_channel_id")   else "—"
-                welcome_ch = f"<#{settings['welcome_channel_id']}>" if settings.get("welcome_channel_id") else "—"
-                embed.add_field(name=self.lang.get("settings_log",     "📋 Log-Channel"),     value=log_ch,     inline=True)
-                embed.add_field(name=self.lang.get("settings_rules",   "📜 Rules-Channel"),   value=rules_ch,   inline=True)
-                embed.add_field(name=self.lang.get("settings_welcome", "👋 Welcome-Channel"), value=welcome_ch, inline=True)
-
-            try:
-                if self.setup_channel:
-                    async for msg in self.setup_channel.history(limit=10):
-                        if msg.author == interaction.guild.me and msg.components:
-                            await msg.delete(delay=1)
-                            break
-            except (discord.NotFound, discord.Forbidden):
-                pass
-
-            await interaction.response.edit_message(embed=embed, view=None)
-            log.info("Guild %s hat Restore abgeschlossen.", interaction.guild.name)
-        else:
-            await interaction.response.edit_message(
-                embed=await _log_channel_embed(interaction.guild_id, self.lang),
-                view=LogChannelView(self.owner_id, self.lang, self.setup_channel),
-            )
+            await _finish_restore(interaction, self.lang, self.setup_channel)
+            return
+        await _apply_brand_role(interaction)
+        await interaction.response.edit_message(
+            embed=await _log_channel_embed(interaction.guild_id, self.lang),
+            view=LogChannelView(self.owner_id, self.lang, self.setup_channel),
+        )
 
 # ─── Setup Start ─────────────────────────────────────────────────────────────
 
@@ -405,8 +437,6 @@ class LogChannelView(discord.ui.View):
     )
     async def select_log_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         raw_channel = select.values[0]
-        await db_settings.update_guild(interaction.guild_id, log_channel_id=raw_channel.id)
-
         channel, missing = await _resolve_channel_and_check_perms(raw_channel, interaction.guild, interaction.client.user.id, for_logging=True)
 
         if missing:
@@ -415,6 +445,7 @@ class LogChannelView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=view)
             return
 
+        await db_settings.update_guild(interaction.guild_id, log_channel_id=channel.id)
         await interaction.response.edit_message(
             embed=await _rules_channel_embed(interaction.guild_id, channel.mention, self.lang),
             view=RulesChannelView(self.owner_id, self.lang, setup_channel=self.setup_channel),
@@ -485,8 +516,6 @@ class RulesChannelView(discord.ui.View):
     )
     async def select_rules_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         raw_channel = select.values[0]
-        await db_settings.update_guild(interaction.guild_id, rules_channel_id=raw_channel.id)
-
         channel, missing = await _resolve_channel_and_check_perms(raw_channel, interaction.guild, interaction.client.user.id, for_logging=False)
 
         if missing:
@@ -495,6 +524,7 @@ class RulesChannelView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=view)
             return
 
+        await db_settings.update_guild(interaction.guild_id, rules_channel_id=channel.id)
         await interaction.response.edit_message(
             embed=await _welcome_channel_embed(interaction.guild_id, channel.mention, self.lang),
             view=WelcomeChannelView(self.owner_id, self.lang, self.setup_channel),
@@ -565,8 +595,6 @@ class WelcomeChannelView(discord.ui.View):
     )
     async def select_welcome_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         raw_channel = select.values[0]
-        await db_settings.update_guild(interaction.guild_id, welcome_channel_id=raw_channel.id)
-
         channel, missing = await _resolve_channel_and_check_perms(raw_channel, interaction.guild, interaction.client.user.id, for_logging=False)
 
         if missing:
@@ -575,6 +603,7 @@ class WelcomeChannelView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=view)
             return
 
+        await db_settings.update_guild(interaction.guild_id, welcome_channel_id=channel.id)
         await interaction.response.edit_message(
             embed=await _modules_embed(interaction.guild_id, self.lang),
             view=ModulesView(self.owner_id, self.lang, self.setup_channel),
@@ -774,33 +803,7 @@ class RestoreView(discord.ui.View):
             )
             return
 
-        await _apply_brand_role(interaction)
-
-        embed = discord.Embed(
-            title=self.lang.get("setup_restored_title", "{nexus_checkmark} Settings restored!").format(nexus_checkmark=NexusEmojis.CHECKMARK),
-            description=self.lang.get("setup_restored_desc", "Your old settings have been successfully restored."),
-            color=NEXUS_COLOR,
-        )
-        settings = await db_settings.get_guild(interaction.guild_id)
-        if settings:
-            log_ch     = f"<#{settings['log_channel_id']}>"     if settings.get("log_channel_id")     else "—"
-            rules_ch   = f"<#{settings['rules_channel_id']}>"   if settings.get("rules_channel_id")   else "—"
-            welcome_ch = f"<#{settings['welcome_channel_id']}>" if settings.get("welcome_channel_id") else "—"
-            embed.add_field(name=self.lang.get("settings_log",     "📋 Log-Channel"),         value=log_ch,     inline=True)
-            embed.add_field(name=self.lang.get("settings_rules",   "📜 Rules Channel"),       value=rules_ch,   inline=True)
-            embed.add_field(name=self.lang.get("settings_welcome", "👋 Welcome Channel"),     value=welcome_ch, inline=True)
-
-        try:
-            if self.setup_channel:
-                async for msg in self.setup_channel.history(limit=10):
-                    if msg.author == interaction.guild.me and msg.components:
-                        await msg.delete(delay=1)
-                        break
-        except (discord.NotFound, discord.Forbidden):
-            pass
-
-        await interaction.response.edit_message(embed=embed, view=None)
-        log.info("Guild %s hat Einstellungen wiederhergestellt.", interaction.guild.name)
+        await _finish_restore(interaction, self.lang, self.setup_channel)
 
     @discord.ui.button(label="Restart", style=discord.ButtonStyle.danger)
     async def restart_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
