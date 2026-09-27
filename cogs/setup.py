@@ -5,7 +5,7 @@ from discord.ext import commands
 from database import db_settings
 from config import NEXUS_COLOR, DASHBOARD_URL
 from emojis import NexusEmojis
-from cogs.utils import get_lang
+from cogs.utils import get_lang, MODULE_DISPLAY, CORE_MODULES
 from systems.hierarchy import check_bot_hierarchy, get_bot_position_info
 
 log = logging.getLogger(__name__)
@@ -75,14 +75,15 @@ async def _resolve_channel_and_check_perms(
     Fängt 403 Forbidden (50001: Missing Access) bei privaten Kanälen sauber ab.
     """
     bot_member = guild.me or await guild.fetch_member(bot_user_id)
-    
-    try:
-        channel = await guild.fetch_channel(raw_channel.id)
-    except discord.Forbidden:
-        # Bot hat keinen Zugriff auf privaten Kanal (Missing Access)
-        return raw_channel, ["Kanal anzeigen (`View Channel`)"]
-    except discord.HTTPException:
-        return raw_channel, ["Kanal anzeigen (`View Channel`)"]
+    channel = guild.get_channel(raw_channel.id)
+    if channel is None:
+        try:
+            channel = await guild.fetch_channel(raw_channel.id)
+        except discord.Forbidden:
+            # Bot hat keinen Zugriff auf privaten Kanal (Missing Access)
+            return raw_channel, ["Kanal anzeigen (`View Channel`)"]
+        except discord.HTTPException:
+            return raw_channel, ["Kanal anzeigen (`View Channel`)"]
 
     missing = _get_missing_channel_permissions(channel, bot_member, for_logging=for_logging)
     return channel, missing
@@ -619,57 +620,79 @@ class WelcomeChannelView(discord.ui.View):
 # ─── Schritt 4: Module ────────────────────────────────────────────────────────
 
 class ModulesView(discord.ui.View):
+    """Schritt 5: Alle Module per Multi-Select anbieten statt nur Levels/Welcome."""
+
+    # Vorausgewählt: was die meisten Server wollen
+    PRESELECTED = {"levels", "welcome", "stream_alerts", "tickets"}
+
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
         super().__init__(timeout=300)
         self.owner_id      = owner_id
         self.setup_channel = setup_channel
-        self.levels        = True
-        self.welcome       = True
         self.lang          = lang
-        self._update_buttons()
-        self.finish_setup.label = f"{self.lang.get('setup_finish', 'Finish Setup')}"
+
+        from database.db_settings import DEFAULT_MODULES
+        self.available = [
+            key for key in MODULE_DISPLAY
+            if key in DEFAULT_MODULES and key not in CORE_MODULES
+        ]
+        self.selected = {k for k in self.available if k in self.PRESELECTED}
+
+        self.module_select.options = self._build_options()
+        self.module_select.max_values = len(self.available)
+        self.module_select.placeholder = lang.get("setup_modules_placeholder", "Choose modules…")
+        self.finish_setup.label = lang.get("setup_finish", "Finish Setup")
         self.finish_setup.emoji = discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK)
 
-    def _update_buttons(self):
-        self.toggle_levels.style  = discord.ButtonStyle.success if self.levels else discord.ButtonStyle.secondary
-        self.toggle_levels.label  = f"{self.lang.get('settings_level', '📈 Level-System')}: {self.lang.get('setup_on', 'ON') if self.levels else self.lang.get('setup_off', 'OFF')}"
-        self.toggle_welcome.style = discord.ButtonStyle.success if self.welcome else discord.ButtonStyle.secondary
-        self.toggle_welcome.label = f"{self.lang.get('welcome_title', '👋 Welcome!')}: {self.lang.get('setup_on', 'ON') if self.welcome else self.lang.get('setup_off', 'OFF')}"
+    def _build_options(self) -> list[discord.SelectOption]:
+        options = []
+        for key in self.available:
+            emoji, fallback_name = MODULE_DISPLAY[key]
+            name = self.lang.get(f"module_name_{key}", fallback_name)
+            desc = self.lang.get(f"setup_module_desc_{key}", "")
+            options.append(discord.SelectOption(
+                label=name[:100],
+                value=key,
+                description=desc[:100] or None,
+                emoji=discord.PartialEmoji.from_str(emoji),
+                default=key in self.selected,
+            ))
+        return options
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not interaction.user.guild_permissions.manage_guild:
             await interaction.response.send_message(
                 self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
+                ephemeral=True,
             )
             return False
         return True
 
-    @discord.ui.button(label="📈 Level-System: ON", style=discord.ButtonStyle.success)
-    async def toggle_levels(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.levels = not self.levels
-        self._update_buttons()
-        await interaction.response.edit_message(view=self)
-
-    @discord.ui.button(label="👋 Welcome: ON", style=discord.ButtonStyle.success)
-    async def toggle_welcome(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.welcome = not self.welcome
-        self._update_buttons()
+    @discord.ui.select(cls=discord.ui.Select, min_values=0, row=0)
+    async def module_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.selected = set(select.values)
+        # Auswahl in den Optionen merken, damit sie nach dem Edit sichtbar bleibt
+        for opt in select.options:
+            opt.default = opt.value in self.selected
         await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="Finish Setup", style=discord.ButtonStyle.primary, row=1)
     async def finish_setup(self, interaction: discord.Interaction, button: discord.ui.Button):
         from database.db_settings import DEFAULT_MODULES
         modules = DEFAULT_MODULES.copy()
-
-        modules["levels"]  = self.levels
-        modules["welcome"] = self.welcome
+        for key in self.available:
+            modules[key] = key in self.selected
 
         settings   = await db_settings.get_guild(interaction.guild_id)
         not_set    = "—"
         log_ch     = f"<#{settings['log_channel_id']}>"     if settings and settings.get("log_channel_id")     else not_set
         rules_ch   = f"<#{settings['rules_channel_id']}>"   if settings and settings.get("rules_channel_id")   else not_set
         welcome_ch = f"<#{settings['welcome_channel_id']}>" if settings and settings.get("welcome_channel_id") else not_set
+
+        active = [
+            f"{MODULE_DISPLAY[k][0]} {self.lang.get(f'module_name_{k}', MODULE_DISPLAY[k][1])}"
+            for k in self.available if modules[k]
+        ]
 
         embed = discord.Embed(
             title=f"{NexusEmojis.CHECKMARK} {self.lang.get('setup_done_title', 'Nexus is ready!')}",
@@ -679,8 +702,11 @@ class ModulesView(discord.ui.View):
         embed.add_field(name=self.lang.get("settings_log",     "📋 Log-Channel"),     value=log_ch,     inline=True)
         embed.add_field(name=self.lang.get("settings_rules",   "📜 Rules-Channel"),   value=rules_ch,   inline=True)
         embed.add_field(name=self.lang.get("settings_welcome", "👋 Welcome-Channel"), value=welcome_ch, inline=True)
-        embed.add_field(name=self.lang.get("settings_level",   "📈 Level-System"),    value=f"{NexusEmojis.CHECKMARK} {self.lang.get('setup_on', 'ON')}" if self.levels  else f"❌ {self.lang.get('setup_off', 'OFF')}", inline=True)
-        embed.add_field(name=self.lang.get("welcome_title",    "👋 Welcome"),         value=f"{NexusEmojis.CHECKMARK} {self.lang.get('setup_on', 'ON')}" if self.welcome else f"❌ {self.lang.get('setup_off', 'OFF')}", inline=True)
+        embed.add_field(
+            name=self.lang.get("setup_active_modules", "🧩 Active modules"),
+            value="\n".join(active) if active else not_set,
+            inline=False,
+        )
         embed.set_footer(text=f"Nexus • {self.lang.get('setup_completed', 'Setup completed')}")
 
         final_view = discord.ui.View(timeout=None)
@@ -699,10 +725,10 @@ class ModulesView(discord.ui.View):
             if log_channel:
                 try:
                     await log_channel.send(embed=embed)
-                except (discord.Forbidden, discord.HTTPException) as e:
+                except discord.HTTPException as e:
                     log.warning("Konnte Abschluss-Embed nicht in Log-Kanal senden (%s): %s", settings["log_channel_id"], e)
 
-        log.info("Setup auf %s abgeschlossen.", interaction.guild.name)
+        log.info("Setup auf %s abgeschlossen. Module: %s", interaction.guild.name, sorted(self.selected))
 
         if not interaction.message.flags.ephemeral:
             try:
@@ -713,7 +739,7 @@ class ModulesView(discord.ui.View):
                             break
                 else:
                     await interaction.delete_original_response()
-            except (discord.NotFound, discord.Forbidden):
+            except discord.HTTPException:
                 pass
 
 # ─── Restore Option ───────────────────────────────────────────────────────────
@@ -817,21 +843,6 @@ class SetupCog(commands.Cog):
             view=SetupView(interaction.user.id, lang, interaction.guild_id),
             ephemeral=True,
         )
-
-    async def cog_app_command_error(
-        self,
-        interaction: discord.Interaction,
-        error: app_commands.AppCommandError,
-    ):
-        lang = await get_lang(interaction.guild_id)
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                lang.get("error_occurred", "An error occurred: {error}").format(error=error), ephemeral=True
-            )
 
 async def setup(bot):
     await bot.add_cog(SetupCog(bot))
