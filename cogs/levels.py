@@ -10,12 +10,12 @@ from systems.exp_system import XP_COOLDOWN
 from cogs.utils import post_logging, get_lang, module_required
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
+from systems.ui import NexusView, NexusModal
 
 log = logging.getLogger(__name__)
 
 # Cooldown-Cache: Key=(guild_id, user_id), Value=Timestamp
 _xp_cooldown: dict[tuple[int, int], datetime] = {}
-
 
 class Levels(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -379,6 +379,7 @@ class Levels(commands.Cog):
         view = LevelRolesView(interaction.guild_id, lang)
         view.remove_btn.disabled = not roles_data
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        view.bind(interaction)
 
     def _build_level_roles_embed(self, roles_data: list[dict], lang: dict, color: int) -> discord.Embed:
         embed = discord.Embed(
@@ -396,11 +397,10 @@ class Levels(commands.Cog):
 
 # ─── Views & Modals ──────────────────────────────────────────────────────────
 
-class LevelRolesView(discord.ui.View):
+class LevelRolesView(NexusView):
     def __init__(self, guild_id: int, lang: dict):
-        super().__init__(timeout=180)
+        super().__init__(lang, owner_id=None, require=None, timeout=180)
         self.guild_id = guild_id
-        self.lang = lang
         self.add_btn.label = lang.get("level_roles_btn_add", "➕ Add")
         self.remove_btn.label = lang.get("level_roles_btn_remove", "➖ Remove")
 
@@ -412,25 +412,25 @@ class LevelRolesView(discord.ui.View):
     async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         roles_data = await db_levels.get_all_level_roles(self.guild_id)
         if not roles_data:
+            self.stop()
             await interaction.response.edit_message(
                 content=self.lang.get("no_level_roles_found", "No level roles have been set up for this server yet."),
                 embed=None,
                 view=None,
             )
             return
-        view = RemoveLevelRoleView(self.guild_id, self.lang, roles_data)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction,
+            RemoveLevelRoleView(self.guild_id, self.lang, roles_data),
             content=self.lang.get("level_roles_pick_remove", "Which level role should be removed?"),
             embed=None,
-            view=view,
         )
 
 
-class AddLevelRoleModal(discord.ui.Modal):
+class AddLevelRoleModal(NexusModal):
     def __init__(self, guild_id: int, lang: dict):
-        super().__init__(title=lang.get("level_roles_add_modal_title", "Add Level Role"))
+        super().__init__(lang, title=lang.get("level_roles_add_modal_title", "Add Level Role"))
         self.guild_id = guild_id
-        self.lang = lang
         self.level_input = discord.ui.TextInput(
             label=lang.get("level_roles_level_label", "Level"),
             placeholder=lang.get("level_roles_level_placeholder", "e.g. 10"),
@@ -503,7 +503,7 @@ class AddLevelRoleModal(discord.ui.Modal):
             )
 
         select.callback = on_role_chosen
-        view = discord.ui.View(timeout=60)
+        view = NexusView(self.lang, owner_id=None, require=None, timeout=60)
         view.add_item(select)
 
         await interaction.response.send_message(
@@ -511,12 +511,12 @@ class AddLevelRoleModal(discord.ui.Modal):
             view=view,
             ephemeral=True,
         )
+        view.bind(interaction)
 
-class RemoveLevelRoleView(discord.ui.View):
+class RemoveLevelRoleView(NexusView):
     def __init__(self, guild_id: int, lang: dict, roles_data: list[dict]):
-        super().__init__(timeout=60)
+        super().__init__(lang, owner_id=None, require=None, timeout=60)
         self.guild_id = guild_id
-        self.lang = lang
         self.select_role.placeholder = lang.get("level_roles_remove_placeholder", "Select a level role to remove...")
         self.select_role.options = [
             discord.SelectOption(label=f"Level {entry['level']}", value=str(entry["level"]))
@@ -527,6 +527,7 @@ class RemoveLevelRoleView(discord.ui.View):
     async def select_role(self, interaction: discord.Interaction, select: discord.ui.Select):
         level = int(select.values[0])
         await db_levels.remove_level_role(self.guild_id, level)
+        self.stop()
         await interaction.response.edit_message(
             content=self.lang.get("remove_level_role_success", "{check} Removed role for Level {level}.").format(
                 check=NexusEmojis.CHECKMARK, level=level

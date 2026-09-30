@@ -11,6 +11,49 @@ MESSAGES: dict[str, str] = {
     "invite_desc":          "Verwalte deinen Server mit Leichtigkeit — von Levelsystem und Reaktionsrollen über Stream-Alerts bis hin zu starkem Schutz durch Nexus Shield.",
     "module_enable_perm_error": "Du brauchst 'Server verwalten', um das zu ändern.",
     "module_enabled_msg":       "Modul aktiviert. Führe den Command jetzt erneut aus.",
+    "error_forbidden": "❌ Mir fehlen Rechte oder meine Rolle steht zu tief. Mit `/diagnose` siehst du, was fehlt.",
+    "error_generic":   "❌ Da ist etwas schiefgelaufen. Bitte versuch es später nochmal.",
+    "view_not_yours": "❌ Dieses Menü gehört jemand anderem. Führ den Command selbst aus.",
+    "confirm_yes":    "Bestätigen",
+    "confirm_no":     "Abbrechen",
+
+    # ─── Error Handling ───────────────────────────────────────────────
+    "perm_issue_missing_perms":     "❌ Mir fehlen folgende Rechte: {perms}",
+    "perm_issue_bot_hierarchy":     "❌ {subject} steht gleich hoch oder höher als meine Rolle. Bitte schieb die Nexus-Rolle darüber.",
+    "perm_issue_actor_hierarchy":   "❌ {subject} steht gleich hoch oder höher als du.",
+    "perm_issue_target_owner":      "❌ Gegen den Server-Owner geht das nicht.",
+    "perm_issue_target_self":       "❌ Diese Aktion kann nicht auf diesen User angewendet werden.",
+    "perm_issue_target_admin":      "❌ Discord erlaubt keine Timeouts gegen Mitglieder mit Administrator ({subject}).",
+    "perm_issue_role_managed":      "❌ {subject} wird von einer Integration verwaltet und kann nicht vergeben werden.",
+    "perm_issue_role_default":      "❌ @everyone kann nicht vergeben werden.",
+    "perm_issue_no_channel_access": "❌ Ich kann {subject} nicht sehen. Bitte gib Nexus Zugriff auf den Channel.",
+
+    # ─── Diagnose ─────────────────────────────────────────────────────
+    "diag_title":               "🩺 Nexus-Diagnose",
+    "diag_summary_ok":          "Alles sieht gut aus! 🎉",
+    "diag_summary_problems":    "**{count}** Problem(e) gefunden. Details unten.",
+    "diag_more":                "… und {count} weitere",
+    "diag_section_perms":       "🔑 Rechte",
+    "diag_perms_admin":         "Nexus hat Administrator. Alles funktioniert, nötig ist das aber nicht.",
+    "diag_perms_missing":       "Fehlende Rechte: {perms}",
+    "diag_perms_ok":            "Alle empfohlenen Rechte sind vorhanden.",
+    "diag_section_hierarchy":   "📊 Rollen-Hierarchie",
+    "diag_everyone_dangerous":  "@everyone hat gefährliche Rechte: {perms}",
+    "diag_roles_above_short":   "Rollen mit Mod-Rechten stehen über Nexus: {roles}",
+    "diag_hierarchy_ok":        "Rollen-Hierarchie sieht gut aus.",
+    "diag_section_channels":    "💬 Channels",
+    "diag_ticket_log":          "🎫 Ticket-Log",
+    "diag_channel_deleted":     "Channel existiert nicht mehr",
+    "diag_channel_no_access":   "kein Zugriff",
+    "diag_section_roles":       "🎭 Modul-Rollen",
+    "diag_src_level":           "Level {level}",
+    "diag_src_rr":              "Reaction Role",
+    "diag_role_deleted":        "Rolle existiert nicht mehr",
+    "diag_role_not_manageable": "Nexus kann diese Rolle nicht vergeben",
+    "diag_roles_ok":            "Alle Modul-Rollen können vergeben werden.",
+    "diag_section_tickets":     "🎫 Tickets",
+    "diag_tickets_missing":     "Tickets können nicht erstellt werden. Es fehlt: {perms}",
+    "diag_tickets_ok":          "Tickets können erstellt werden.",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} wurde gekickt.",
@@ -52,6 +95,8 @@ MESSAGES: dict[str, str] = {
     "remove_role_no_permission":"❌ Ich habe keine Berechtigung diese Rolle zu entziehen.",
     "slowmode_no_permission":   "❌ Ich habe keine Berechtigung diesen Channel zu bearbeiten.",
     "timeout_no_permission":    "❌ Ich habe keine Berechtigung diesem User einen Timeout zu geben.",
+    "kick_error":               "❌ Beim Kicken ist etwas schiefgelaufen.",
+    "unban_invalid_user":       "❌ Bitte wähle einen User aus den Vorschlägen aus.",
 
     # ─── DM Nachrichten ───────────────────────────────────────────────
     "dm_kicked":            "👢 Du wurdest gekickt",
@@ -76,6 +121,7 @@ MESSAGES: dict[str, str] = {
     "log_user":             "User",
     "log_moderator":        "Moderator",
     "log_reason":           "Grund",
+    "log_purge":            "{amount} Nachrichten in #{channel} gelöscht.",
 
     # ─── Level ────────────────────────────────────────────────────────
     "level_up":             "{user} hat **Level {level}** erreicht!",
@@ -160,7 +206,6 @@ MESSAGES: dict[str, str] = {
     "rr_list_title":        "📋 Reaktionsrollen",
     "rr_list_empty":        "Keine Reaktionsrollen-Nachrichten gefunden.",
     "rr_delete_success":    "{nexus_checkmark} Alle Reaktionsrollen für Nachricht `{id}` wurden entfernt.",
-    "rr_premium_emoji":     "⭐ **Server-Emojis** sind ein Premium-Feature!\nMit Nexus Premium kannst du eigene Server-Emojis nutzen.",
     "rr_premium_unique":    "⭐ **Unique-Modus** ist ein Premium-Feature!\nMit Nexus Premium kannst du sicherstellen dass User immer nur eine Rolle aus einer Gruppe haben.",
     "rr_setup_title":       "⚙️ Nexus Reaktionsrollen Setup",
     "rr_setup_description": "Die Zielnachricht wurde in {channel} erstellt.\n[🔗 Zur Nachricht springen]({url})\n\nKlicke auf **Rolle hinzufügen** um zu starten!",
@@ -228,6 +273,13 @@ MESSAGES: dict[str, str] = {
     "rr_roles_updated":         "{nexus_checkmark} Deine Rollen wurden erfolgreich aktualisiert!",
     "rr_autocomplete_label":       "Nachricht in {channel_name} ({msg_id})",
     "rr_autocomplete_id_fallback": "ID:",
+    "rr_mode_reaction_label":      "Emoji-Reaktionen",
+    "rr_mode_reaction_desc":       "Klassisch - Mitglieder klicken auf ein Emoji unter der Nachricht",
+    "rr_mode_dropdown_label":      "Dropdown-Menü",
+    "rr_mode_dropdown_desc":       "Übersichtlich bei vielen Rollen - ein Klick öffnet ein persönliches Auswahlmenü",
+    "rr_dropdown_open_button":     "🎭 Rollen auswählen",
+    "rr_emoji_foreign":            "❌ Dieses Emoji kann ich nicht nutzen, weil es von einem Server stammt, auf dem ich nicht bin. Bitte nimm ein anderes.",
+    "rr_roles_partially_updated":  "⚠️ Deine Rollen wurden aktualisiert, aber folgende konnte ich nicht ändern: {roles}. Bitte gib einem Server-Admin Bescheid.",
 
     # ─── Boosts ───────────────────────────────────────────────────────
     "boost_title":       "{boost} Neuer Server Boost!",
@@ -326,6 +378,22 @@ MESSAGES: dict[str, str] = {
         "*(Du kannst die Module jederzeit über `/module` ändern)*",
     "setup_skip":      "⏭️ Überspringen",
     "setup_skip_hint": "Du weißt was du tust? Klicke auf **Überspringen** um fortzufahren.",
+    "setup_modules_placeholder":           "Module auswählen…",
+    "setup_active_modules":                "🧩 Aktive Module",
+    "setup_step_five_desc":                "**Fast geschafft!**\nWelche Module sollen direkt aktiviert werden? Wähle so viele, wie du möchtest.\n\n*(Du kannst die Module jederzeit mit `/module` ändern)*",
+    "setup_module_desc_levels":            "XP für Aktivität, Level-Ups und Rollen-Belohnungen",
+    "setup_module_desc_welcome":           "Begrüßt neue Mitglieder mit einer eigenen Nachricht",
+    "setup_module_desc_stream_alerts":     "Benachrichtigt, wenn Twitch-, YouTube- oder Kick-Streams live gehen",
+    "setup_module_desc_tickets":           "Private Support-Tickets für deine Mitglieder",
+    "setup_module_desc_reaction_roles":    "Mitglieder wählen ihre Rollen per Reaktion oder Dropdown",
+    "setup_module_desc_automod":           "Filtert Spam und Links, dazu Anti-Nuke-Schutz",
+    "setup_module_desc_boosts":            "Bedankt sich bei Mitgliedern für Server-Boosts",
+    "setup_module_desc_embeds":            "Eigene Embed-Nachrichten erstellen und senden",
+    "setup_no_channel_dm":
+        "Danke, dass du mich auf **{guild}** eingeladen hast!\n\n"
+        "⚠️ Ich konnte **in keinem Kanal eine Begrüßungsnachricht posten**, "
+        "weil mir die Berechtigungen `Kanal anzeigen`, `Nachrichten senden` oder `Links einbetten` fehlen.\n\n"
+        "Bitte weise mir auf dem Server entsprechende Rechte zu und nutze `/setup`, um mich einzurichten.",
 
     # ─── Module ───────────────────────────────────────────────────────
     "module_core":          "🔒 Kern-Modul",

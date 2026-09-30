@@ -10,6 +10,7 @@ from cogs.utils import get_lang, module_required
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.hierarchy import can_manage_role, can_use_channel, format_issue
+from systems.ui import NexusView, NexusModal
 
 log = logging.getLogger(__name__)
 
@@ -43,12 +44,11 @@ def parse_emoji_for_select(emoji_str: str) -> tuple[str, discord.PartialEmoji]:
 
 # ─── Setup Flow Views ────────────────────────────────────────────────────────
 
-class ReactionRoleCreateModal(discord.ui.Modal):
+class ReactionRoleCreateModal(NexusModal):
     def __init__(self, bot, channel: discord.TextChannel, lang: dict, color: int, premium: bool):
-        super().__init__(title=lang.get("rr_modal_create_title", "Create Reaction Role"))
+        super().__init__(lang, title=lang.get("rr_modal_create_title", "Create Reaction Role"))
         self.bot = bot
         self.channel = channel
-        self.lang = lang
         self.color = color
         self.premium = premium
 
@@ -142,37 +142,26 @@ class ReactionRoleCreateModal(discord.ui.Modal):
             color=self.color,
         )
 
-        await interaction.response.send_message(
-            embed=setup_embed,
-            view=ReactionRoleSetupView(self.bot, interaction.user.id, self.channel, msg, self.lang),
-            ephemeral=True,
-        )
+        view = ReactionRoleSetupView(self.bot, interaction.user.id, self.channel, msg, self.lang)
+        await interaction.response.send_message(embed=setup_embed, view=view, ephemeral=True)
+        view.bind(interaction)
 
-class ReactionRoleSetupView(discord.ui.View):
+class ReactionRoleSetupView(NexusView):
     def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, lang: dict):
-        super().__init__(timeout=300)
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
-        self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
-        self.lang     = lang
         self.add_role_btn.label = lang.get("rr_btn_add_role", "➕ Add Role")
         self.finish_btn.label   = lang.get("rr_btn_finish",   "Finish")
         self.finish_btn.emoji = discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-            return False
-        return True
-
     @discord.ui.button(label="➕ Add Role", style=discord.ButtonStyle.success)
     async def add_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
+        await self.show(
+            interaction,
+            RoleSelectView(self.bot, self.owner_id, self.channel, self.message, self.lang),
             embed=_step_role_embed(self.lang),
-            view=RoleSelectView(self.bot, self.owner_id, self.channel, self.message, self.lang),
         )
 
     @discord.ui.button(label="✅ Fertig", style=discord.ButtonStyle.secondary)
@@ -183,25 +172,16 @@ class ReactionRoleSetupView(discord.ui.View):
             description=self.lang.get("rr_done_description", "The message in {channel} is ready.").format(channel=self.channel.mention),
             color=color,
         )
+        self.stop()
         await interaction.response.edit_message(embed=embed, view=None)
 
-class RoleSelectView(discord.ui.View):
+class RoleSelectView(NexusView):
     def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, lang: dict):
-        super().__init__(timeout=300)
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
-        self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
-        self.lang     = lang
         self.select_role.placeholder = self.lang.get("rr_select_role_placeholder", "🎭 Select a role...")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.select(
         cls=discord.ui.RoleSelect,
@@ -252,32 +232,27 @@ class RoleSelectView(discord.ui.View):
             )
             return
 
-        await interaction.response.edit_message(
+        await self.show(
+            interaction,
+            EmojiInputView(self.bot, self.owner_id, self.channel, self.message, role, self.lang),
             embed=_step_emoji_embed(role, self.lang),
-            view=EmojiInputView(self.bot, self.owner_id, self.channel, self.message, role, self.lang),
         )
 
-class EmojiInputView(discord.ui.View):
+class EmojiInputView(NexusView):
     def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, lang: dict):
-        super().__init__(timeout=300)
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
-        self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
         self.role     = role
-        self.lang     = lang
         self.emoji_btn.label = lang.get("rr_btn_emoji", "😀 Select Emoji")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.button(label="😀 Select Emoji", style=discord.ButtonStyle.primary)
     async def emoji_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Ab hier übernimmt die wait_for-Schleife unten; diese View wird so oder so
+        # durch eine neue ersetzt, deshalb hier schon stoppen (verhindert, dass ihr
+        # 300s-Timeout während der bis zu 60s langen Wartezeit dazwischenfunkt).
+        self.stop()
         # 1. Update der Setup-Nachricht: Warte auf Reaktion
         await interaction.response.edit_message(
             embed=discord.Embed(
@@ -408,16 +383,14 @@ class EmojiInputView(discord.ui.View):
                 )
                 break
 
-class ModeSelectView(discord.ui.View):
+class ModeSelectView(NexusView):
     def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, emoji: str, lang: dict, has_premium: bool):
-        super().__init__(timeout=300)
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
-        self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
         self.role     = role
         self.emoji    = emoji
-        self.lang     = lang
         self.toggle_btn.label = lang.get("rr_btn_toggle", "Toggle")
         self.toggle_btn.emoji = discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK)
 
@@ -428,14 +401,6 @@ class ModeSelectView(discord.ui.View):
         else:
             self.unique_btn.label = lang.get("rr_btn_unique_free", "🔒 Unique (Premium)")
             self.unique_btn.style = discord.ButtonStyle.secondary
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.button(label="Toggle", style=discord.ButtonStyle.success)
     async def toggle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -452,14 +417,21 @@ class ModeSelectView(discord.ui.View):
 
     async def _save_and_continue(self, interaction: discord.Interaction, mode: str):
         if mode == "unique":
-            await interaction.response.edit_message(
+            await self.show(
+                interaction,
+                GroupInputView(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang),
                 embed=_step_group_embed(self.role, self.emoji, self.lang),
-                view=GroupInputView(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang),
             )
         else:
-            await self._save(interaction, mode=mode, group_id=None)
+            await self._save(interaction, mode=mode, group_id=None, previous_view=self)
 
-    async def _save(self, interaction: discord.Interaction, mode: str, group_id: int | None):
+    async def _save(
+        self, interaction: discord.Interaction, mode: str, group_id: int | None,
+        *, previous_view: NexusView | None = None,
+    ):
+        """previous_view: die View, die bei Erfolg gestoppt werden muss — meist self
+        (direkter Button-Klick), bei Aufruf über GroupModal/GroupSelectView aber eine
+        ANDERE, noch sichtbare View (siehe dort)."""
         msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.message.id)
         display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
 
@@ -488,40 +460,37 @@ class ModeSelectView(discord.ui.View):
         color = await db_settings.get_color(interaction.guild_id)
         embed = discord.Embed(
             title=self.lang.get("rr_role_added_title", "{nexus_checkmark} Role added!").format(nexus_checkmark=NexusEmojis.CHECKMARK),
-            description=self.lang.get("rr_added").format(emoji=self.emoji, role=self.role.mention, mode=mode),
+            description=self.lang.get(
+                "rr_added", "{emoji} → {role} (Mode: {mode})"
+            ).format(emoji=self.emoji, role=self.role.mention, mode=mode),
             color=color,
         )
         embed.set_footer(text=self.lang.get("rr_add_another_hint", "Would you like to add more roles?"))
+        if previous_view is not None:
+            previous_view.stop()
         await interaction.response.edit_message(
             embed=embed,
             view=ReactionRoleSetupView(self.bot, self.owner_id, self.channel, self.message, self.lang),
         )
 
-class GroupInputView(discord.ui.View):
+class GroupInputView(NexusView):
     def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, emoji: str, lang: dict):
-        super().__init__(timeout=300)
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
-        self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
         self.role     = role
         self.emoji    = emoji
-        self.lang     = lang
         self.new_group_btn.label      = lang.get("rr_btn_new_group",      "➕ Create New Group")
         self.existing_group_btn.label = lang.get("rr_btn_existing_group", "📋 Existing Group")
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-            return False
-        return True
-
     @discord.ui.button(label="➕ Neue Gruppe erstellen", style=discord.ButtonStyle.primary)
     async def new_group_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Öffnet nur das Modal — diese View bleibt bis zum Submit sichtbar,
+        # deshalb sich selbst als parent_view mitgeben, damit das Modal sie
+        # bei Erfolg stoppen kann (sonst läuft ihr 300s-Timeout unabhängig weiter).
         await interaction.response.send_modal(
-            GroupModal(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang)
+            GroupModal(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang, parent_view=self)
         )
 
     @discord.ui.button(label="📋 Bestehende Gruppe", style=discord.ButtonStyle.secondary)
@@ -533,12 +502,13 @@ class GroupInputView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        await interaction.response.edit_message(
+        await self.show(
+            interaction,
+            GroupSelectView(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, groups, self.lang),
             embed=_step_group_select_embed(self.lang),
-            view=GroupSelectView(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, groups, self.lang),
         )
 
-class GroupModal(discord.ui.Modal):
+class GroupModal(NexusModal):
     group_name = discord.ui.TextInput(
         label="Group Name",
         placeholder="e.g., Colors, Teams, Regions...",
@@ -546,15 +516,15 @@ class GroupModal(discord.ui.Modal):
         max_length=100,
     )
 
-    def __init__(self, bot, owner_id: int, channel, message, role, emoji, lang: dict):
-        super().__init__(title=lang.get("rr_modal_group_title", "Create Group"))
+    def __init__(self, bot, owner_id: int, channel, message, role, emoji, lang: dict, parent_view: NexusView):
+        super().__init__(lang, title=lang.get("rr_modal_group_title", "Create Group"))
         self.bot      = bot
         self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
         self.role     = role
         self.emoji    = emoji
-        self.lang     = lang
+        self.parent_view = parent_view
 
         self.group_name.label = self.lang.get("rr_modal_group_label", "Group Name")
         self.group_name.placeholder = self.lang.get("rr_modal_group_placeholder", "e.g., Colors, Teams, Regions...")
@@ -567,19 +537,17 @@ class GroupModal(discord.ui.Modal):
         mode_view = ModeSelectView(
             self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang, has_premium=premium_status
         )
-        await mode_view._save(interaction, mode="unique", group_id=group_id)
+        await mode_view._save(interaction, mode="unique", group_id=group_id, previous_view=self.parent_view)
 
-class GroupSelectView(discord.ui.View):
+class GroupSelectView(NexusView):
     def __init__(self, bot, owner_id: int, channel, message, role, emoji, groups: list[dict], lang: dict):
-        super().__init__(timeout=300)
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
-        self.owner_id = owner_id
         self.channel  = channel
         self.message  = message
         self.role     = role
         self.emoji    = emoji
-        self.lang     = lang
-        
+
         options = [
             discord.SelectOption(label=g["name"], value=str(g["id"]))
             for g in groups
@@ -588,21 +556,13 @@ class GroupSelectView(discord.ui.View):
         select.callback = self._select_callback
         self.add_item(select)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
-            )
-            return False
-        return True
-
     async def _select_callback(self, interaction: discord.Interaction):
         group_id  = int(interaction.data["values"][0])
         premium_status = await is_premium(interaction.guild_id)
         mode_view = ModeSelectView(
             self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang, has_premium=premium_status
         )
-        await mode_view._save(interaction, mode="unique", group_id=group_id)
+        await mode_view._save(interaction, mode="unique", group_id=group_id, previous_view=self)
 
 # ─── Premium Dropdown ────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ from config import NEXUS_COLOR, DASHBOARD_URL
 from emojis import NexusEmojis
 from cogs.utils import get_lang, MODULE_DISPLAY, CORE_MODULES
 from systems.hierarchy import check_bot_hierarchy, get_bot_position_info
+from systems.ui import NexusView
 
 log = logging.getLogger(__name__)
 
@@ -266,25 +267,29 @@ async def _channel_permission_warning_embed(
 
 # ─── Permission Warning View ───────────────────────────────────────────────────
 
-class ChannelPermissionWarningView(discord.ui.View):
+class SetupStepView(NexusView):
+    """
+    Basis für alle Setup-Schritte.
+
+    Zugriff: 'Manage Server' — bewusst KEIN Owner-Zwang. Die Setup-Nachricht wird beim
+    Server-Join öffentlich gepostet, und wer Nexus einlädt, ist nicht immer der Owner.
+    `owner_id` wird nur durchgereicht (Signatur bleibt kompatibel zu bot.py).
+    """
+    DENY_KEY = "setup_only_owner"
+
+    def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
+        super().__init__(lang, owner_id=None, require="manage_guild", timeout=300)
+        self.setup_owner_id = owner_id
+        self.setup_channel  = setup_channel
+
+
+class ChannelPermissionWarningView(SetupStepView):
     def __init__(self, owner_id: int, channel, step_type: str, lang: dict[str, str], setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
+        super().__init__(owner_id, lang, setup_channel)
         self.channel       = channel
         self.step_type     = step_type
-        self.lang          = lang
-        self.setup_channel = setup_channel
         self.validate_btn.label = self.lang.get("setup_validate", "🔍 Validate")
         self.skip_btn.label     = self.lang.get("setup_skip", "⏭️ Skip")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.button(label="🔍 Validate", style=discord.ButtonStyle.primary)
     async def validate_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -311,41 +316,29 @@ class ChannelPermissionWarningView(discord.ui.View):
 
     async def _proceed_next_step(self, interaction: discord.Interaction, mention: str):
         if self.step_type == "log":
-            await interaction.response.edit_message(
+            await self.show(
+                interaction, RulesChannelView(self.setup_owner_id, self.lang, self.setup_channel),
                 embed=await _rules_channel_embed(interaction.guild_id, mention, self.lang),
-                view=RulesChannelView(self.owner_id, self.lang, self.setup_channel),
             )
         elif self.step_type == "rules":
-            await interaction.response.edit_message(
+            await self.show(
+                interaction, WelcomeChannelView(self.setup_owner_id, self.lang, self.setup_channel),
                 embed=await _welcome_channel_embed(interaction.guild_id, mention, self.lang),
-                view=WelcomeChannelView(self.owner_id, self.lang, self.setup_channel),
             )
         elif self.step_type == "welcome":
-            await interaction.response.edit_message(
+            await self.show(
+                interaction, ModulesView(self.setup_owner_id, self.lang, self.setup_channel),
                 embed=await _modules_embed(interaction.guild_id, self.lang),
-                view=ModulesView(self.owner_id, self.lang, self.setup_channel),
             )
 
 # ─── Schritt 0: Rollenprüfung ─────────────────────────────────────────────────
 
-class HierarchyView(discord.ui.View):
+class HierarchyView(SetupStepView):
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None, is_restore: bool = False):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.setup_channel = setup_channel
-        self.lang          = lang
+        super().__init__(owner_id, lang, setup_channel)
         self.is_restore    = is_restore
         self.check_hierarchy.label = self.lang.get("setup_validate", "🔍 Validate")
         self.skip_hierarchy.label  = self.lang.get("setup_skip", "⏭️ Skip")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.button(label="🔍 Validate", style=discord.ButtonStyle.primary)
     async def check_hierarchy(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -364,71 +357,48 @@ class HierarchyView(discord.ui.View):
 
     async def _proceed(self, interaction: discord.Interaction):
         if self.is_restore:
+            self.stop()
             await _finish_restore(interaction, self.lang, self.setup_channel)
             return
         await _apply_brand_role(interaction)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, LogChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _log_channel_embed(interaction.guild_id, self.lang),
-            view=LogChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
 # ─── Setup Start ─────────────────────────────────────────────────────────────
 
-class SetupView(discord.ui.View):
+class SetupView(SetupStepView):
     def __init__(self, owner_id: int, lang: dict[str, str], guild_id: int, setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.lang          = lang
-        self.setup_channel = setup_channel
+        super().__init__(owner_id, lang, setup_channel)
         self.start_setup.label = self.lang.get("setup_start_title", "Start")
         self.add_item(_dashboard_button(guild_id, lang)) 
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.button(label="Setup starten", style=discord.ButtonStyle.success)
     async def start_setup(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_bot_hierarchy(interaction.guild):
             bot_pos, total = get_bot_position_info(interaction.guild)
-            await interaction.response.edit_message(
+            await self.show(
+                interaction, HierarchyView(self.setup_owner_id, self.lang, self.setup_channel),
                 embed=await _hierarchy_warning_embed(interaction.guild_id, bot_pos, total, self.lang),
-                view=HierarchyView(self.owner_id, self.lang, self.setup_channel),
             )
             return
 
         await _apply_brand_role(interaction)
 
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, LogChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _log_channel_embed(interaction.guild_id, self.lang),
-            view=LogChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
 # ─── Schritt 1: Log-Channel ───────────────────────────────────────────────────
 
-class LogChannelView(discord.ui.View):
+class LogChannelView(SetupStepView):
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.lang          = lang
-        self.setup_channel = setup_channel
+        super().__init__(owner_id, lang, setup_channel)
         self.select_log_channel.placeholder = self.lang.get("setup_placeholder", "📋 Choose an existing Channel...")
         self.create_log_channel.label       = self.lang.get("setup_create", "✨ Create one for me")
         self.skip_step.label                = self.lang.get("setup_skip", "⏭️ Skip")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -441,14 +411,14 @@ class LogChannelView(discord.ui.View):
 
         if missing:
             embed = await _channel_permission_warning_embed(channel, interaction.guild, interaction.client.user.id, True, self.lang)
-            view = ChannelPermissionWarningView(self.owner_id, channel, "log", self.lang, self.setup_channel)
-            await interaction.response.edit_message(embed=embed, view=view)
+            view = ChannelPermissionWarningView(self.setup_owner_id, channel, "log", self.lang, self.setup_channel)
+            await self.show(interaction, view, embed=embed)
             return
 
         await db_settings.update_guild(interaction.guild_id, log_channel_id=channel.id)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, RulesChannelView(self.setup_owner_id, self.lang, setup_channel=self.setup_channel),
             embed=await _rules_channel_embed(interaction.guild_id, channel.mention, self.lang),
-            view=RulesChannelView(self.owner_id, self.lang, setup_channel=self.setup_channel),
         )
 
     @discord.ui.button(label="✨ Create one for me", style=discord.ButtonStyle.secondary, row=1)
@@ -475,39 +445,27 @@ class LogChannelView(discord.ui.View):
             return
 
         await db_settings.update_guild(interaction.guild_id, log_channel_id=channel.id)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, RulesChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _rules_channel_embed(interaction.guild_id, channel.mention, self.lang),
-            view=RulesChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
         await db_settings.update_guild(interaction.guild_id, log_channel_id=None)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, RulesChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _rules_channel_embed(interaction.guild_id, "—", self.lang),
-            view=RulesChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
 # ─── Schritt 2: Regel-Channel ─────────────────────────────────────────────────
 
-class RulesChannelView(discord.ui.View):
+class RulesChannelView(SetupStepView):
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.setup_channel = setup_channel
-        self.lang          = lang
+        super().__init__(owner_id, lang, setup_channel)
         self.select_rules_channel.placeholder = self.lang.get("setup_placeholder", "📋 Choose an existing Channel...")
         self.create_rules_channel.label       = self.lang.get("setup_create", "✨ Create one for me")
         self.skip_step.label                  = self.lang.get("setup_skip", "⏭️ Skip")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -520,14 +478,14 @@ class RulesChannelView(discord.ui.View):
 
         if missing:
             embed = await _channel_permission_warning_embed(channel, interaction.guild, interaction.client.user.id, False, self.lang)
-            view = ChannelPermissionWarningView(self.owner_id, channel, "rules", self.lang, self.setup_channel)
-            await interaction.response.edit_message(embed=embed, view=view)
+            view = ChannelPermissionWarningView(self.setup_owner_id, channel, "rules", self.lang, self.setup_channel)
+            await self.show(interaction, view, embed=embed)
             return
 
         await db_settings.update_guild(interaction.guild_id, rules_channel_id=channel.id)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, WelcomeChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _welcome_channel_embed(interaction.guild_id, channel.mention, self.lang),
-            view=WelcomeChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
     @discord.ui.button(label="✨ Create one for me", style=discord.ButtonStyle.secondary, row=1)
@@ -554,39 +512,27 @@ class RulesChannelView(discord.ui.View):
             return
 
         await db_settings.update_guild(interaction.guild_id, rules_channel_id=channel.id)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, WelcomeChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _welcome_channel_embed(interaction.guild_id, channel.mention, self.lang),
-            view=WelcomeChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
         await db_settings.update_guild(interaction.guild_id, rules_channel_id=None)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, WelcomeChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _welcome_channel_embed(interaction.guild_id, "—", self.lang),
-            view=WelcomeChannelView(self.owner_id, self.lang, self.setup_channel),
         )
 
 # ─── Schritt 3: Willkommens-Channel ──────────────────────────────────────────
 
-class WelcomeChannelView(discord.ui.View):
+class WelcomeChannelView(SetupStepView):
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.setup_channel = setup_channel
-        self.lang          = lang
+        super().__init__(owner_id, lang, setup_channel)
         self.select_welcome_channel.placeholder = self.lang.get("setup_placeholder", "📋 Choose an existing Channel...")
         self.create_welcome_channel.label       = self.lang.get("setup_create", "✨ Create one for me")
         self.skip_step.label                    = self.lang.get("setup_skip", "⏭️ Skip")
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -599,14 +545,14 @@ class WelcomeChannelView(discord.ui.View):
 
         if missing:
             embed = await _channel_permission_warning_embed(channel, interaction.guild, interaction.client.user.id, False, self.lang)
-            view = ChannelPermissionWarningView(self.owner_id, channel, "welcome", self.lang, self.setup_channel)
-            await interaction.response.edit_message(embed=embed, view=view)
+            view = ChannelPermissionWarningView(self.setup_owner_id, channel, "welcome", self.lang, self.setup_channel)
+            await self.show(interaction, view, embed=embed)
             return
 
         await db_settings.update_guild(interaction.guild_id, welcome_channel_id=channel.id)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, ModulesView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _modules_embed(interaction.guild_id, self.lang),
-            view=ModulesView(self.owner_id, self.lang, self.setup_channel),
         )
 
     @discord.ui.button(label="✨ Create one for me", style=discord.ButtonStyle.secondary, row=1)
@@ -633,32 +579,29 @@ class WelcomeChannelView(discord.ui.View):
             return
 
         await db_settings.update_guild(interaction.guild_id, welcome_channel_id=channel.id)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, ModulesView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _modules_embed(interaction.guild_id, self.lang),
-            view=ModulesView(self.owner_id, self.lang, self.setup_channel),
         )
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
         await db_settings.update_guild(interaction.guild_id, welcome_channel_id=None)
-        await interaction.response.edit_message(
+        await self.show(
+            interaction, ModulesView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _modules_embed(interaction.guild_id, self.lang),
-            view=ModulesView(self.owner_id, self.lang, self.setup_channel),
         )
 
 # ─── Schritt 4: Module ────────────────────────────────────────────────────────
 
-class ModulesView(discord.ui.View):
+class ModulesView(SetupStepView):
     """Schritt 5: Alle Module per Multi-Select anbieten statt nur Levels/Welcome."""
 
     # Vorausgewählt: was die meisten Server wollen
     PRESELECTED = {"levels", "welcome", "stream_alerts", "tickets"}
 
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.setup_channel = setup_channel
-        self.lang          = lang
+        super().__init__(owner_id, lang, setup_channel)
 
         from database.db_settings import DEFAULT_MODULES
         self.available = [
@@ -687,15 +630,6 @@ class ModulesView(discord.ui.View):
                 default=key in self.selected,
             ))
         return options
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True,
-            )
-            return False
-        return True
 
     @discord.ui.select(cls=discord.ui.Select, min_values=0, row=0)
     async def module_select(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -741,6 +675,7 @@ class ModulesView(discord.ui.View):
         final_view = discord.ui.View(timeout=None)
         final_view.add_item(_dashboard_button(interaction.guild_id, self.lang))
 
+        self.stop()
         await interaction.response.edit_message(embed=embed, view=final_view)
 
         await db_settings.update_guild(
@@ -773,51 +708,42 @@ class ModulesView(discord.ui.View):
 
 # ─── Restore Option ───────────────────────────────────────────────────────────
 
-class RestoreView(discord.ui.View):
+class RestoreView(SetupStepView):
     def __init__(self, owner_id: int, lang: dict, setup_channel=None):
-        super().__init__(timeout=300)
-        self.owner_id      = owner_id
-        self.lang          = lang
-        self.setup_channel = setup_channel
+        super().__init__(owner_id, lang, setup_channel)
         self.restore_btn.label = lang.get("setup_restore", "Restore")
         self.restore_btn.emoji = discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK)
         self.restart_btn.label = lang.get("setup_restart", "🔄 Start fresh")
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                self.lang.get("setup_only_owner", "You need the 'Manage Server' permission to run the setup."),
-                ephemeral=True
-            )
-            return False
-        return True
-    
     @discord.ui.button(label="Restore", style=discord.ButtonStyle.success)
     async def restore_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_bot_hierarchy(interaction.guild):
             bot_pos, total = get_bot_position_info(interaction.guild)
             
-            await interaction.response.edit_message(
+            await self.show(
+                interaction, HierarchyView(self.setup_owner_id, self.lang, self.setup_channel, is_restore=True),
                 embed=await _hierarchy_warning_embed(interaction.guild_id, bot_pos, total, self.lang),
-                view=HierarchyView(self.owner_id, self.lang, self.setup_channel, is_restore=True),
             )
             return
 
+        self.stop()
         await _finish_restore(interaction, self.lang, self.setup_channel)
 
     @discord.ui.button(label="Restart", style=discord.ButtonStyle.danger)
     async def restart_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await db_settings.reset_guild(interaction.guild_id)
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title=self.lang.get("setup_hello_title", "👋 Hello, I'm Nexus!"),
-                description=self.lang.get(
-                    "setup_hello_description",
-                    "I'll help you manage your server.\nClick **Start Setup** to get started."
-                ),
-                color=NEXUS_COLOR,
+        embed = discord.Embed(
+            title=self.lang.get("setup_hello_title", "👋 Hello, I'm Nexus!"),
+            description=self.lang.get(
+                "setup_hello_description",
+                "I'll help you manage your server.\nClick **Start Setup** to get started."
             ),
-            view=SetupView(self.owner_id, self.lang, interaction.guild_id, self.setup_channel),
+            color=NEXUS_COLOR,
+        )
+        await self.show(
+            interaction,
+            SetupView(self.setup_owner_id, self.lang, interaction.guild_id, self.setup_channel),
+            embed=embed,
         )
 
 # ─── Setup Command ────────────────────────────────────────────────────────────
@@ -841,11 +767,9 @@ class SetupCog(commands.Cog):
             color=NEXUS_COLOR,
         )
         embed.set_footer(text="Nexus • Setup")
-        await interaction.response.send_message(
-            embed=embed,
-            view=SetupView(interaction.user.id, lang, interaction.guild_id),
-            ephemeral=True,
-        )
+        view = SetupView(interaction.user.id, lang, interaction.guild_id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        view.bind(interaction)
 
 async def setup(bot):
     await bot.add_cog(SetupCog(bot))

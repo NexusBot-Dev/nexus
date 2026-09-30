@@ -3,6 +3,7 @@ COMMAND_LOCALES: dict[str, dict[str, str]] = {
         # ─── Help ────────────────────────────────────────────────────────
         "cmd_help_desc": "Zeigt alle verfügbaren Commands",
         "cmd_info_desc": "Informationen über Nexus",
+        "cmd_diagnose_desc": "Prüft, ob Nexus alle nötigen Rechte hat",
 
         # ─── User Commands ───────────────────────────────────────────────
         "cmd_delete_desc": "Löscht alle deine Daten auf diesem Server",
@@ -34,6 +35,14 @@ COMMAND_LOCALES: dict[str, dict[str, str]] = {
         # ─── Admin Commands ──────────────────────────────────────────────
         "cmd_module_desc":          "Module aktivieren oder deaktivieren",
         "cmd_settings_desc":        "Server-Einstellungen anpassen",
+
+        # ─── Embed Commands ──────────────────────────────────────────────
+        "cmd_embed_create":         "Erstellt und postet einen Embed",
+        "cmd_embed_list":           "Zeigt alle gespeicherten Embeds",
+        "cmd_embed_post":           "Postet einen gespeicherten Embed",
+        "cmd_embed_schedule":       "Plant das Posten eines Embeds (Premium)",
+        "cmd_embed_delete":         "Löscht einen gespeicherten Embed",
+        "cmd_post_rules":           "Postet die Serverregeln in den Regelchannel",
 
         # ─── Level Commands ──────────────────────────────────────────────
         "cmd_leaderboard_desc":     "Zeigt die Top 10 Member",
@@ -96,6 +105,7 @@ COMMAND_LOCALES: dict[str, dict[str, str]] = {
         # ─── Help ────────────────────────────────────────────────────────
         "cmd_help_desc": "Shows all available commands",
         "cmd_info_desc": "Informations about Nexus",
+        "cmd_diagnose_desc": "Checks whether Nexus has all required permissions",
 
         # ─── User Commands ───────────────────────────────────────────────
         "cmd_delete_desc": "Delete your Data on this Server.",
@@ -127,6 +137,14 @@ COMMAND_LOCALES: dict[str, dict[str, str]] = {
         # ─── Admin Commands ──────────────────────────────────────────────
         "cmd_module_desc":          "Enable or disable modules",
         "cmd_settings_desc":        "Adjust server settings",
+
+        # ─── Embed Commands ──────────────────────────────────────────────
+        "cmd_embed_create":         "Creates and posts an embed",
+        "cmd_embed_list":           "Shows all saved embeds",
+        "cmd_embed_post":           "Posts a saved embed",
+        "cmd_embed_schedule":       "Schedules an embed post (Premium)",
+        "cmd_embed_delete":         "Deletes a saved embed",
+        "cmd_post_rules":           "Posts the server rules in the rules channel",
 
         # ─── Level Commands ──────────────────────────────────────────────
         "cmd_leaderboard_desc":     "Displays the top 10 members",

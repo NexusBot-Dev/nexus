@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import discord
@@ -12,13 +11,14 @@ from datetime import datetime, timezone, timedelta
 from cachetools import TTLCache
 from cogs.setup import SetupView, RestoreView
 from systems.premium import remove_premium, sync_entitlements, set_premium_from_discord
+from lists.topgg import post_commands_to_topgg, post_server_count
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-_dm_cooldowns: TTLCache[int, bool] = TTLCache(maxsize=10_000, ttl=1800)
+_dm_cooldowns: TTLCache[int, bool] = TTLCache(maxsize=2_000, ttl=1800)
 
 DEV_MODE = False
 UPLOAD_COMMANDS_DBL = False
@@ -165,13 +165,10 @@ class Nexus(commands.AutoShardedBot):
 
         # 3. Externe API-Uploads nur beim initialen Start ausführen
         if UPLOAD_COMMANDS_TOPGG:
-            topgg_token = _read_secret("TOPGG_TOKEN_FILE", "/run/secrets/topgg_token")
-            if topgg_token:
-                try:
-                    from lists.topgg_stats import post_commands_to_topgg
-                    await post_commands_to_topgg(self, topgg_token)
-                except Exception:
-                    log.exception("Fehler beim Upload der Commands zu Top.gg")
+            try:
+                await post_commands_to_topgg(self)
+            except Exception:
+                log.exception("Fehler beim Upload der Commands zu Top.gg")
 
         if UPLOAD_COMMANDS_DBL:
             dbl_token = _read_secret("DBL_TOKEN_FILE", "/run/secrets/dbl_token")
@@ -215,6 +212,10 @@ class Nexus(commands.AutoShardedBot):
         self._initial_sync_done = True
 
     async def on_guild_join(self, guild: discord.Guild):
+        try:
+            await post_server_count(self)
+        except Exception:
+            log.exception("Fehler beim Aktualisieren des Servercounts auf Top.gg nach Guild-Join.")
         locale = LOCALE_MAP.get(str(guild.preferred_locale), "en")
         lang_dict = TRANSLATIONS.get(locale, TRANSLATIONS["en"])
 
@@ -303,10 +304,10 @@ class Nexus(commands.AutoShardedBot):
                     title=f"👋 Nexus — {guild.name}",
                     description=lang_dict.get(
                         "setup_no_channel_dm",
-                        "Danke, dass du mich auf **{guild}** eingeladen hast!\n\n"
-                        "⚠️ Ich konnte **in keinem Kanal eine Begrüßungsnachricht posten**, "
-                        "weil mir die Berechtigungen `Kanal anzeigen`, `Nachrichten senden` oder `Links einbetten` fehlen.\n\n"
-                        "Bitte weise mir auf dem Server entsprechende Rechte zu und nutze `/settings`, um mich einzurichten."
+                        "Thanks for inviting me to **{guild}**!\n\n"
+                        "⚠️ I couldn't **post a welcome message in any channel** "
+                        "because I'm missing the `View Channel`, `Send Messages`, or `Embed Links` permissions.\n\n"
+                        "Please grant me the required permissions on your server and run `/setup` to get started.",
                     ).format(guild=guild.name),
                     color=NEXUS_COLOR,
                 )
@@ -328,6 +329,10 @@ class Nexus(commands.AutoShardedBot):
             log.info("Nexus wurde von %s entfernt.", guild.name)
         except Exception:
             log.exception("left_at für Guild %s (%s) konnte nicht gesetzt werden – wird beim nächsten Sync nachgezogen.", guild.name, guild.id)
+        try: 
+            await post_server_count(self)
+        except Exception:
+            log.exception("Fehler beim Aktualisieren des Servercounts auf Top.gg nach Guild-Remove.")
 
     async def on_application_command_error(
         self,
