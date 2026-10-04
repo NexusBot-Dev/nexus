@@ -54,6 +54,13 @@ MESSAGES: dict[str, str] = {
     "diag_section_tickets":     "🎫 Tickets",
     "diag_tickets_missing":     "Tickets können nicht erstellt werden. Es fehlt: {perms}",
     "diag_tickets_ok":          "Tickets können erstellt werden.",
+    "diag_goodbye_channel":          "👋 Goodbye-Channel",
+    "diag_boost_channel":            "🚀 Boost-Channel",
+    "diag_section_alerts":           "📡 Stream-Alerts",
+    "diag_alerts_ok":                "Alle Alert-Channels und Ping-Rollen sind in Ordnung.",
+    "diag_alert_channel":            "📡 Alerts ({streamers})",
+    "diag_alert_role_deleted":       "🔔 Die Ping-Rolle für {platform} existiert nicht mehr",
+    "diag_alert_role_unmentionable": "🔔 {role} kann nicht gepingt werden: Sie ist nicht erwähnbar und mir fehlt „Alle erwähnen“",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} wurde gekickt.",
@@ -663,7 +670,21 @@ MESSAGES: dict[str, str] = {
     "embed_placeholder_cont":   "Schreibe hier deinen Text...\nMehrzeilig möglich!",
     "embed_limit_reached":      "❌ Limit von {limit} gespeicherten Embeds erreicht.",
     "embed_posted":             "{nexus_checkmark} Embed wurde in {channel} gepostet.",
-
+    "embed_schedule_title":     "Zeitgesteuertes Posten",
+    "embed_schedule_past":      "❌ Der Zeitpunkt liegt in der Vergangenheit.",
+    "embed_scheduled":          "{checkmark} Embed wird am {date} gepostet.",
+    "embed_schedule_invalid":   "❌ Ungültiges Format. Bitte nutze DD.MM.YYYY HH:MM",
+    "embed_list_empty":         "Keine gespeicherten Embeds gefunden.",
+    "embed_list_title":         "📋 Gespeicherte Embeds",
+    "embed_list_count":         "{count}/{limit} genutzt",
+    "embed_not_found":          "❌ Embed nicht gefunden.",
+    "embed_no_channel":         "❌ Kein Channel angegeben.",
+    "embed_schedule_premium":   "⭐ Zeitgesteuertes Posten ist ein Premium-Feature!",
+    "embed_deleted":            "{checkmark} Embed #{id} wurde gelöscht.",
+    "embed_no_rules_channel":   "❌ Kein Regelchannel konfiguriert. Nutze `/settings` um einen festzulegen.",
+    "embed_channel_not_found":  "❌ Regelchannel nicht gefunden.",
+    "embed_no_permission":      "❌ Ich habe keine Berechtigung, Nachrichten in {channel} zu senden.",
+    
     # ─── Twitch ────────────────────────────────────────────────────────
     "alert_invalid_username":  "❌ Das sieht nicht wie ein gültiger Username/Link aus.",
     "alert_limit_reached":     "❌ Limit von {limit} überwachten Kanälen erreicht.",

@@ -28,7 +28,11 @@ async def report_interaction_error(
     original = getattr(error, "original", error)
 
     if isinstance(original, discord.NotFound) and original.code == 10062:
-        return  # Interaction abgelaufen — niemandem mehr etwas zu sagen
+        log.warning(
+            "Interaction in %s auf %s abgelaufen (10062) — vor der ersten Antwort fehlt vermutlich ein defer().",
+            where, interaction.guild_id,
+        )
+        return
 
     if isinstance(original, discord.Forbidden):
         log.warning("Forbidden in %s auf %s: %s", where, interaction.guild_id, original.text)
@@ -136,8 +140,11 @@ class NexusView(discord.ui.View):
     # Helfer ─────────────────────────────────────────────────────────────────
     async def show(self, interaction: discord.Interaction, next_view: "NexusView", **kwargs) -> None:
         """Nächsten Schritt in derselben Nachricht anzeigen und die View korrekt binden."""
-        self.stop()  # alte View nicht mehr timeouten lassen, sie ist ersetzt
-        await interaction.response.edit_message(view=next_view, **kwargs)
+        self.stop()
+        if interaction.response.is_done():
+            await interaction.edit_original_response(view=next_view, **kwargs)
+        else:
+            await interaction.response.edit_message(view=next_view, **kwargs)
         next_view.bind(interaction)
 
 

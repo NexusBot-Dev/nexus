@@ -1,10 +1,10 @@
 import logging
-import os
 import discord
+from pathlib import Path 
 from discord import app_commands
 from discord.ext import commands, tasks
 from database import init_pool, close_pool, db_settings
-from config import _read_secret, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, INVITE_URL, NEXUS_FOOTER, APPLICATION_ID
+from config import DISCORD_TOKEN, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, INVITE_URL, NEXUS_FOOTER, APPLICATION_ID
 from translations.command_locales import COMMAND_LOCALES
 from translations import TRANSLATIONS, LOCALE_MAP
 from datetime import datetime, timezone, timedelta
@@ -12,16 +12,17 @@ from cachetools import TTLCache
 from cogs.setup import SetupView, RestoreView
 from systems.premium import remove_premium, sync_entitlements, set_premium_from_discord
 from lists.topgg import post_commands_to_topgg, post_server_count
+from lists.discordbotlist import post_commands_to_dbl, post_server_count_to_dbl
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-_dm_cooldowns: TTLCache[int, bool] = TTLCache(maxsize=2_000, ttl=1800)
+_dm_cooldowns = TTLCache[int, bool](maxsize=2_000, ttl=1800)
 
 DEV_MODE = False
-UPLOAD_COMMANDS_DBL = False
+UPLOAD_COMMANDS_DBL = True
 UPLOAD_COMMANDS_TOPGG = True
 
 class NexusTranslator(app_commands.Translator):
@@ -94,6 +95,19 @@ class Nexus(commands.AutoShardedBot):
         except Exception:
             log.exception("[PREMIUM-SYNC] Fehler beim täglichen Entitlement-Abgleich.")
 
+    @tasks.loop(hours=1)
+    async def update_stats(self):
+        """Aktualisiert Stats fehlerisoliert, ohne den Bot-Betrieb zu stören."""
+        try:
+            await post_server_count(self)
+        except Exception as e:
+            log.warning("Top.gg Stats-Push fehlgeschlagen: %s", e)
+
+        try:
+            await post_server_count_to_dbl(self)
+        except Exception as e:
+            log.warning("DBL Stats-Push fehlgeschlagen: %s", e)
+
     # ─── Bot Tasks ──────────────────────────────────────────────────────
 
     async def setup_hook(self):
@@ -102,18 +116,24 @@ class Nexus(commands.AutoShardedBot):
         await self.tree.set_translator(NexusTranslator())
         log.info("NexusTranslator erfolgreich für den CommandTree registriert.")
         self.tree.on_error = self.on_application_command_error
-        from cogs.announcements import AnnouncementDisableView
-        self.add_view(AnnouncementDisableView())
 
-        for filename in os.listdir("./cogs"):
-            if filename.endswith(".py") and filename not in ("__init__.py", "utils.py"):
-                await self.load_extension(f"cogs.{filename[:-3]}")
-                log.info("Cog geladen: %s", filename)
+        MODULE_DIRS = ("cogs", "integrations")
 
-        for filename in os.listdir("./integrations"):
-            if filename.endswith(".py") and filename != "__init__.py":
-                await self.load_extension(f"integrations.{filename[:-3]}")
-                log.info("Integration geladen: %s", filename)
+        failed = []
+        for directory in MODULE_DIRS:
+            for path in sorted(Path(directory).glob("*.py")):
+                if path.name.startswith("_") or path.name == "utils.py":
+                    continue
+                ext = f"{directory}.{path.stem}"
+                try:
+                    await self.load_extension(ext)
+                    log.info("Geladen: %s", ext)
+                except commands.ExtensionError:
+                    log.exception("Fehler beim Laden von %s", ext)
+                    failed.append(ext)
+
+        if failed:
+            log.error("%d Extension(s) NICHT geladen: %s", len(failed), ", ".join(failed))
 
         for command in self.tree.walk_commands():
             command.guild_only = True
@@ -151,10 +171,15 @@ class Nexus(commands.AutoShardedBot):
             return
 
         # 1. Background-Tasks idempotenten Starten (laufen dauerhaft im Hintergrund)
-        if not self.cleanup_old_guilds.is_running():
-            self.cleanup_old_guilds.start()
-        if not self.sync_premium_entitlements.is_running():
-            self.sync_premium_entitlements.start()
+        background_tasks = (
+            self.cleanup_old_guilds,
+            self.sync_premium_entitlements,
+            self.update_stats,
+        )
+
+        for task in background_tasks:
+            if not task.is_running():
+                task.start()
 
         log.info("Nexus ist online als %s (Shards aktiv: %s)", self.user, self.shard_count)
 
@@ -171,13 +196,10 @@ class Nexus(commands.AutoShardedBot):
                 log.exception("Fehler beim Upload der Commands zu Top.gg")
 
         if UPLOAD_COMMANDS_DBL:
-            dbl_token = _read_secret("DBL_TOKEN_FILE", "/run/secrets/dbl_token")
-            if dbl_token:
-                try:
-                    from lists.discordbotlist import post_commands_to_dbl
-                    await post_commands_to_dbl(self, dbl_token)
-                except Exception:
-                    log.exception("Fehler beim Upload der Commands zu DiscordBotList")
+            try:
+                await post_commands_to_dbl(self)
+            except Exception:
+                log.exception("Fehler beim Upload der Commands zu DiscordBotList")
 
         # 4. Command-Sync mit resilientem Fehler-Handling
         if DEV_MODE:
@@ -212,10 +234,6 @@ class Nexus(commands.AutoShardedBot):
         self._initial_sync_done = True
 
     async def on_guild_join(self, guild: discord.Guild):
-        try:
-            await post_server_count(self)
-        except Exception:
-            log.exception("Fehler beim Aktualisieren des Servercounts auf Top.gg nach Guild-Join.")
         locale = LOCALE_MAP.get(str(guild.preferred_locale), "en")
         lang_dict = TRANSLATIONS.get(locale, TRANSLATIONS["en"])
 
@@ -225,7 +243,11 @@ class Nexus(commands.AutoShardedBot):
         except discord.Forbidden:
             log.warning("Konnte Nickname auf Guild '%s' nicht ändern (Rechte fehlen).", guild.name)
 
-        settings = await db_settings.get_guild(guild.id)
+        try:
+            settings = await db_settings.get_guild(guild.id)
+        except Exception as e:
+            log.error("Fehler beim Initialisieren von Guild %s in der DB: %s", guild.id, e, exc_info=True)
+            return
 
         embed_title = lang_dict.get("setup_hello_title")
         embed_desc = lang_dict.get("setup_hello_description")
@@ -278,10 +300,11 @@ class Nexus(commands.AutoShardedBot):
 
         if target_channel:
             try:
-                await target_channel.send(
-                    embed=embed,
-                    view=chosen_view_class(guild.owner_id, lang_dict, target_channel),
-                )
+                if chosen_view_class is RestoreView:
+                    setup_view = RestoreView(guild.owner_id, lang_dict, setup_channel=target_channel)
+                else:
+                    setup_view = SetupView(guild.owner_id, lang_dict, guild.id, setup_channel=target_channel)
+                await target_channel.send(embed=embed, view=setup_view)
                 message_sent = True
             except discord.HTTPException as e:
                 log.error("Fehler beim Senden der Setup-Nachricht auf Guild %s: %s", guild.name, e)
@@ -329,10 +352,6 @@ class Nexus(commands.AutoShardedBot):
             log.info("Nexus wurde von %s entfernt.", guild.name)
         except Exception:
             log.exception("left_at für Guild %s (%s) konnte nicht gesetzt werden – wird beim nächsten Sync nachgezogen.", guild.name, guild.id)
-        try: 
-            await post_server_count(self)
-        except Exception:
-            log.exception("Fehler beim Aktualisieren des Servercounts auf Top.gg nach Guild-Remove.")
 
     async def on_application_command_error(
         self,
@@ -416,4 +435,4 @@ class Nexus(commands.AutoShardedBot):
         await super().close()
 
 bot = Nexus()
-bot.run(_read_secret("DISCORD_TOKEN_FILE", "/run/secrets/discord_token"))
+bot.run(DISCORD_TOKEN)

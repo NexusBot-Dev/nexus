@@ -54,6 +54,14 @@ MESSAGES: dict[str, str] = {
     "diag_section_tickets":     "🎫 Tickets",
     "diag_tickets_missing":     "Tickets can't be created. Missing: {perms}",
     "diag_tickets_ok":          "Tickets can be created.",
+    "diag_goodbye_channel":          "👋 Goodbye channel",
+    "diag_boost_channel":            "🚀 Boost channel",
+    "diag_section_alerts":           "📡 Stream alerts",
+    "diag_alerts_ok":                "All alert channels and ping roles are fine.",
+    "diag_alert_channel":            "📡 Alerts ({streamers})",
+    "diag_alert_role_deleted":       "🔔 Ping role for {platform} no longer exists",
+    "diag_alert_role_unmentionable": "🔔 {role} can't be pinged: it isn't mentionable and I lack “Mention Everyone”",
+
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} was kicked.",
@@ -663,6 +671,20 @@ MESSAGES: dict[str, str] = {
     "embed_placeholder_cont":   "Write your text here...\nMulti-line supported!",
     "embed_limit_reached":      "❌ Limit of {limit} saved embeds reached.",
     "embed_posted":             "{nexus_checkmark} Embed has been posted in {channel}.",
+    "embed_schedule_title":     "Scheduled Posting",
+    "embed_schedule_past":      "❌ The specified time is in the past.",
+    "embed_scheduled":          "{checkmark} Embed will be posted on {date}.",
+    "embed_schedule_invalid":   "❌ Invalid format. Please use DD.MM.YYYY HH:MM",
+    "embed_list_empty":         "No saved embeds found.",
+    "embed_list_title":         "📋 Saved Embeds",
+    "embed_list_count":         "{count}/{limit} used",
+    "embed_not_found":          "❌ Embed not found.",
+    "embed_no_channel":         "❌ No channel specified.",
+    "embed_schedule_premium":   "⭐ Scheduled posting is a Premium feature!",
+    "embed_deleted":            "{checkmark} Embed #{id} has been deleted.",
+    "embed_no_rules_channel":   "❌ No rules channel configured. Use `/settings` to set one.",
+    "embed_channel_not_found":  "❌ Rules channel not found.",
+    "embed_no_permission":      "❌ I don't have permission to send messages in {channel}.",
 
     # ─── Stream Alerts ───────────────────────────────────────────────────
     "alert_invalid_username":  "❌ That doesn't look like a valid Username or Link.",

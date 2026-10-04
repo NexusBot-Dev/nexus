@@ -115,6 +115,9 @@ async def _validate_restored_channels(interaction: discord.Interaction) -> dict[
 
 async def _finish_restore(interaction: discord.Interaction, lang: dict[str, str], setup_channel=None):
     """Gemeinsamer Abschluss für Restore (direkt oder nach der Hierarchie-Prüfung)."""
+    # Brand-Rolle, Channel-Prüfung und History-Scan sind mehrere API-Calls — zusammen
+    # leicht >3s. Deshalb zuerst quittieren, sonst läuft die Interaction ab (10062).
+    await interaction.response.defer()
     await _apply_brand_role(interaction)
     channels = await _validate_restored_channels(interaction)
 
@@ -138,7 +141,7 @@ async def _finish_restore(interaction: discord.Interaction, lang: dict[str, str]
     except (discord.NotFound, discord.Forbidden):
         pass
 
-    await interaction.response.edit_message(embed=embed, view=None)
+    await interaction.edit_original_response(embed=embed, view=None)
     log.info("Guild %s (%s) hat Einstellungen wiederhergestellt.", interaction.guild.name, interaction.guild_id)
 
 # ─── Embeds ──────────────────────────────────────────────────────────────────
@@ -360,6 +363,7 @@ class HierarchyView(SetupStepView):
             self.stop()
             await _finish_restore(interaction, self.lang, self.setup_channel)
             return
+        await interaction.response.defer()  # _apply_brand_role = bis zu 3 API-Calls (create/edit/add)
         await _apply_brand_role(interaction)
         await self.show(
             interaction, LogChannelView(self.setup_owner_id, self.lang, self.setup_channel),
@@ -384,6 +388,7 @@ class SetupView(SetupStepView):
             )
             return
 
+        await interaction.response.defer()  # _apply_brand_role = bis zu 3 API-Calls (create/edit/add)
         await _apply_brand_role(interaction)
 
         await self.show(
