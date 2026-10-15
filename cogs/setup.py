@@ -39,7 +39,7 @@ async def _apply_brand_role(interaction: discord.Interaction):
 
 def _dashboard_button(guild_id: int, lang: dict[str, str]) -> discord.ui.Button:
     return discord.ui.Button(
-        label=lang.get("setup_dashboard_button", "🌐 Dashboard öffnen"),
+        label=lang.get("setup_dashboard_button", "🌐 Open Dashboard"),
         style=discord.ButtonStyle.link,
         url=f"{DASHBOARD_URL}/server/{guild_id}",
         row=4,
@@ -247,23 +247,31 @@ async def _channel_permission_warning_embed(
         is_private = not channel.permissions_for(guild.default_role).view_channel
 
     if is_private:
-        scenario_note = "🔒 **Dieser Kanal ist privat.**"
+        scenario_note = lang.get("setup_channel_private", "🔒 **This channel is private.**")
     else:
-        scenario_note = "✍️ **Dieser Kanal ist schreibgeschützt oder eingeschränkt.**"
+        scenario_note = lang.get("setup_channel_missing_perm", "✍️ **This channel is read-only or restricted.**")
 
     embed = discord.Embed(
-        title=lang.get("setup_perm_warning_title", "⚠️ Berechtigungen erforderlich"),
-        description=(
-            f"Ich habe noch nicht alle nötigen Rechte in {channel.mention}.\n\n"
-            f"{scenario_note}\n\n"
-            f"**Fehlende Berechtigungen (bitte auf ✅ setzen):**\n"
-            f"{missing_list_str}\n\n"
-            "**So richtest du es ein:**\n"
-            f"{NexusEmojis.Numbers.ONE} Rechtsklick auf {channel.mention} → **Kanal bearbeiten** → **Berechtigungen**\n"
-            f"{NexusEmojis.Numbers.TWO} Rolle **Nexus** (oder Bot) hinzufügen bzw. auswählen\n"
-            f"{NexusEmojis.Numbers.THREE} Die oben gelisteten Rechte auf **Erlaubt (✅)** setzen\n"
-            f"{NexusEmojis.Numbers.FOUR} Unten auf **🔍 Validate** klicken"
-        ),
+        title=lang.get("setup_perm_warning_title", "⚠️ Permissions Required"),
+        description=lang.get("setup_perm_warning_desc",
+            "I do not have all required permissions in {channel}.\n\n"
+            "{scenario_note}\n\n"
+            "**Missing permissions (please set to ✅):**\n"
+            "{missing_list_str}\n\n"
+            "**How to fix this:**\n"
+            "{num_1} Right-click on {channel} → **Edit Channel** → **Permissions**\n"
+            "{num_2} Add or select the **Nexus** role\n"
+            "{num_3} Enable the permissions listed above (**Allow / ✅**)\n"
+            "{num_4} Click on **🔍 Validate** below",
+            ).format(
+                channel=channel.mention,
+                scenario_note=scenario_note,
+                missing_list_str=missing_list_str,
+                num_1=NexusEmojis.Numbers.ONE,
+                num_2=NexusEmojis.Numbers.TWO,
+                num_3=NexusEmojis.Numbers.THREE,
+                num_4=NexusEmojis.Numbers.FOUR
+            ),
         color=NEXUS_COLOR,
     )
     return embed
@@ -281,7 +289,7 @@ class SetupStepView(NexusView):
     DENY_KEY = "setup_only_owner"
 
     def __init__(self, owner_id: int, lang: dict[str, str], setup_channel=None):
-        super().__init__(lang, owner_id=None, require="manage_guild", timeout=300)
+        super().__init__(lang, owner_id=None, require="manage_guild", timeout=1800)
         self.setup_owner_id = owner_id
         self.setup_channel  = setup_channel
 
@@ -438,10 +446,12 @@ class LogChannelView(SetupStepView):
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True)
 
         try:
+            channel_name = self.lang.get("setup_cnl_logs_name", "📝┃nexus-logs")
+            channel_reason = self.lang.get("setup_cnl_logs_reason", "Nexus Setup — Log Channel")
             channel = await interaction.guild.create_text_channel(
-                name="📝┃nexus-logs",
+                name=channel_name,
                 overwrites=overwrites,
-                reason="Nexus Setup — Log-Channel",
+                reason=channel_reason,
             )
         except discord.Forbidden:
             await interaction.response.send_message(
@@ -505,10 +515,12 @@ class RulesChannelView(SetupStepView):
             ),
         }
         try:
+            channel_name = self.lang.get("setup_cnl_rules_name", "📜┃rules")
+            channel_reason = self.lang.get("setup_cnl_rules_reason", "Nexus Setup — Rules channel")
             channel = await interaction.guild.create_text_channel(
-                name="📜┃regeln",
+                name=channel_name,
                 overwrites=overwrites,
-                reason="Nexus Setup — Regel-Channel",
+                reason=channel_reason,
             )
         except discord.Forbidden:
             await interaction.response.send_message(
@@ -572,10 +584,12 @@ class WelcomeChannelView(SetupStepView):
             ),
         }
         try:
+            channel_name = self.lang.get("setup_cnl_welcome_name", "👋┃welcome")
+            channel_reason = self.lang.get("setup_cnl_welcome_reason", "Nexus Setup — Welcome Channel")
             channel = await interaction.guild.create_text_channel(
-                name="👋┃willkommen",
+                name=channel_name,
                 overwrites=overwrites,
-                reason="Nexus Setup — Willkommens-Channel",
+                reason=channel_reason,
             )
         except discord.Forbidden:
             await interaction.response.send_message(

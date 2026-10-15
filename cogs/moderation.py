@@ -4,28 +4,51 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database import db_settings, db_warnings
-from cogs.utils import post_logging, dm_user, get_lang
+from cogs.utils import post_logging, dm_user, get_lang, get_user_lang
 from emojis import NexusEmojis
 from systems.hierarchy import can_act_on_member, can_manage_role, format_issue, Issue
 
 log = logging.getLogger(__name__)
 
 class SlowmodeDuration(enum.Enum):
-    deaktiviert = (0,     "Deaktiviert")
-    s5          = (5,     "5 Sekunden")
-    s30         = (30,    "30 Sekunden")
-    min1        = (60,    "1 Minute")
-    min5        = (300,   "5 Minuten")
-    min30       = (1800,  "30 Minuten")
-    h1          = (3600,  "1 Stunde")
-    h3          = (10800, "3 Stunden")
-    h6          = (21600, "6 Stunden")
+    deaktiviert = (0,     "slowmode_dur_0",     "Disabled")
+    s5          = (5,     "slowmode_dur_5",     "5 seconds")
+    s30         = (30,    "slowmode_dur_30",    "30 seconds")
+    min1        = (60,    "slowmode_dur_60",    "1 minute")
+    min5        = (300,   "slowmode_dur_300",   "5 minutes")
+    min30       = (1800,  "slowmode_dur_1800",  "30 minutes")
+    h1          = (3600,  "slowmode_dur_3600",  "1 hour")
+    h3          = (10800, "slowmode_dur_10800", "3 hours")
+    h6          = (21600, "slowmode_dur_21600", "6 hours")
 
-    def __new__(cls, seconds, label):
-        obj = object.__new__(cls)
-        obj._value_ = seconds
-        obj.label = label
-        return obj
+    def __init__(self, seconds: int, key: str, fallback: str):
+        self._value_ = seconds
+        self.key = key
+        self.fallback = fallback
+
+    def get_label(self, lang: dict[str, str]) -> str:
+        return lang.get(self.key, self.fallback)
+
+class TimeoutDuration(enum.Enum):
+    key: str
+    fallback: str
+
+    m5      = (5,     "timeout_dur_5",     "5 minutes")
+    m10     = (10,    "timeout_dur_10",    "10 minutes")
+    h1      = (60,    "timeout_dur_60",    "1 hour")
+    h6      = (360,   "timeout_dur_3600",  "6 hours")
+    h12     = (720,   "timeout_dur_7200",  "12 hours")
+    d1      = (1440,  "timeout_dur_14400", "1 day")
+    w1      = (10080, "timeout_dur_10080", "1 week")
+    remove  = (0,     "timeout_dur_0",     "Remove timeout")
+
+    def __init__(self, minutes: int, key: str, fallback: str):
+        self._value_ = minutes
+        self.key = key
+        self.fallback = fallback
+
+    def get_label(self, lang: dict[str, str]) -> str:
+        return lang.get(self.key, self.fallback)
 
 class ModAction(enum.Enum):
     KICK  = ("dm_kicked",  discord.Color.red())
@@ -69,6 +92,10 @@ class Moderation(commands.Cog):
     # ─── Kick / Ban / Unban ──────────────────────────────────────────────────────
 
     @app_commands.command(name="kick", description=app_commands.locale_str("cmd_kick_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_kick_param_member"),
+        reason=app_commands.locale_str("cmd_kick_param_reason"),
+    )
     @app_commands.default_permissions(kick_members=True)
     async def kick(
         self,
@@ -131,6 +158,11 @@ class Moderation(commands.Cog):
         )
 
     @app_commands.command(name="ban", description=app_commands.locale_str("cmd_ban_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_ban_param_member"),
+        reason=app_commands.locale_str("cmd_ban_param_reason"),
+        delete_message_days=app_commands.locale_str("cmd_ban_param_days")
+    )
     @app_commands.default_permissions(ban_members=True)
     async def ban(
         self,
@@ -151,7 +183,6 @@ class Moderation(commands.Cog):
             reason = lang.get("no_reason", "No reason given")
 
         await interaction.response.defer(ephemeral=True)
-        # DM VOR dem Ban — danach teilt Nexus meist keinen Server mehr mit dem User
 
         try:
             await member.ban(reason=reason, delete_message_days=delete_message_days)
@@ -184,6 +215,10 @@ class Moderation(commands.Cog):
         await interaction.followup.send(lang.get("ban_success", "{user} was banned.").format(user=member.mention), ephemeral=True)
 
     @app_commands.command(name="unban", description=app_commands.locale_str("cmd_unban_desc"))
+    @app_commands.describe(
+        user=app_commands.locale_str("cmd_unban_param_member"),
+        reason=app_commands.locale_str("cmd_unban_param_reason"),
+    )
     @app_commands.default_permissions(ban_members=True)
     async def unban(
         self,
@@ -255,6 +290,10 @@ class Moderation(commands.Cog):
     # ─── Rollen ──────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="add_role", description=app_commands.locale_str("cmd_add_role_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_add_role_param_member"),
+        role=app_commands.locale_str("cmd_add_role_param_role"),
+    )
     @app_commands.default_permissions(manage_roles=True)
     async def add_role(
         self,
@@ -313,6 +352,10 @@ class Moderation(commands.Cog):
         ][:25]
 
     @app_commands.command(name="remove_role", description=app_commands.locale_str("cmd_remove_role_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_remove_role_param_member"),
+        role=app_commands.locale_str("cmd_remove_role_param_role"),
+    )
     @app_commands.default_permissions(manage_roles=True)
     async def remove_role(
         self,
@@ -374,6 +417,10 @@ class Moderation(commands.Cog):
     # ─── Slowmode ────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="set_slowmode", description=app_commands.locale_str("cmd_set_slowmode_desc"))
+    @app_commands.describe(
+        channel=app_commands.locale_str("cmd_set_slowmode_param_channel"),
+        duration=app_commands.locale_str("cmd_set_slowmode_param_duration"),
+    )
     @app_commands.default_permissions(manage_channels=True)
     async def set_slowmode(
         self,
@@ -398,7 +445,8 @@ class Moderation(commands.Cog):
             )
             return
 
-        label = next((d.label for d in SlowmodeDuration if d.value == duration), f"{duration}s")
+        duration_enum = next((d for d in SlowmodeDuration if d.value == duration), None)
+        label = duration_enum.get_label(lang) if duration_enum else f"{duration}s"
         if duration == 0:
             msg       = lang.get("slowmode_disabled", "Slowmode in {channel} has been disabled.").format(channel=channel.mention)
             log_title = lang.get("log_slowmode_disabled", "Slowmode in #{channel} disabled by {mod}.").format(channel=channel.name, mod=interaction.user)
@@ -421,13 +469,22 @@ class Moderation(commands.Cog):
 
     @set_slowmode.autocomplete("duration")
     async def slowmode_autocomplete(self, interaction: discord.Interaction, current: str):
-        return [
-            app_commands.Choice(name=d.label, value=d.value)
+        lang = get_user_lang(interaction)
+        choices = [
+            app_commands.Choice(name=d.get_label(lang), value=d.value)
             for d in SlowmodeDuration
-            if current.lower() in d.label.lower()
+        ]
+        return [
+            choice for choice in choices
+            if current.lower() in choice.name.lower()
         ]
 
     @app_commands.command(name="timeout", description=app_commands.locale_str("cmd_timeout_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_timeout_param_member"),
+        duration=app_commands.locale_str("cmd_timeout_param_duration"),
+        reason=app_commands.locale_str("cmd_timeout_param_reason"),
+    )
     @app_commands.default_permissions(moderate_members=True)
     async def timeout(
         self,
@@ -527,25 +584,23 @@ class Moderation(commands.Cog):
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[int]]:
-        options = [
-            {"name": "5 Minuten",  "value": 5},
-            {"name": "10 Minuten", "value": 10},
-            {"name": "1 Stunde",   "value": 60},
-            {"name": "6 Stunden",  "value": 360},
-            {"name": "12 Stunden", "value": 720},
-            {"name": "1 Tag",      "value": 1440},
-            {"name": "1 Woche",    "value": 10080},
-            {"name": "Aufheben",   "value": 0},
+        lang = get_user_lang(interaction)
+        choices = [
+            app_commands.Choice(name=d.get_label(lang), value=d.value)
+            for d in TimeoutDuration
         ]
         return [
-            app_commands.Choice(name=opt["name"], value=opt["value"])
-            for opt in options
-            if current.lower() in opt["name"].lower()
+            choice for choice in choices
+            if current.lower() in choice.name.lower()
         ][:25]
 
     # ─── Messages ────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="purge_messages", description=app_commands.locale_str("cmd_purge_desc"))
+    @app_commands.describe(
+        channel=app_commands.locale_str("cmd_purge_param_channel"),
+        amount=app_commands.locale_str("cmd_purge_param_amount"),
+    )
     @app_commands.default_permissions(manage_messages=True)
     async def purge_messages(
         self,
@@ -608,6 +663,10 @@ class Moderation(commands.Cog):
     # ─── Warns ───────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="warn", description=app_commands.locale_str("cmd_warn_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_warn_param_member"),
+        reason=app_commands.locale_str("cmd_warn_param_reason"),
+    )
     @app_commands.default_permissions(moderate_members=True)
     async def warn(
         self,
@@ -662,6 +721,9 @@ class Moderation(commands.Cog):
         )
 
     @app_commands.command(name="warnings", description=app_commands.locale_str("cmd_warnings_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_warnings_param_member"),
+    )
     @app_commands.default_permissions(moderate_members=True)
     async def warnings(
         self,
@@ -698,6 +760,10 @@ class Moderation(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="unwarn", description=app_commands.locale_str("cmd_unwarn_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_unwarn_param_member"),
+        warning_id=app_commands.locale_str("cmd_unwarn_param_id"),
+    )
     @app_commands.default_permissions(moderate_members=True)
     async def unwarn(
         self,
@@ -733,6 +799,9 @@ class Moderation(commands.Cog):
             ), ephemeral=True,)
 
     @app_commands.command(name="clearwarnings", description=app_commands.locale_str("cmd_clearwarnings_desc"))
+    @app_commands.describe(
+        member=app_commands.locale_str("cmd_clearwarnings_param_member"),
+    )
     @app_commands.default_permissions(administrator=True)
     async def clearwarnings(
         self,

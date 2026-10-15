@@ -105,6 +105,23 @@ MESSAGES: dict[str, str] = {
     "timeout_no_permission":     "❌ I don't have permission to timeout this user.",
     "kick_error":                "❌ Something went wrong while kicking this user.",
     "unban_invalid_user":        "❌ Please select a user from the suggestions.",
+    "slowmode_dur_0":     "Disabled",
+    "slowmode_dur_5":     "5 seconds",
+    "slowmode_dur_30":    "30 seconds",
+    "slowmode_dur_60":    "1 minute",
+    "slowmode_dur_300":   "5 minutes",
+    "slowmode_dur_1800":  "30 minutes",
+    "slowmode_dur_3600":  "1 hour",
+    "slowmode_dur_10800": "3 hours",
+    "slowmode_dur_21600": "6 hours",
+    "timeout_dur_0":     "Remove timeout",
+    "timeout_dur_5":     "5 minutes",
+    "timeout_dur_10":    "10 minutes",
+    "timeout_dur_60":    "1 hour",
+    "timeout_dur_3600":  "6 hours",
+    "timeout_dur_7200":  "12 hours",
+    "timeout_dur_14400": "1 day",
+    "timeout_dur_10080": "1 week",
 
     # ─── DM Messages ──────────────────────────────────────────────────
     "dm_kicked":            "👢 You were kicked",
@@ -341,6 +358,12 @@ MESSAGES: dict[str, str] = {
     "setup_validate":       "🔍 Validate",
     "setup_placeholder":    "📋 Choose an existing Channel...",
     "setup_create":         "✨ Create one for me",
+    "setup_cnl_rules_name": "📜┃rules",
+    "setup_cnl_welcome_name": "👋┃welcome",
+    "setup_cnl_logs_name": "📝┃nexus-logs",
+    "setup_cnl_rules_reason": "Nexus Setup — Rules channel",
+    "setup_cnl_welcome_reason": "Nexus Setup — Welcome channel",
+    "setup_cnl_logs_reason": "Nexus Setup — Log channel",
     "setup_finish":         "Finish Setup",
     "setup_done_title":     "Nexus is ready!",
     "setup_welcome_back_title": "👋 Welcome back!",
@@ -388,7 +411,6 @@ MESSAGES: dict[str, str] = {
     "setup_skip_hint": "Already know what you are doing? Hit **Skip** to proceed anyway.",
     "setup_modules_placeholder":           "Choose modules…",
     "setup_active_modules":                "🧩 Active modules",
-    "setup_step_five_desc":                "**Almost there!**\nWhich modules should be enabled for this server right away? Pick as many as you like.\n\n*(You can change these modules at any time using `/module`)*",
     "setup_module_desc_levels":            "XP for activity, level-ups and role rewards",
     "setup_module_desc_welcome":           "Greets new members with a custom message",
     "setup_module_desc_stream_alerts":     "Notifies when Twitch, YouTube or Kick streams go live",
@@ -402,6 +424,20 @@ MESSAGES: dict[str, str] = {
         "⚠️ I couldn't **post a welcome message in any channel** "
         "because I'm missing the `View Channel`, `Send Messages`, or `Embed Links` permissions.\n\n"
         "Please grant me the required permissions on your server and run `/setup` to get started.",
+    "setup_dashboard_button":       "🌐 Open Dashboard",
+    "setup_perm_warning_title":     "⚠️ Permissions Required",
+    "setup_channel_private":        "🔒 **This channel is private.**",
+    "setup_channel_missing_perm":   "✍️ **This channel is read-only or restricted.**",
+    "setup_perm_warning_desc":
+        "I do not have all required permissions in {channel}.\n\n"
+        "{scenario_note}\n\n"
+        "**Missing permissions (please set to ✅):**\n"
+        "{missing_list_str}\n\n"
+        "**How to fix this:**\n"
+        "{num_1} Right-click on {channel} → **Edit Channel** → **Permissions**\n"
+        "{num_2} Add or select the **Nexus** role\n"
+        "{num_3} Enable the permissions listed above (**Allow / ✅**)\n"
+        "{num_4} Click on **🔍 Validate** below",
 
     # ─── Modules ──────────────────────────────────────────────────────
     "module_core":          "🔒 Core Module",
@@ -564,6 +600,7 @@ MESSAGES: dict[str, str] = {
     "announcement_no_channel":          "Not Set",
     "announcement_updated":             "{nexus_checkmark} Announcement settings updated.",
     "announcement_footer":              "Nexus • Update",
+    "announcement_disable_button":      "Disable announcements",
 
     # ─── Help ───────────────────────────────────────────────────────
     "help_mod_moderation":      "Moderation",
@@ -573,7 +610,8 @@ MESSAGES: dict[str, str] = {
     "help_mod_boosts":          "Boosts",
     "help_mod_automod":         "Automod",
     "help_mod_stream_alerts":   "Stream Alerts",
-    "help_mod_Tickets":         "Tickets",
+    "help_mod_tickets":         "Tickets",
+    "help_mod_giveaways":       "Giveaways",
     "help_title":        "📖 Nexus — Help",
     "help_overview_desc":"Select a module to see the available commands.\n\n⭐ = Premium Feature",
     "help_btn_overview": "📋 Overview",
@@ -591,6 +629,9 @@ MESSAGES: dict[str, str] = {
     "support_invalid_pin":      "❌ Invalid or expired PIN.",
     "support_pin_desc":         "Share this PIN with Nexus support: **`{pin}`**\nValid for 15 minutes.",
     "support_pin_title":        "🔐 Support-PIN",
+    "support_no_access":         "❌ This channel has no verified support access. Use `/verify-pin` first.",
+    "support_guild_unreachable": "❌ The server is currently not reachable by the bot.",
+    "support_premium_already":   "ℹ️ The server already has Premium: {status}\nNothing was changed.",
 
     # ─── Help Commands ────────────────────────────────────────────────
     "help_cmd_kick":            "Kicks a user",
@@ -624,12 +665,8 @@ MESSAGES: dict[str, str] = {
     "help_cmd_reactionrole_delete": "Deletes a reaction role message",
 
     # ─── Embed Commands ───────────────────────────────────────────────
-    "help_cmd_embed_create":   "Creates an embed",
-    "help_cmd_embed_list":     "Shows saved embeds",
-    "help_cmd_embed_post":     "Posts a saved embed",
-    "help_cmd_embed_schedule": "Schedules an embed post ⭐",
-    "help_cmd_embed_delete":   "Deletes a saved embed",
-    "help_cmd_post_rules":     "Posts the server rules",
+    "help_cmd_embed":       "Manages embeds (create, post, schedule ⭐, delete)",
+    "help_cmd_post_rules":  "Posts the server rules",
 
     # ─── Boost Commands ───────────────────────────────────────────────
     
@@ -651,6 +688,9 @@ MESSAGES: dict[str, str] = {
     "help_cmd_edit_category":   "Edits a ticket category.",
     "help_cmd_ticket_panel":    "Posts ticket panel in chosen channel.",
     "help_cmd_force_close":     "Permanently closes a ticket.",
+
+    # ─── Giveaway Commands ─────────────────────────────────────────────
+    "help_cmd_giveaways": "Manages giveaways (create and end)",
 
     # ─── ALWAYS_SHOWN ─────────────────────────────────────────────────
     "help_always_general":      "{settings} General",
@@ -685,6 +725,40 @@ MESSAGES: dict[str, str] = {
     "embed_no_rules_channel":   "❌ No rules channel configured. Use `/settings` to set one.",
     "embed_channel_not_found":  "❌ Rules channel not found.",
     "embed_no_permission":      "❌ I don't have permission to send messages in {channel}.",
+    "embed_inactive":           "🔒 This embed is inactive: your server is over its saved-embed limit. Delete older embeds or get Premium.",
+    "embed_inactive_hint":      "🔒 Inactive — over the limit. Delete embeds or get Premium.",
+    "embed_over_limit":         "⚠️ Only the {limit} oldest embeds are active.",
+    "embed_list_page":          "Page {page}/{pages}",
+    "embed_hub_title":                "📋 Embeds",
+    "embed_hub_text":                 "Create embeds, post them, schedule them (Premium) or delete saved ones.",
+    "embed_btn_create":               "Create",
+    "embed_btn_list":                 "List",
+    "embed_btn_post":                 "Post",
+    "embed_btn_schedule":             "Schedule ⭐",
+    "embed_btn_delete":               "Delete",
+    "embed_btn_back":                 "Back",
+    "embed_pick_placeholder":         "Select an embed...",
+    "embed_pick_channel_placeholder": "Select a channel...",
+    "embed_pick_title_post":          "📤 Post embed",
+    "embed_pick_title_schedule":      "⏰ Schedule embed",
+    "embed_pick_title_delete":        "🗑️ Delete embed",
+    "embed_pick_hint_post":           "Select an embed. Optionally pick a channel — otherwise the saved one is used.",
+    "embed_pick_hint_schedule":       "Select an embed and a target channel, then choose the time.",
+    "embed_pick_hint_delete":         "Select the embed you want to delete.",
+    "embed_delete_confirm":           "Delete embed #{id}? This can't be undone.",
+    "embed_delete_cancelled":         "Cancelled.",
+    "embed_field_channel":            "Channel",
+    "embed_field_channel_desc":       "Where to post the embed (needed for Post)",
+    "embed_field_name":               "Save as",
+    "embed_field_name_desc":          "Optional name for the saved embed",
+    "embed_field_action":             "Action",
+    "embed_placeholder_channel":      "Select a channel...",
+    "embed_placeholder_name":         "e.g. Rules v2",
+    "embed_mode_post":                "Post",
+    "embed_mode_save":                "Save",
+    "embed_mode_both":                "Save & Post",
+    "embed_saved":                    "{checkmark} Embed saved as #{id}.",
+    "embed_saved_posted":             "{checkmark} Embed saved as #{id} and posted in {channel}.",
 
     # ─── Stream Alerts ───────────────────────────────────────────────────
     "alert_invalid_username":  "❌ That doesn't look like a valid Username or Link.",
@@ -738,4 +812,73 @@ MESSAGES: dict[str, str] = {
     "alert_message_modal_title":   "Edit Custom Message",
     "alert_message_modal_label":   "Message (leave empty to remove)",
     "alert_edit_success":          "{nexus_checkmark} Settings for `{login}` have been updated.",
+
+    # ─── Premium (/premium) ───────────────────────────────────────────
+    "help_cmd_premium":            "Shows your server's Premium status",
+    "premium_title":               "⭐ Nexus Premium",
+    "premium_status_field":        "Status",
+    "premium_status_none":         "❌ This server doesn't have Premium.",
+    "premium_status_sub_active":   "{nexus_checkmark} Premium subscription active — renews automatically.",
+    "premium_status_sub_ending":   "⏳ Subscription cancelled — Premium runs until {date} ({relative}).",
+    "premium_hint_resume":         "You can resume it in your Discord settings under **Subscriptions**.",
+    "premium_status_gift":         "🎁 Early Bird gift — Premium until {date} ({relative}).",
+    "premium_status_manual":       "🎁 Gift from the Nexus team — Premium until {date} ({relative}).",
+    "premium_status_unlimited":    "{nexus_checkmark} Premium active — unlimited.",
+    "premium_status_expired":      "❌ Premium expired on {date}.",
+    "premium_perks_title":         "What Premium gives you",
+    "premium_perk_embeds":         "📋 Saved embeds",
+    "premium_perk_tickets":        "🎫 Ticket categories",
+    "premium_perk_welcome":        "👋 Welcome messages",
+    "premium_perk_boosts":         "🚀 Boost messages",
+    "premium_perk_alerts_twitch":  "📡 Twitch alerts",
+    "premium_perk_alerts_youtube": "📡 YouTube alerts",
+    "premium_perk_alerts_kick":    "📡 Kick alerts",
+    "premium_perk_schedule":       "⏰ Scheduled embed posting",
+    "premium_perk_unique":         "🎭 Unique mode for reaction roles",
+    "premium_perk_alert_roles":    "🔔 Platform-specific ping roles for stream alerts",
+
+    # ─── Giveaways ───────────────────────────────────────────────────
+    "giveaways_title": "📋 Configured Giveaways",
+    "no_giveaways_found": "No Giveaways are ongoing currently on this server.",
+    "giveaways_participants": "Participants",
+    "giveaways_winners": "Winners",
+    "giveaways_end_date": "End Date",
+    "giveaways_status": "Status",
+    "giveaways_btn_add": "Add",
+    "giveaways_btn_cancel": "Cancel",
+    "giveaways_cancel_prompt": "Select the giveaway to cancel:",
+    "giveaways_cancel_placeholder": "Select a giveaway...",
+    "join_giveaway": "Join Giveaway",
+    "giveaways_add_modal_title": "Create a Giveaway",
+    "giveaways_prize_label": "Prize",
+    "giveaways_prize_placeholder": "e.g. Some awesome Prize",
+    "giveaways_winners_count_label": "How many Winners?",
+    "giveaways_winners_count_placeholder": "e.g. 3",
+    "giveaways_description_label": "Description",
+    "giveaways_description_placeholder": "Optional details about the giveaway...",
+    "giveaways_channel_label": "Channel",
+    "giveaways_channel_placeholder": "Select the Channel...",
+    "giveaway_not_found": "❌ This giveaway no longer exists.",
+    "giveaway_ended": "The Giveaway has already ended",
+    "giveaway_already_joined": "You've already joined this giveaway.",
+    "giveaway_joined": "You have joined the giveaway!",
+    "giveaway_winners_count_invalid": "❌ Invalid winners count.",
+    "giveaway_channel_unreachable": "❌ I can't access that channel.",
+    "giveaway_bot_missing_perms": "❌ I need View Channel, Send Messages and Embed Links in {channel}.",
+    "giveaway_user_missing_perms": "❌ You can't send messages in {channel}.",
+    "giveaway_created": "{checkmark} Giveaway created!",
+    "giveaway_cancelled_admin": "{checkmark} Giveaway cancelled.",
+    "giveaway_cancel_failed": "❌ I can't access that giveaway's channel. Check my permissions and try again.",
+    "giveaway_cancelled": "❌ Cancelled",
+    "giveaway_winners_field": "🏆 Winners",
+    "no_participants": "Nobody entered.",
+    "giveaway_winner_announcement": "🎉 Congratulations {winners}! You won **{prize}**!",
+    "giveaway_no_winner": "😢 There were no participants for **{prize}**.",
+    "giveaways_duration_label": "Duration",
+    "giveaway_dur_1h":  "1 hour",
+    "giveaway_dur_8h":  "8 hours",
+    "giveaway_dur_24h": "24 hours",
+    "giveaway_dur_3d":  "3 days",
+    "giveaway_dur_1w":  "1 week",
+    "giveaway_dur_2w":  "2 weeks",
 }
