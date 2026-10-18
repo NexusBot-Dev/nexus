@@ -1,6 +1,7 @@
 import discord
 from .registry import register_action, get_bot
 from database import db_levels
+from systems.hierarchy import can_use_channel
 
 @register_action("leveling", "list-roles")
 async def list_roles(guild_id: int, payload: dict) -> dict:
@@ -89,7 +90,33 @@ async def get_xp_settings(guild_id: int, payload: dict) -> dict:
         "points_min": settings["points_min"],
         "points_max": settings["points_max"],
         "shop_enabled": settings["shop_enabled"],
+        "levelup_channel_id": str(settings["levelup_channel_id"]) if settings.get("levelup_channel_id") else None,
     }
+
+@register_action("leveling", "set-levelup-channel")
+async def set_levelup_channel(guild_id: int, payload: dict) -> dict:
+    """Setzt den Level-Up-Channel. Leer/None = Fallback (Nachricht im aktuellen Channel, nach 30s gelöscht)."""
+    channel_id = payload.get("channel_id")
+
+    if channel_id in (None, ""):
+        await db_levels.update_levels_settings(guild_id, levelup_channel_id=None)
+        return {"levelup_channel_id": None}
+
+    if not str(channel_id).isdigit():
+        raise ValueError("Gültiger Channel wird benötigt")
+
+    guild = get_bot().get_guild(guild_id)
+    if guild is None:
+        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+
+    channel = guild.get_channel(int(channel_id))
+    if not isinstance(channel, discord.TextChannel):
+        raise ValueError("Channel existiert nicht (mehr) oder ist kein Textchannel")
+    if not can_use_channel(channel, "send_messages", "embed_links"):
+        raise ValueError("Der Bot darf in diesem Channel keine Embeds senden")
+
+    await db_levels.update_levels_settings(guild_id, levelup_channel_id=channel.id)
+    return {"levelup_channel_id": str(channel.id)}
 
 @register_action("leveling", "set-xp-settings")
 async def set_xp_settings(guild_id: int, payload: dict) -> dict:
