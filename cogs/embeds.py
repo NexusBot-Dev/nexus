@@ -8,20 +8,17 @@ from discord.ext import commands, tasks
 from datetime import datetime
 from database import db_settings, db_embeds, db_limits
 from systems.premium import is_premium
-from cogs.utils import get_lang, module_required
-from config import NEXUS_COLOR, NEXUS_FOOTER
+from cogs.utils import get_lang
+from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.ui import NexusModal, NexusView, ConfirmView, send_ephemeral
 
 log = logging.getLogger(__name__)
 
-# Discord erlaubt max. 25 Felder / 6000 Zeichen pro Embed. 10 Felder bleiben auch im Worst Case sicher darunter.
-EMBEDS_PER_PAGE = 10
-# Ein Select-Menü zeigt max. 25 Optionen.
-PICK_PAGE_SIZE = 25
-# saved_embeds.name ist varchar(100); beim Planen kommt "Scheduled: " (11 Zeichen) davor.
-SAVE_NAME_MAX = 80
 
+EMBEDS_PER_PAGE = 10
+PICK_PAGE_SIZE = 25
+SAVE_NAME_MAX = 80
 VIEW_PERMISSION = "manage_messages"
 
 # ─── Helfer ──────────────────────────────────────────────────────────────────
@@ -434,7 +431,7 @@ class EmbedPickerView(NexusView):
             await send_ephemeral(interaction, self.lang.get("embed_no_channel", "❌ No channel specified."))
             return
 
-        color = embed_data["color"] or await db_settings.get_color(interaction.guild_id)
+        color = await db_settings.get_color(interaction.guild_id)
         embed = _build_embed(embed_data["title"], embed_data["description"], color)
         if not await _send_embed(interaction, self.lang, channel, embed):
             return
@@ -713,8 +710,6 @@ class Embeds(commands.Cog):
 
                 limit = await _embed_limit(embed_data["guild_id"])
                 if not await db_embeds.is_embed_active(embed_data["id"], embed_data["guild_id"], limit):
-                    # Inaktiv (über dem Limit): nicht posten UND Zeitplan verwerfen, damit der Embed nicht
-                    # Wochen später nachgeholt wird, falls die Guild wieder Premium bekommt.
                     log.info("Geplantes Embed %s verworfen: Guild %s ist über dem Embed-Limit.", embed_data["id"], embed_data["guild_id"])
                     await db_embeds.clear_scheduled(embed_data["id"])
                     continue
@@ -728,7 +723,7 @@ class Embeds(commands.Cog):
                     except (discord.NotFound, discord.Forbidden):
                         channel = None
 
-                color = embed_data["color"] or NEXUS_COLOR
+                color = await db_settings.get_color(embed_data["guild_id"])
                 embed = discord.Embed(
                     title=embed_data["title"],
                     description=embed_data["description"],

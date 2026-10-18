@@ -15,6 +15,8 @@ MESSAGES: dict[str, str] = {
     "view_not_yours": "❌ Este menú pertenece a otro usuario. Ejecuta el comando tú mismo.",
     "confirm_yes":    "Confirmar",
     "confirm_no":     "Cancelar",
+    "msg_inactive_tag":  "🔒 inactivo",
+    "msg_inactive_hint": "🔒 Los mensajes por encima de tu límite de {limit} se conservan, pero no se usan. Vuelven a estar activos con Premium o al eliminar uno activo.",
 
     # ─── Error Handling ───────────────────────────────────────────────
     "perm_issue_missing_perms":     "❌ Me faltan los siguientes permisos: {perms}",
@@ -670,6 +672,7 @@ MESSAGES: dict[str, str] = {
     "help_cmd_post_rules":  "Publica las reglas del servidor",
 
     # ─── Boost Commands ───────────────────────────────────────────────
+    "help_cmd_boost_message": "Gestionar los mensajes de boost",
 
     # ─── Welcome Commands ─────────────────────────────────────────────
     "help_cmd_welcome_message": "Gestiona mensajes de bienvenida",

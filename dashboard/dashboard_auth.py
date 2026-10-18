@@ -1,4 +1,5 @@
 import hmac
+import discord
 from aiohttp import web
 from .discord_auth_check import verify_guild_access
 
@@ -20,27 +21,33 @@ async def dashboard_auth_middleware(request: web.Request, handler):
         return web.json_response({"ok": False, "error": "invalid_token"}, status=401)
 
     if request.method != "POST":
-        return await handler(request)
+        return await handler(request)  # aktuell nur /health als GET
 
     try:
         body = await request.json()
     except Exception:
-        body = {}
+        return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
 
-    guild_id = body.get("guild_id")
-    access_token = body.get("discord_access_token")
+    try:
+        guild_id = int(body["guild_id"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
+    if guild_id <= 0:
+        return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
 
-    if guild_id:
-        if not access_token:
-            return web.json_response({"ok": False, "error": "missing_discord_session"}, status=401)
-        try:
-            has_access = await verify_guild_access(access_token, int(guild_id))
-        except ValueError:
-            return web.json_response({"ok": False, "error": "invalid_discord_session"}, status=401)
-        if not has_access:
-            return web.json_response({"ok": False, "error": "guild_access_denied"}, status=403)
+    raw_user_id = body.get("acting_user_id")
+    if not isinstance(raw_user_id, str) or not raw_user_id.isdigit():
+        return web.json_response({"ok": False, "error": "missing_user"}, status=401)
 
-    # Body erneut lesbar machen, da aiohttp Requests nur einmal auslesbar sind
+    try:
+        has_access = await verify_guild_access(int(raw_user_id), guild_id)
+    except discord.HTTPException:
+        return web.json_response({"ok": False, "error": "discord_unavailable"}, status=503)
+    if not has_access:
+        return web.json_response({"ok": False, "error": "guild_access_denied"}, status=403)
+
+    body["guild_id"] = guild_id
     request["_cached_json"] = body
-
     return await handler(request)

@@ -13,3 +13,4 @@ from . import tickets  # noqa: F401
 from . import reaction_roles  # noqa: F401
 from . import health  # noqa: F401
 from . import overview  # noqa: F401
+from . import giveaways # noqa: F401

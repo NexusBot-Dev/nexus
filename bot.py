@@ -1,18 +1,22 @@
 import logging
 import discord
-from pathlib import Path 
+import asyncio
+from pathlib import Path
 from discord import app_commands
 from discord.ext import commands, tasks
 from database import init_pool, close_pool, db_settings
 from config import DISCORD_TOKEN, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, INVITE_URL, NEXUS_FOOTER, APPLICATION_ID
-from translations.command_locales import COMMAND_LOCALES
-from translations import TRANSLATIONS, LOCALE_MAP
-from datetime import datetime, timezone, timedelta
+from translations import TRANSLATIONS, LOCALE_MAP, COMMAND_LOCALES
+from datetime import datetime, timezone
 from cachetools import TTLCache
 from cogs.setup import SetupView, RestoreView
-from systems.premium import remove_premium, sync_entitlements, set_premium_from_discord
+from systems.premium import (
+    remove_premium, sync_entitlements, set_premium_from_discord, grant_early_bird_premium,
+    apply_subscription_update, describe_subscription,
+)
 from lists.topgg import post_commands_to_topgg, post_server_count
 from lists.discordbotlist import post_commands_to_dbl, post_server_count_to_dbl
+from lists.botboard import post_commands_to_botboard
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -20,8 +24,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 _dm_cooldowns = TTLCache[int, bool](maxsize=2_000, ttl=1800)
+_entitlement_dedup = TTLCache[int, bool](maxsize=1_000, ttl=60)
+_subscription_dedup = TTLCache[int, bool](maxsize=1_000, ttl=60)
 
-DEV_MODE = False
 UPLOAD_COMMANDS_DBL = True
 UPLOAD_COMMANDS_TOPGG = True
 
@@ -78,6 +83,7 @@ class Nexus(commands.AutoShardedBot):
         self.dev_guild = discord.Object(id=DEV_GUILD_ID)
         self.support_guild = discord.Object(id=SUPPORT_GUILD_ID)
         self._initial_sync_done = False
+        self._upload_task: asyncio.Task | None = None
         self.started_at = datetime.now(timezone.utc)
 
     # ─── Loop Tasks ─────────────────────────────────────────────────────
@@ -97,16 +103,19 @@ class Nexus(commands.AutoShardedBot):
 
     @tasks.loop(hours=1)
     async def update_stats(self):
-        """Aktualisiert Stats fehlerisoliert, ohne den Bot-Betrieb zu stören."""
-        try:
-            await post_server_count(self)
-        except Exception as e:
-            log.warning("Top.gg Stats-Push fehlgeschlagen: %s", e)
+        """Aktualisiert Stats fehlerisoliert und parallel auf allen Plattformen."""
+        tasks_map = {
+            "Top.gg": post_server_count(self),
+            "DBL": post_server_count_to_dbl(self),
+            "Botboard": post_commands_to_botboard(self),
+        }
 
-        try:
-            await post_server_count_to_dbl(self)
-        except Exception as e:
-            log.warning("DBL Stats-Push fehlgeschlagen: %s", e)
+        # Alle 3 Requests parallel abfeuern
+        results = await asyncio.gather(*tasks_map.values(), return_exceptions=True)
+
+        for name, result in zip(tasks_map.keys(), results):
+            if isinstance(result, Exception):
+                log.warning("%s Stats-Push fehlgeschlagen: %s", name, result)
 
     # ─── Bot Tasks ──────────────────────────────────────────────────────
 
@@ -137,8 +146,9 @@ class Nexus(commands.AutoShardedBot):
 
         for command in self.tree.walk_commands():
             command.guild_only = True
-        for command in self.tree.walk_commands(guild=self.support_guild):
-            command.guild_only = True
+        for guild in (self.support_guild, self.dev_guild):
+            for command in self.tree.walk_commands(guild=guild):
+                command.guild_only = True
         log.info("Alle Commands als guild_only markiert (nicht sichtbar/nutzbar in DMs).")
 
     async def on_message(self, message: discord.Message):
@@ -187,51 +197,42 @@ class Nexus(commands.AutoShardedBot):
         if self._initial_sync_done:
             log.info("Reconnect erkannt — Sync und API-Uploads übersprungen.")
             return
+        self._initial_sync_done = True
 
-        # 3. Externe API-Uploads nur beim initialen Start ausführen
+        # 3. Command-Sync mit resilientem Fehler-Handling
+        targets = [None] + [g for g in (self.support_guild, self.dev_guild) if g]
+        for target in targets:
+            name = "global" if target is None else str(target.id)
+            try:
+                await self.tree.sync(guild=target)
+                log.info("Command-Sync (%s) ausgeführt.", name)
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    log.warning("Rate Limited beim Sync (%s) — überspringe.", name)
+                else:
+                    log.exception("Fehler beim Command-Sync (%s):", name)
+
+        # 4. Externe Uploads völlig entkoppelt im Hintergrund feuern ("Fire & Forget")
+        self._upload_task = asyncio.create_task(self._upload_commands_background())
+
+    async def _upload_commands_background(self):
+        """Läuft asynchron im Hintergrund, blockiert den Bot-Start nicht."""
+        # Kurz warten, damit Discord-intern alles stabil steht
+        await asyncio.sleep(5)
+
         if UPLOAD_COMMANDS_TOPGG:
             try:
                 await post_commands_to_topgg(self)
+                log.info("Top.gg Commands erfolgreich hochgeladen.")
             except Exception:
-                log.exception("Fehler beim Upload der Commands zu Top.gg")
+                log.exception("Fehler beim Upload der Commands zu Top.gg (nicht kritisch)")
 
         if UPLOAD_COMMANDS_DBL:
             try:
                 await post_commands_to_dbl(self)
+                log.info("DiscordBotList Commands erfolgreich hochgeladen.")
             except Exception:
-                log.exception("Fehler beim Upload der Commands zu DiscordBotList")
-
-        # 4. Command-Sync mit resilientem Fehler-Handling
-        if DEV_MODE:
-            self.tree.copy_global_to(guild=self.dev_guild)
-            try:
-                await self.tree.sync(guild=self.dev_guild)
-                log.info("Dev-Mode: Commands für Dev-Guild synchronisiert.")
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    log.warning("Rate Limited beim Dev-Sync — überspringe.")
-                else:
-                    log.exception("Fehler beim Dev-Guild Command-Sync:")
-        else:
-            try:
-                await self.tree.sync()
-                log.info("Globaler Command-Sync ausgeführt.")
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    log.warning("Rate Limited beim globalen Sync — Commands bereits aktuell, überspringe.")
-                else:
-                    log.exception("Fehler beim globalen Command-Sync:")
-
-            try:
-                await self.tree.sync(guild=self.support_guild)
-                log.info("Support-Guild-Commands synchronisiert.")
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    log.warning("Rate Limited beim Support-Guild-Sync — überspringe.")
-                else:
-                    log.exception("Fehler beim Support-Guild Command-Sync:")
-
-        self._initial_sync_done = True
+                log.exception("Fehler beim Upload der Commands zu DiscordBotList (nicht kritisch)")
 
     async def on_guild_join(self, guild: discord.Guild):
         locale = LOCALE_MAP.get(str(guild.preferred_locale), "en")
@@ -276,8 +277,8 @@ class Nexus(commands.AutoShardedBot):
             grant_early_bird = True
 
         if grant_early_bird:
-            expires_at = datetime.now(timezone.utc) + timedelta(days=90)
-            await set_premium_from_discord(self, guild.id, entitlement=None, reason="Early-Bird 90 Days Gift", expires_at=expires_at, source="gift")
+            # Vergibt nur bis EARLY_BIRD_END und überschreibt nie ein längeres/aktives Premium
+            await grant_early_bird_premium(self, guild.id)
         # Embed final zusammenbauen
         embed = discord.Embed(
             title=embed_title,
@@ -406,16 +407,23 @@ class Nexus(commands.AutoShardedBot):
 
     async def on_entitlement_create(self, entitlement: discord.Entitlement):
         """Wird aufgerufen, wenn jemand ein Premium-Abo im Discord Store kauft."""
+        if entitlement.id in _entitlement_dedup:
+            return
+        _entitlement_dedup[entitlement.id] = True
+
         if entitlement.guild_id is None:
             log.warning("Ein User hat ein User-Abo gekauft. Nexus unterstützt aktuell nur Server-Premium.")
             return
 
-        log.info("🎉 Neues Discord-Entitlement erstellt für Guild ID: %s", entitlement.guild_id)
-
-        await set_premium_from_discord(self, entitlement.guild_id, entitlement, reason="Discord Store Kauf", source="discord")
+        log.info("🎉 Neues Discord-Entitlement erstellt für Guild ID: %s (Entitlement-ID: %s)", entitlement.guild_id, entitlement.id)
+        await set_premium_from_discord(self, entitlement.guild_id, entitlement, reason="Discord Store Kauf")
 
     async def on_entitlement_delete(self, entitlement: discord.Entitlement):
         """Wird aufgerufen, wenn ein Abo ausläuft, gekündigt oder von Discord rückabgewickelt wird."""
+        if entitlement.id in _entitlement_dedup:
+            return
+        _entitlement_dedup[entitlement.id] = True
+
         if entitlement.guild_id is None:
             return
 
@@ -423,12 +431,36 @@ class Nexus(commands.AutoShardedBot):
         await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo beendet")
 
     async def on_entitlement_update(self, entitlement: discord.Entitlement):
-        """Wird aufgerufen, wenn ein Abo tatsächlich endet (ends_at erreicht, nach Kündigung)."""
+        """Laut Discord-Doku nur, wenn ein Abo-Entitlement tatsächlich endet (ends_at gesetzt)."""
+        if entitlement.id in _entitlement_dedup:
+            return
+        _entitlement_dedup[entitlement.id] = True
+
         if entitlement.guild_id is None:
             return
+        ends = entitlement.ends_at
+        log.info("💳 Entitlement-Update für Guild %s: id=%s ends_at=%s", entitlement.guild_id, entitlement.id, ends)
+        if ends is not None and ends <= datetime.now(timezone.utc):
+            await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo ausgelaufen")
+        elif ends is not None:
+            # Künftiges Ende: Datum übernehmen
+            await set_premium_from_discord(self, entitlement.guild_id, entitlement, reason="Discord Abo aktualisiert")
+        # ends is None: nichts anfassen. Kündigung/Wiederaufnahme (Datum) kommt über on_subscription_update.
 
-        log.info("💳 Discord-Entitlement beendet (ends_at erreicht) für Guild ID: %s", entitlement.guild_id)
-        await remove_premium(self, entitlement.guild_id, reason="Discord Store Abo ausgelaufen")
+    async def on_subscription_create(self, subscription: discord.Subscription):
+        log.info("🧾 Subscription erstellt: %s", describe_subscription(subscription))
+
+    async def on_subscription_update(self, subscription: discord.Subscription):
+        """Kündigung (ENDING bzw. in der Praxis INACTIVE -> Periodenende) und Wiederaufnahme (ACTIVE) landen in premium.expires_at."""
+        if subscription.id in _subscription_dedup:
+            return
+        _subscription_dedup[subscription.id] = True
+
+        log.info("🧾 Subscription aktualisiert: %s", describe_subscription(subscription))
+        await apply_subscription_update(self, subscription)
+
+    async def on_subscription_delete(self, subscription: discord.Subscription):
+        log.info("🧾 Subscription gelöscht: %s", describe_subscription(subscription))
 
     async def close(self):
         await close_pool()

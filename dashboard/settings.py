@@ -4,7 +4,7 @@ from database import db_settings
 
 log = logging.getLogger(__name__)
 
-ALLOWED_LOCALES = {"de", "en"}
+ALLOWED_LOCALES = {"de", "en", "es", "pt"}
 CHANNEL_FIELDS = (
     "log_channel_id",
     "rules_channel_id",

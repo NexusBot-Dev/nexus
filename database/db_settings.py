@@ -93,10 +93,14 @@ async def get_timezone(guild_id: int) -> str:
     return "UTC"
 
 async def get_color(guild_id: int) -> int:
-    """Gibt die Guild-Farbe zurück — Premium kann eigene Farbe setzen."""
+    """Gibt die Guild-Farbe zurück. Eine eigene Farbe gilt nur, solange Premium aktiv ist;
+    der gespeicherte Wert bleibt erhalten und greift nach einer Verlängerung wieder."""
     row = await get_guild(guild_id)
-    if row and row.get("color"):
-        return row["color"]
+    custom = row.get("color") if row else None
+    if custom and custom != NEXUS_COLOR:
+        from systems.premium import is_premium
+        if await is_premium(guild_id):
+            return custom
     return NEXUS_COLOR
 
 async def set_color(guild_id: int, color: int) -> bool:

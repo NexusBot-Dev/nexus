@@ -15,7 +15,7 @@ def xp_for_level(level: int) -> int:
     # Exakte mathematische Summenformel
     return int((5 / 6) * n * (2 * n**2 + 27 * n + 91))
 
-# Einmalig beim Start vorberechnen
+# Einmalig beim Start vorberechnen (kostet < 3 KB RAM)
 _LEVEL_THRESHOLDS = [xp_for_level(lvl) for lvl in range(MAX_PRECOMPUTED_LEVEL + 1)]
 
 def calculate_level(xp: int) -> int:
