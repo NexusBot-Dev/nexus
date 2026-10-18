@@ -10,7 +10,8 @@ from systems.exp_system import XP_COOLDOWN
 from cogs.utils import post_logging, get_lang, module_required
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.ui import NexusView, NexusModal
+from systems.ui import NexusView, NexusModal, send_ephemeral
+from systems.hierarchy import can_use_channel, format_issue
 
 log = logging.getLogger(__name__)
 
@@ -77,24 +78,34 @@ class Levels(commands.Cog):
                             log.error("HTTP-Fehler beim Entfernen von Rolle %s: %s", role.name, e)
 
         # 3. Embed-Nachricht senden (nur bei echtem Level-Up nach oben)
-        if new_level > old_level and channel and hasattr(channel, "send"):
-            try:
-                color = await db_settings.get_color(guild.id)
-                embed = discord.Embed(
-                    title="🎉 Level Up!",
-                    description=lang.get("level_up", "{user} reached **Level {level}**!").format(
-                        user=member.mention,
-                        level=new_level
-                    ),
-                    color=color,
-                )
-                embed.set_thumbnail(url=member.display_avatar.url)
-                embed.set_footer(text=NEXUS_FOOTER)
-                await channel.send(embed=embed, delete_after=30)
-            except discord.Forbidden:
-                log.warning("Keine Berechtigung, Level-Up-Embed in %s auf %s zu senden.", channel, guild.name)
-            except discord.HTTPException as e:
-                log.error("HTTP-Fehler beim Senden des Level-Up-Embeds: %s", e)
+        if new_level > old_level:
+            levels_cfg = await db_levels.get_levels_settings(guild.id)
+            target, persistent = channel, False
+            if levelup_id := levels_cfg.get("levelup_channel_id"):
+                configured = guild.get_channel(levelup_id)
+                if configured is not None and can_use_channel(configured, "send_messages", "embed_links"):
+                    target, persistent = configured, True
+                else:
+                    log.warning("Level-Up-Channel %s auf %s nicht nutzbar — Fallback auf Nachrichten-Channel.", levelup_id, guild.name)
+
+            if target is not None and hasattr(target, "send"):
+                try:
+                    color = await db_settings.get_color(guild.id)
+                    embed = discord.Embed(
+                        title="🎉 Level Up!",
+                        description=lang.get("level_up", "{user} reached **Level {level}**!").format(
+                            user=member.mention,
+                            level=new_level
+                        ),
+                        color=color,
+                    )
+                    embed.set_thumbnail(url=member.display_avatar.url)
+                    embed.set_footer(text=NEXUS_FOOTER)
+                    await target.send(embed=embed, delete_after=None if persistent else 30)
+                except discord.Forbidden:
+                    log.warning("Keine Berechtigung, Level-Up-Embed in %s auf %s zu senden.", target, guild.name)
+                except discord.HTTPException as e:
+                    log.error("HTTP-Fehler beim Senden des Level-Up-Embeds: %s", e)
 
     # ─── Events ──────────────────────────────────────────────────────────────────
 
@@ -395,6 +406,19 @@ class Levels(commands.Cog):
             embed.description = text
         return embed
 
+    @app_commands.command(name="levelup_channel", description=app_commands.locale_str("cmd_levelup_channel_desc"))
+    @app_commands.default_permissions(manage_guild=True)
+    @module_required("levels")
+    async def levelup_channel(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lang = await get_lang(interaction.guild_id)
+        cfg = await db_levels.get_levels_settings(interaction.guild_id)
+        view = LevelUpChannelView(lang, has_channel=bool(cfg.get("levelup_channel_id")))
+        await interaction.followup.send(
+            embed=await _levelup_embed(interaction.guild_id, lang), view=view, ephemeral=True,
+        )
+        view.bind(interaction)
+
 # ─── Views & Modals ──────────────────────────────────────────────────────────
 
 class LevelRolesView(NexusView):
@@ -533,6 +557,59 @@ class RemoveLevelRoleView(NexusView):
                 check=NexusEmojis.CHECKMARK, level=level
             ),
             view=None,
+        )
+
+async def _levelup_embed(guild_id: int, lang: dict) -> discord.Embed:
+    cfg = await db_levels.get_levels_settings(guild_id)
+    color = await db_settings.get_color(guild_id)
+    channel_id = cfg.get("levelup_channel_id")
+    embed = discord.Embed(title=lang.get("levelup_title", "📈 Level-up channel"), color=color)
+    if channel_id:
+        embed.description = lang.get(
+            "levelup_desc_set", "Level-up messages are posted in {channel} and stay there."
+        ).format(channel=f"<#{channel_id}>")
+    else:
+        embed.description = lang.get(
+            "levelup_desc_default",
+            "No channel set: Level-up messages appear where the user wrote and disappear after 30 seconds.",
+        )
+    embed.set_footer(text=NEXUS_FOOTER)
+    return embed
+
+
+class LevelUpChannelView(NexusView):
+    def __init__(self, lang: dict, has_channel: bool):
+        super().__init__(lang, timeout=180)
+        self.select_channel.placeholder = lang.get("levelup_select_placeholder", "📋 Select channel...")
+        self.reset_btn.label = lang.get("levelup_btn_reset", "Reset to default")
+        self.reset_btn.disabled = not has_channel
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+        row=0,
+    )
+    async def select_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        channel = interaction.guild.get_channel(select.values[0].id)
+        if channel is None:
+            await send_ephemeral(interaction, self.lang.get("giveaway_channel_unreachable", "❌ I can't access that channel."))
+            return
+        if not (check := can_use_channel(channel, "send_messages", "embed_links")):
+            await send_ephemeral(interaction, format_issue(check, self.lang))
+            return
+
+        await db_levels.update_levels_settings(interaction.guild_id, levelup_channel_id=channel.id)
+        self.reset_btn.disabled = False
+        await interaction.response.edit_message(
+            embed=await _levelup_embed(interaction.guild_id, self.lang), view=self,
+        )
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, row=1)
+    async def reset_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await db_levels.update_levels_settings(interaction.guild_id, levelup_channel_id=None)
+        button.disabled = True
+        await interaction.response.edit_message(
+            embed=await _levelup_embed(interaction.guild_id, self.lang), view=self,
         )
 
 async def setup(bot: commands.Bot):

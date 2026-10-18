@@ -185,7 +185,7 @@ async def get_levels_settings(guild_id: int) -> dict:
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled
+                """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id
                    FROM levels_settings WHERE guild_id = %s""",
                 (guild_id,),
             )
@@ -198,7 +198,7 @@ async def get_levels_settings(guild_id: int) -> dict:
                     (guild_id,),
                 )
                 await cur.execute(
-                    """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled
+                    """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id
                        FROM levels_settings WHERE guild_id = %s""",
                     (guild_id,),
                 )

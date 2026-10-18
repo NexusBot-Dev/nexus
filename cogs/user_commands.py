@@ -162,7 +162,10 @@ class UserCommands(commands.Cog):
         xp = data["xp"]
         level = data["level"]
 
-        xp_next_level_total = xp_for_level(level + 1)
+        level_start = xp_for_level(level)
+        level_end   = xp_for_level(level + 1)
+        xp_in_level = max(0, xp - level_start)
+        xp_needed   = level_end - level_start
 
         try:
             avatar_bytes = await target.display_avatar.read()
@@ -174,8 +177,8 @@ class UserCommands(commands.Cog):
             generate_rank_card,
             username=target.display_name,
             avatar_bytes=avatar_bytes,
-            xp=xp,
-            xp_for_next=xp_next_level_total,
+            xp=xp_in_level,
+            xp_for_next=xp_needed,
             rank=rank,
             level=level,
         )

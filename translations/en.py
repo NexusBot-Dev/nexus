@@ -1,7 +1,6 @@
 MESSAGES: dict[str, str] = {
     # ─── General ──────────────────────────────────────────────────────
     "no_permission":        "You don't have permission to use this command.",
-    "error_occurred":       "An error occurred: {error}",
     "module_disabled":      "This module is disabled on this server.",
     "language":             "English",
     "no_reason":            "No reason given",
@@ -61,7 +60,7 @@ MESSAGES: dict[str, str] = {
     "diag_alert_channel":            "📡 Alerts ({streamers})",
     "diag_alert_role_deleted":       "🔔 Ping role for {platform} no longer exists",
     "diag_alert_role_unmentionable": "🔔 {role} can't be pinged: it isn't mentionable and I lack “Mention Everyone”",
-
+    "diag_levelup_channel": "📈 Level-up channel",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} was kicked.",
@@ -187,6 +186,11 @@ MESSAGES: dict[str, str] = {
     "level_roles_hierarchy_nexus": "❌ The role {role} is higher than Nexus in the role hierarchy. Please move the Nexus role above it in your server settings.",
     "level_roles_managed_role_error": "❌ The role {role} is managed by an integration or bot and cannot be assigned manually.",
     "level_roles_everyone_role_error": "❌ The `@everyone` role cannot be used as a level role.",
+    "levelup_title":                "📈 Level-Up-Channel",
+    "levelup_desc_set":             "Level-up messages are posted in {channel} and stay there.",
+    "levelup_desc_default":         "No channel set: Level-up messages appear where the user wrote and disappear after 30 seconds.",
+    "levelup_select_placeholder":   "📋 Select channel...",
+    "levelup_btn_reset":            "Reset to default",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 Welcome!",
@@ -542,13 +546,11 @@ MESSAGES: dict[str, str] = {
     "ticket_rename_channel_missing":
         "❌ The linked Discord category was not found (manually deleted?). "
         "Rename aborted — please delete and recreate the category instead.",
-    "ticket_rename_failed":                "❌ Category could not be renamed ({error}). Please try again.",
     "ticket_delete_blocked":
         "❌ This category cannot be deleted while open tickets still exist. "
         "Please close all tickets in this category first.",
     "ticket_delete_confirm_prompt":        "⚠️ **Are you sure?** The Discord category and its configuration will be permanently deleted.",
     "ticket_delete_confirm_btn":           "Yes, delete permanently",
-    "ticket_delete_failed":                "❌ Category could not be deleted ({error}). Please try again.",
     "ticket_delete_db_orphaned":
         "⚠️ The Discord category was deleted, but an internal database error occurred. "
         "Please contact bot support so the configuration can be cleaned up.",

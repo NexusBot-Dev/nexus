@@ -114,9 +114,8 @@ class Moderation(commands.Cog):
 
         if reason is None:
             reason = lang.get("no_reason", "No reason given")
-        await interaction.response.defer(ephemeral=True)  # DM + Kick + Log können >3s dauern
+        await interaction.response.defer(ephemeral=True)
 
-        # DM VOR dem Kick — danach teilt Nexus meist keinen Server mehr mit dem User
         await dm_user(
             member,
             title=lang.get(ModAction.KICK.key, "👢 You were kicked"),
@@ -184,16 +183,18 @@ class Moderation(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
+        await dm_user(
+            member,
+            title=lang.get(ModAction.BAN.key, "🔨 You were banned"),
+            reason=reason,
+            color=ModAction.BAN.color,
+            lang=lang,
+            footer=interaction.guild.name,
+        )
+
         try:
             await member.ban(reason=reason, delete_message_days=delete_message_days)
-            await dm_user(
-                        member,
-                        title=lang.get(ModAction.BAN.key, "🔨 You were banned"),
-                        reason=reason,
-                        color=ModAction.BAN.color,
-                        lang=lang,
-                        footer=interaction.guild.name,
-                    )
+
         except discord.Forbidden:
             await interaction.followup.send(
                 lang.get("ban_no_permission", "❌ I don't have permission to ban this user."),
@@ -313,8 +314,6 @@ class Moderation(commands.Cog):
         if role_obj is None:
             await interaction.response.send_message(lang.get("role_not_found", "Role not found."), ephemeral=True)
             return
-        # Die ROLLE selbst muss unter Nexus UND unter dem ausführenden User stehen
-        # (sonst könnte ein Mod sich oder anderen höhere Rollen geben)
         if not (role_check := can_manage_role(interaction.guild, role_obj, actor=interaction.user)):
             await interaction.response.send_message(format_issue(role_check, lang), ephemeral=True)
             return
@@ -345,10 +344,11 @@ class Moderation(commands.Cog):
 
     @add_role.autocomplete("role")
     async def add_role_autocomplete(self, interaction: discord.Interaction, current: str):
+        current = current.lower()
         return [
-            app_commands.Choice(name=role.name, value=str(role.id))
+            app_commands.Choice(name=role.name[:100], value=str(role.id))
             for role in interaction.guild.roles
-            if current.lower() in role.name.lower() and role.name != "@everyone"
+            if not role.is_default() and current in role.name.lower()
         ][:25]
 
     @app_commands.command(name="remove_role", description=app_commands.locale_str("cmd_remove_role_desc"))
@@ -391,7 +391,7 @@ class Moderation(commands.Cog):
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                lang.get("add_role_no_permission", "❌ I don't have permission to grant a role."),
+                lang.get("remove_role_no_permission", "❌ I don't have permission to remove this role."),
                 ephemeral=True,
             )
             return
@@ -434,13 +434,6 @@ class Moderation(commands.Cog):
         except discord.Forbidden:
             await interaction.response.send_message(
                 lang.get("slowmode_no_permission", "❌ I don't have permission to edit this channel."),
-                ephemeral=True,
-            )
-            return
-        except discord.HTTPException as e:
-            log.exception("Fehler beim Setzen des Slowmodes in %s: %s", channel, e)
-            await interaction.response.send_message(
-                lang.get("error_occurred", "An error occurred: {error}").format(error=e),
                 ephemeral=True,
             )
             return
@@ -529,13 +522,7 @@ class Moderation(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            except discord.HTTPException as e:
-                log.exception("Fehler beim Timeout für %s", member)
-                await interaction.followup.send(
-                    lang.get("error_occurred", "An error occurred: {error}").format(error=e),
-                    ephemeral=True,
-                )
-                return
+
         else:
             from datetime import timedelta
             until = discord.utils.utcnow() + timedelta(minutes=duration)
@@ -555,13 +542,6 @@ class Moderation(commands.Cog):
             except discord.Forbidden:
                 await interaction.followup.send(
                     lang.get("timeout_no_permission", "❌ I don't have permission to timeout this user."),
-                    ephemeral=True,
-                )
-                return
-            except discord.HTTPException as e:
-                log.exception("Fehler beim Timeout für %s", member)
-                await interaction.followup.send(
-                    lang.get("error_occurred", "An error occurred: {error}").format(error=e),
                     ephemeral=True,
                 )
                 return
@@ -639,13 +619,6 @@ class Moderation(commands.Cog):
                 ephemeral=True,
             )
             return
-        except discord.HTTPException as e:
-            log.exception("Fehler beim Purge in %s: %s", channel, e)
-            await interaction.followup.send(
-                lang.get("error_occurred", "An error occurred: {error}").format(error=e),
-                ephemeral=True,
-            )
-            return
 
         await post_logging(
             self.bot,
@@ -674,12 +647,13 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = None,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         if err := self._hierarchy_error(
             interaction, member, lang,
             "warn_hierarchy", "You cannot warn users who are ranked equal or higher than you.",
         ):
-            await interaction.response.send_message(err, ephemeral=True)
+            await interaction.followup.send(err, ephemeral=True)
             return
         if reason is None:
             reason = lang.get("no_reason", "No reason given")
@@ -712,7 +686,7 @@ class Moderation(commands.Cog):
             lang=lang,
             color=discord.Color.yellow(),
         )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             lang.get("warn_success", "{user} was warned. They now have **{count}** warning(s).").format(
                 user=member.mention,
                 count=count

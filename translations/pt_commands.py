@@ -76,6 +76,7 @@ COMMANDS: dict[str, str] = {
     "cmd_amount_desc":          "A quantidade de EXP a adicionar",
     "cmd_remove_amount_desc":   "A quantidade de EXP a remover",
     "cmd_level_roles_desc":     "Gerenciar cargos por nível",
+    "cmd_levelup_channel_desc": "Define o canal para as mensagens de subida de nível",
 
     # ─── React Commands ──────────────────────────────────────────────
     "cmd_rr_create_desc":       "Cria uma mensagem de cargos por reação",

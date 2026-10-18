@@ -1,7 +1,6 @@
 MESSAGES: dict[str, str] = {
     # ─── Allgemein ────────────────────────────────────────────────────
     "no_permission":        "Du hast keine Berechtigung für diesen Befehl.",
-    "error_occurred":       "Ein Fehler ist aufgetreten: {error}",
     "module_disabled":      "Dieses Modul ist auf diesem Server deaktiviert.",
     "language":             "Deutsch",
     "no_reason":            "Kein Grund angegeben",
@@ -61,6 +60,7 @@ MESSAGES: dict[str, str] = {
     "diag_alert_channel":            "📡 Alerts ({streamers})",
     "diag_alert_role_deleted":       "🔔 Die Ping-Rolle für {platform} existiert nicht mehr",
     "diag_alert_role_unmentionable": "🔔 {role} kann nicht gepingt werden: Sie ist nicht erwähnbar und mir fehlt „Alle erwähnen“",
+    "diag_levelup_channel": "📈 Level-up channel",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} wurde gekickt.",
@@ -186,6 +186,11 @@ MESSAGES: dict[str, str] = {
     "level_roles_hierarchy_nexus": "❌ Die Rolle {role} steht in der Rollenhierarchie über Nexus. Bitte verschiebe die Nexus-Rolle im Discord darüber.",
     "level_roles_managed_role_error": "❌ Die Rolle {role.mention} wird von einer Integration/einem Bot verwaltet und kann nicht manuell vergeben werden.",
     "level_roles_everyone_role_error": "❌ Die Rolle `@everyone` kann nicht als Level-Rolle verwendet werden.",
+    "levelup_title":                "📈 Level-Up-Channel",
+    "levelup_desc_set":             "Level-Up-Nachrichten erscheinen in {channel} und bleiben dort stehen.",
+    "levelup_desc_default":         "Kein Channel gesetzt: Level-Ups erscheinen im Channel der Nachricht und verschwinden nach 30 Sekunden.",
+    "levelup_select_placeholder":   "📋 Channel auswählen...",
+    "levelup_btn_reset":            "Auf Standard zurücksetzen",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 Willkommen!",
@@ -541,13 +546,11 @@ MESSAGES: dict[str, str] = {
     "ticket_rename_channel_missing":
         "❌ Die zugehörige Discord-Kategorie wurde nicht gefunden (evtl. manuell gelöscht?). "
         "Umbenennen abgebrochen — bitte Kategorie stattdessen löschen und neu anlegen.",
-    "ticket_rename_failed":                "❌ Kategorie konnte nicht umbenannt werden ({error}). Bitte versuch es erneut.",
     "ticket_delete_blocked":
         "❌ Diese Kategorie kann nicht gelöscht werden, solange noch offene Tickets existieren. "
         "Bitte erst alle Tickets in dieser Kategorie schließen.",
     "ticket_delete_confirm_prompt":        "⚠️ **Bist du sicher?** Die Discord-Kategorie samt Konfiguration wird unwiderruflich gelöscht.",
     "ticket_delete_confirm_btn":           "Ja, endgültig löschen",
-    "ticket_delete_failed":                "❌ Kategorie konnte nicht gelöscht werden ({error}). Bitte versuch es erneut.",
     "ticket_delete_db_orphaned":
         "⚠️ Die Discord-Kategorie wurde gelöscht, aber ein interner Datenbankfehler ist aufgetreten. "
         "Bitte kontaktiere den Bot-Support, damit die Konfiguration bereinigt werden kann.",

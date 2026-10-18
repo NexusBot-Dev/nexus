@@ -1,7 +1,6 @@
 MESSAGES: dict[str, str] = {
     # ─── Allgemein ────────────────────────────────────────────────────
     "no_permission":        "No tienes permisos para usar este comando.",
-    "error_occurred":       "Ha ocurrido un error: {error}",
     "module_disabled":      "Este módulo está desactivado en este servidor.",
     "language":             "Español",
     "no_reason":            "No se especificó motivo",
@@ -61,6 +60,7 @@ MESSAGES: dict[str, str] = {
     "diag_alert_channel":       "📡 Alertas ({streamers})",
     "diag_alert_role_deleted":  "🔔 El rol de mención para {platform} ya no existe",
     "diag_alert_role_unmentionable": "🔔 No se puede mencionar {role}: No es mencionable y me falta el permiso 'Mencionar a todos los roles'",
+    "diag_levelup_channel": "📈 Canal de subida de nivel",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} ha sido expulsado.",
@@ -186,6 +186,11 @@ MESSAGES: dict[str, str] = {
     "level_roles_hierarchy_nexus": "❌ El rol {role} está por encima de Nexus en la jerarquía. Por favor, mueve el rol de Nexus más arriba en Discord.",
     "level_roles_managed_role_error": "❌ El rol {role.mention} está gestionado por un bot/integración y no puede asignarse manualmente.",
     "level_roles_everyone_role_error": "❌ El rol `@everyone` no se puede utilizar como recompensa de nivel.",
+    "levelup_title": "📈 Canal de subida de nivel",
+    "levelup_desc_set": "Los mensajes de subida de nivel aparecerán en {channel} y permanecerán allí.",
+    "levelup_desc_default": "Ningún canal establecido: Las subidas de nivel aparecerán en el canal del mensaje y desaparecerán tras 30 segundos.",
+    "levelup_select_placeholder": "📋 Seleccionar canal...",
+    "levelup_btn_reset": "Restablecer a valores por defecto",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 ¡Bienvenido!",
@@ -540,13 +545,11 @@ MESSAGES: dict[str, str] = {
     "ticket_rename_channel_missing":
         "❌ No se encontró la categoría de Discord (¿se borró a mano?). "
         "Renombrado cancelado — por favor, elimina y vuelve a crear la categoría.",
-    "ticket_rename_failed":                "❌ No se pudo renombrar la categoría ({error}). Inténtalo de nuevo.",
     "ticket_delete_blocked":
         "❌ Esta categoría no se puede borrar mientras haya tickets abiertos en ella. "
         "Por favor, cierra primero todos los tickets asociados.",
     "ticket_delete_confirm_prompt":        "⚠️ **¿Estás seguro?** La categoría en Discord y toda su configuración se eliminarán de forma permanente.",
     "ticket_delete_confirm_btn":           "Sí, eliminar definitivamente",
-    "ticket_delete_failed":                "❌ No se pudo borrar la categoría ({error}). Inténtalo de nuevo.",
     "ticket_delete_db_orphaned":
         "⚠️ La categoría se borró de Discord, pero ocurrió un error en la base de datos. "
         "Por favor, contacta con soporte para limpiar la configuración.",

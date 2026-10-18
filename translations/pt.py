@@ -1,7 +1,6 @@
 MESSAGES: dict[str, str] = {
     # ─── Allgemein ────────────────────────────────────────────────────
     "no_permission":        "Você não tem permissão para usar este comando.",
-    "error_occurred":       "Ocorreu um erro: {error}",
     "module_disabled":      "Este módulo está desativado neste servidor.",
     "language":             "Português",
     "no_reason":            "Nenhum motivo fornecido",
@@ -61,6 +60,7 @@ MESSAGES: dict[str, str] = {
     "diag_alert_channel":       "📡 Alertas ({streamers})",
     "diag_alert_role_deleted":  "🔔 O cargo de menção para {platform} não existe mais",
     "diag_alert_role_unmentionable": "🔔 {role} não pode ser mencionado: não é mencionável e falta a permissão 'Mencionar todos os cargos'",
+    "diag_levelup_channel": "📈 Canal de subida de nível",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} foi expulso.",
@@ -186,6 +186,11 @@ MESSAGES: dict[str, str] = {
     "level_roles_hierarchy_nexus": "❌ O cargo {role} está acima do Nexus na hierarquia. Mova o cargo do Nexus para cima no Discord.",
     "level_roles_managed_role_error": "❌ O cargo {role.mention} é gerenciado por uma integração/bot e não pode ser atribuído manualmente.",
     "level_roles_everyone_role_error": "❌ O cargo `@everyone` não pode ser usado como recompensa de nível.",
+    "levelup_title": "📈 Canal de subida de nível",
+    "levelup_desc_set": "As mensagens de subida de nível aparecerão em {channel} e permanecerão lá.",
+    "levelup_desc_default": "Nenhum canal definido: As subidas de nível aparecerão no canal da mensagem e desaparecerão após 30 segundos.",
+    "levelup_select_placeholder": "📋 Selecionar canal...",
+    "levelup_btn_reset": "Redefinir para o padrão",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 Boas-vindas!",
@@ -540,13 +545,11 @@ MESSAGES: dict[str, str] = {
     "ticket_rename_channel_missing":
         "❌ A categoria correspondente do Discord não foi encontrada (talvez excluída manualmente?). "
         "Ação cancelada — exclua e recrie a categoria.",
-    "ticket_rename_failed":                "❌ Não foi possível renomear a categoria ({error}). Tente novamente.",
     "ticket_delete_blocked":
         "❌ Esta categoria não pode ser excluída enquanto houver tickets abertos nela. "
         "Feche todos os tickets desta categoria primeiro.",
     "ticket_delete_confirm_prompt":        "⚠️ **Tem certeza?** A categoria no Discord e todas as configurações serão excluídas permanentemente.",
     "ticket_delete_confirm_btn":           "Sim, excluir permanentemente",
-    "ticket_delete_failed":                "❌ Não foi possível excluir a categoria ({error}). Tente novamente.",
     "ticket_delete_db_orphaned":
         "⚠️ A categoria do Discord foi removida, mas ocorreu um erro no banco de dados. "
         "Entre em contato com o suporte do bot para limpar a configuração.",
