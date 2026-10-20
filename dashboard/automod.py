@@ -2,9 +2,10 @@ import discord
 from .registry import register_action, get_bot
 from database import db_settings, db_automod
 from cogs.automod import (
-    _get_nexus_rules, _get_existing_rule_by_type, _build_actions,
-    AUTOMOD_RULES, _slugify_channel_name,
-)
+       _get_nexus_rules, _get_existing_rule_by_type, _build_actions,
+       AUTOMOD_RULES,
+   )
+from cogs.honeypot import _slugify_channel_name
 
 def _guild_or_raise(guild_id: int) -> discord.Guild:
     guild = get_bot().get_guild(guild_id)

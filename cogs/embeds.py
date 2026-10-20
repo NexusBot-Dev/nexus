@@ -92,7 +92,7 @@ async def _hub_embed(guild_id: int, lang: dict) -> discord.Embed:
     )
     text = lang.get(
         "embed_hub_text",
-        "Create embeds, post them, schedule them (Premium) or delete saved ones.",
+        "Create, edit, post, schedule (Premium) or delete saved embeds.",
     )
     return discord.Embed(
         title=lang.get("embed_hub_title", "📋 Embeds"),
@@ -171,6 +171,8 @@ class EmbedHubView(NexusView):
         self.btn_create.emoji   = NexusEmojis.ADD
         self.btn_list.label     = lang.get("embed_btn_list", "List")
         self.btn_list.emoji     = "📋"
+        self.btn_edit.label     = lang.get("embed_btn_edit", "Edit")
+        self.btn_edit.emoji     = "✏️"
         self.btn_post.label     = lang.get("embed_btn_post", "Post")
         self.btn_post.emoji     = "📤"
         self.btn_schedule.label = lang.get("embed_btn_schedule", "Schedule ⭐")
@@ -178,11 +180,12 @@ class EmbedHubView(NexusView):
         self.btn_delete.label   = lang.get("embed_btn_delete", "Delete")
         self.btn_delete.emoji   = NexusEmojis.DELETE
 
-    @discord.ui.button(style=discord.ButtonStyle.success)
+    # Zeile 0: Aktionen ohne Auswahl · Zeile 1: Aktionen auf einem gespeicherten Embed
+    @discord.ui.button(style=discord.ButtonStyle.success, row=0)
     async def btn_create(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedCreateModal(self.lang))
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, row=0)
     async def btn_list(self, interaction: discord.Interaction, button: discord.ui.Button):
         pages = await _load_list_pages(interaction.guild_id, self.lang)
         if not pages:
@@ -190,11 +193,15 @@ class EmbedHubView(NexusView):
             return
         await self.show(interaction, EmbedListView(self.lang, pages, self.owner_id), embed=pages[0])
 
-    @discord.ui.button(style=discord.ButtonStyle.primary)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, row=1)
+    async def btn_edit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._open_picker(interaction, "edit")
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, row=1)
     async def btn_post(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._open_picker(interaction, "post")
 
-    @discord.ui.button(style=discord.ButtonStyle.primary)
+    @discord.ui.button(style=discord.ButtonStyle.primary, row=1)
     async def btn_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await is_premium(interaction.guild_id):
             await send_ephemeral(interaction, self.lang.get(
@@ -203,7 +210,7 @@ class EmbedHubView(NexusView):
             return
         await self._open_picker(interaction, "schedule")
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, row=1)
     async def btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._open_picker(interaction, "delete")
 
@@ -256,6 +263,10 @@ class EmbedListView(NexusView):
         await _back_to_hub(self, interaction)
 
 _PICK_DEFAULTS = {
+    "edit": (
+        "✏️ Edit embed",
+        "Select the embed you want to edit.",
+    ),
     "post": (
         "📤 Post embed",
         "Select an embed. Optionally pick a channel — otherwise the saved one is used.",
@@ -270,13 +281,14 @@ _PICK_DEFAULTS = {
     ),
 }
 _PICK_BUTTONS = {
+    "edit":     ("embed_btn_edit",     "Edit",       "✏️", discord.ButtonStyle.success),
     "post":     ("embed_btn_post",     "Post",       "📤", discord.ButtonStyle.success),
     "schedule": ("embed_btn_schedule", "Schedule ⭐", "⏰", discord.ButtonStyle.success),
     "delete":   ("embed_btn_delete",   "Delete",     "🗑️", discord.ButtonStyle.danger),
 }
 
 class EmbedPickerView(NexusView):
-    """Embed auswählen und Aktion ausführen (Post / Schedule / Delete). Select ist auf 25 Einträge pro Seite begrenzt."""
+    """Embed auswählen und Aktion ausführen (Edit / Post / Schedule / Delete). Select ist auf 25 Einträge pro Seite begrenzt."""
 
     def __init__(
         self,
@@ -305,7 +317,7 @@ class EmbedPickerView(NexusView):
         self.embed_select.placeholder   = lang.get("embed_pick_placeholder", "Select an embed...")
         self.channel_select.placeholder = lang.get("embed_pick_channel_placeholder", "Select a channel...")
 
-        if mode == "delete":
+        if mode in ("edit", "delete"):   # den Channel wählt das Edit-Modal selbst
             self.remove_item(self.channel_select)
         if not self._paged:
             self.remove_item(self.prev_page)
@@ -392,7 +404,9 @@ class EmbedPickerView(NexusView):
 
     @discord.ui.button(row=2, disabled=True)
     async def action(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.mode == "post":
+        if self.mode == "edit":
+            await self._do_edit(interaction)
+        elif self.mode == "post":
             await self._do_post(interaction)
         elif self.mode == "schedule":
             await self._do_schedule(interaction)
@@ -420,6 +434,13 @@ class EmbedPickerView(NexusView):
             ))
             return None
         return embed_data
+
+    async def _do_edit(self, interaction: discord.Interaction) -> None:
+        embed_data = await self._load_usable(interaction)
+        if embed_data is None:
+            return
+
+        await interaction.response.send_modal(EmbedEditModal(self.lang, embed_data, interaction.guild, picker=self))
 
     async def _do_post(self, interaction: discord.Interaction) -> None:
         embed_data = await self._load_usable(interaction)
@@ -477,10 +498,10 @@ class EmbedPickerView(NexusView):
             message = self.lang.get("embed_not_found", "❌ Embed not found.")
         await interaction.edit_original_response(content=message, view=None)
 
-        await self._refresh_after_delete(interaction.guild_id)
+        await self.reload(interaction.guild_id)
 
-    async def _refresh_after_delete(self, guild_id: int) -> None:
-        """Auswahl neu laden (FIFO: nachgerückte Embeds), danach die Picker-Nachricht aktualisieren."""
+    async def reload(self, guild_id: int, *, keep_selection: bool = False) -> None:
+        """Auswahl neu laden (nach Löschen: FIFO-Nachrücken, nach Bearbeiten: neue Titel), danach die Picker-Nachricht aktualisieren."""
         anchor = self._anchor
         if anchor is None:
             return
@@ -494,7 +515,8 @@ class EmbedPickerView(NexusView):
                 return
 
             self.active_ids  = db_embeds.active_embed_ids(self.embeds, await _embed_limit(guild_id))
-            self.selected_id = None
+            if not keep_selection or self.selected_id not in {e["id"] for e in self.embeds}:
+                self.selected_id = None
             self.page        = min(self.page, self._last_page)
             self._render()
             await anchor.edit_original_response(embed=self.build_embed(), view=self)
@@ -598,6 +620,85 @@ class EmbedCreateModal(NexusModal):
                 nexus_checkmark=NexusEmojis.CHECKMARK, channel=channel.mention
             )
         await send_ephemeral(interaction, message)
+
+class EmbedEditModal(NexusModal):
+    """Bearbeiten: Titel, Inhalt, Channel und Name, vorbefüllt mit den gespeicherten Werten — 4 von 5 Komponenten."""
+
+    def __init__(
+        self,
+        lang: dict,
+        embed_data: dict,
+        guild: discord.Guild,
+        picker: "EmbedPickerView | None" = None,
+    ):
+        super().__init__(lang, title=lang.get("embed_edit_modal_title", "Edit Embed"))
+        self.embed_id   = embed_data["id"]
+        self.channel_id = embed_data["channel_id"]
+        self.picker     = picker
+
+        self.embed_title       = _title_input(lang)
+        self.embed_title.default = embed_data["title"] or None
+        self.embed_description = _content_input(lang)
+        self.embed_description.default = embed_data["description"]
+
+        current = _find_channel(guild, embed_data["channel_id"])
+        self.channel_select = discord.ui.ChannelSelect(
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            placeholder=lang.get("embed_placeholder_channel", "Select a channel..."),
+            required=False,
+            default_values=[current] if current else [],
+        )
+
+        self._name_default = (embed_data["name"] or "")[:SAVE_NAME_MAX]
+        self.save_name = discord.ui.TextInput(
+            style=discord.TextStyle.short,
+            placeholder=lang.get("embed_placeholder_name", "e.g. Rules v2"),
+            default=self._name_default or None,
+            required=False,
+            max_length=SAVE_NAME_MAX,
+        )
+
+        self.add_item(_label(lang.get("embed_field_title", "Title"), self.embed_title))
+        self.add_item(_label(lang.get("embed_field_content", "Content"), self.embed_description))
+        self.add_item(_label(
+            lang.get("embed_field_channel", "Channel"),
+            self.channel_select,
+            lang.get("embed_edit_channel_desc", "Target channel for posting (unchanged if left as is)"),
+        ))
+        self.add_item(_label(
+            lang.get("embed_edit_field_name", "Name"),
+            self.save_name,
+            lang.get("embed_edit_name_desc", "Leave empty to keep the current name"),
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild_id    = interaction.guild_id
+        title       = self.embed_title.value or ""
+        description = self.embed_description.value
+
+        channel_id = self.channel_id   # nichts gewählt -> bisherigen Channel behalten
+        if self.channel_select.values:
+            channel = _find_channel(interaction.guild, self.channel_select.values[0].id)
+            if channel is None:
+                await send_ephemeral(interaction, self.lang.get("embed_no_channel", "❌ No channel specified."))
+                return
+            channel_id = channel.id
+
+        new_name = (self.save_name.value or "").strip()
+        name = new_name if new_name and new_name != self._name_default else None
+
+        updated = await db_embeds.update_embed(
+            self.embed_id, guild_id, title, description, channel_id, name=name
+        )
+        if not updated:
+            await send_ephemeral(interaction, self.lang.get("embed_not_found", "❌ Embed not found."))
+            return
+
+        await send_ephemeral(interaction, self.lang.get("embed_edited", "{checkmark} Embed #{id} has been updated.").format(
+            checkmark=NexusEmojis.CHECKMARK, id=self.embed_id
+        ))
+        if self.picker is not None:
+            await self.picker.reload(guild_id, keep_selection=True)
 
 class RulesEmbedModal(NexusModal):
     """Regeln-Embed für /post_rules: Titel + Inhalt, Ziel ist der konfigurierte Regelchannel."""

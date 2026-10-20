@@ -4,6 +4,15 @@ from .registry import register_action, get_bot
 from database import db_embeds, db_settings, db_limits
 from systems.premium import is_premium
 
+async def _ensure_active(guild_id: int, embed_id: int) -> None:
+    premium = await is_premium(guild_id)
+    limit = await db_limits.get_limit(guild_id, "saved_embeds", premium)
+    if not await db_embeds.is_embed_active(embed_id, guild_id, limit):
+        raise ValueError(
+            "Embed ist inaktiv: Der Server liegt über dem Embed-Limit. "
+            "Lösche ältere Embeds oder hol dir Premium."
+        )
+
 @register_action("embeds", "list")
 async def list_embeds(guild_id: int, payload: dict) -> dict:
     embeds = await db_embeds.get_embeds(guild_id)
@@ -106,6 +115,7 @@ async def post_now(guild_id: int, payload: dict) -> dict:
     embed_data = await db_embeds.get_embed(int(embed_id), guild_id)
     if embed_data is None:
         raise ValueError("Embed wurde nicht gefunden")
+    await _ensure_active(guild_id, int(embed_id))
     if not embed_data.get("channel_id"):
         raise ValueError("Kein Ziel-Channel hinterlegt")
 
@@ -118,7 +128,7 @@ async def post_now(guild_id: int, payload: dict) -> dict:
     if channel is None:
         raise ValueError("Channel existiert nicht (mehr)")
 
-    color = embed_data["color"] or await db_settings.get_color(guild_id)
+    color = await db_settings.get_color(guild_id)
     discord_embed = discord.Embed(title=embed_data["title"], description=embed_data["description"], color=color)
 
     try:
@@ -137,6 +147,7 @@ async def schedule_embed(guild_id: int, payload: dict) -> dict:
     scheduled_at_iso = payload.get("scheduled_at")
     if not embed_id or not scheduled_at_iso:
         raise ValueError("embed_id und scheduled_at werden benötigt")
+    await _ensure_active(guild_id, int(embed_id))
 
     try:
         tz_name = await db_settings.get_timezone(guild_id)
