@@ -9,12 +9,11 @@ from datetime import datetime
 from database import db_settings, db_embeds, db_limits
 from systems.premium import is_premium
 from cogs.utils import get_lang
-from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.ui import NexusModal, NexusView, ConfirmView, send_ephemeral
+from systems.embed_posts import build_embed as _build_embed, track_post, refresh_posts
 
 log = logging.getLogger(__name__)
-
 
 EMBEDS_PER_PAGE = 10
 PICK_PAGE_SIZE = 25
@@ -28,11 +27,6 @@ async def _embed_limit(guild_id: int) -> int:
     premium = await is_premium(guild_id)
     return await db_limits.get_limit(guild_id, "saved_embeds", premium)
 
-def _build_embed(title: str | None, description: str, color: int | None) -> discord.Embed:
-    embed = discord.Embed(title=title or None, description=description, color=color)
-    embed.set_footer(text=NEXUS_FOOTER)
-    return embed
-
 def _find_channel(guild: discord.Guild, channel_id: int | None):
     """Channel/Thread der Guild oder None (auch wenn er keine Nachrichten empfangen kann)."""
     if not channel_id:
@@ -40,21 +34,21 @@ def _find_channel(guild: discord.Guild, channel_id: int | None):
     channel = guild.get_channel_or_thread(channel_id)
     return channel if hasattr(channel, "send") else None
 
-async def _send_embed(interaction: discord.Interaction, lang: dict, channel, embed: discord.Embed) -> bool:
-    """Postet den Embed. Bei einem Fehler wird die Interaction beantwortet und False zurückgegeben."""
+async def _send_embed(interaction: discord.Interaction, lang: dict, channel, embed: discord.Embed) -> discord.Message | None:
+    """Postet den Embed und gibt die Nachricht zurück. Bei einem Fehler wird die Interaction beantwortet und None zurückgegeben."""
     try:
-        await channel.send(embed=embed)
+        message = await channel.send(embed=embed)
     except discord.Forbidden:
         await send_ephemeral(interaction, lang.get(
             "embed_no_permission",
             "❌ I don't have permission to send messages in {channel}.",
         ).format(channel=channel.mention))
-        return False
+        return None
     except discord.HTTPException as e:
         log.warning("Konnte Embed nicht in %s posten: %s", channel, e)
         await send_ephemeral(interaction, lang.get("error_generic", "❌ Something went wrong. Please try again later."))
-        return False
-    return True
+        return None
+    return message
 
 def _label(text: str, component: discord.ui.Item, description: str | None = None) -> discord.ui.Label:
     """Modal-Zeile mit Beschriftung (Discord-Limits: 45 / 100 Zeichen)."""
@@ -454,8 +448,10 @@ class EmbedPickerView(NexusView):
 
         color = await db_settings.get_color(interaction.guild_id)
         embed = _build_embed(embed_data["title"], embed_data["description"], color)
-        if not await _send_embed(interaction, self.lang, channel, embed):
+        message = await _send_embed(interaction, self.lang, channel, embed)
+        if message is None:
             return
+        await track_post(embed_data["id"], message)
 
         await send_ephemeral(interaction, self.lang.get(
             "embed_posted", "{nexus_checkmark} Embed has been posted in {channel}."
@@ -591,8 +587,10 @@ class EmbedCreateModal(NexusModal):
         color = await db_settings.get_color(guild_id)
 
         # Erst Discord, dann DB: scheitert das Posten, wird nichts gespeichert.
+        message = None
         if do_post:
-            if not await _send_embed(interaction, self.lang, channel, _build_embed(title, description, color)):
+            message = await _send_embed(interaction, self.lang, channel, _build_embed(title, description, color))
+            if message is None:
                 return
 
         embed_id = None
@@ -606,6 +604,7 @@ class EmbedCreateModal(NexusModal):
                 color=color,
                 channel_id=channel.id if channel else None,
             )
+            await track_post(embed_id, message)   # nur sinnvoll bei "Save & Post"; bei reinem Save ist message None
 
         if do_post and do_save:
             message = self.lang.get(
@@ -649,6 +648,8 @@ class EmbedEditModal(NexusModal):
             default_values=[current] if current else [],
         )
 
+        # Gespeicherte Namen können länger als das Eingabefeld sein (z.B. "Scheduled: …"): gekürzt anzeigen
+        # und beim Speichern nur übernehmen, wenn der Nutzer den Namen wirklich geändert hat.
         self._name_default = (embed_data["name"] or "")[:SAVE_NAME_MAX]
         self.save_name = discord.ui.TextInput(
             style=discord.TextStyle.short,
@@ -687,6 +688,7 @@ class EmbedEditModal(NexusModal):
         new_name = (self.save_name.value or "").strip()
         name = new_name if new_name and new_name != self._name_default else None
 
+        await interaction.response.defer(ephemeral=True)   # Nachrichten-Updates können länger als 3 s dauern
         updated = await db_embeds.update_embed(
             self.embed_id, guild_id, title, description, channel_id, name=name
         )
@@ -694,9 +696,21 @@ class EmbedEditModal(NexusModal):
             await send_ephemeral(interaction, self.lang.get("embed_not_found", "❌ Embed not found."))
             return
 
-        await send_ephemeral(interaction, self.lang.get("embed_edited", "{checkmark} Embed #{id} has been updated.").format(
+        message = self.lang.get("embed_edited", "{checkmark} Embed #{id} has been updated.").format(
             checkmark=NexusEmojis.CHECKMARK, id=self.embed_id
-        ))
+        )
+        # Bereits gepostete Nachrichten mitziehen
+        embed_data = await db_embeds.get_embed(self.embed_id, guild_id)
+        result = await refresh_posts(interaction.client, guild_id, embed_data) if embed_data else None
+        if result and result.updated:
+            message += "\n" + self.lang.get(
+                "embed_edited_posts", "Updated {count} posted message(s)."
+            ).format(count=result.updated)
+        if result and result.failed:
+            message += "\n" + self.lang.get(
+                "embed_edited_posts_failed", "⚠️ {count} message(s) could not be updated (missing permissions?)."
+            ).format(count=result.failed)
+        await send_ephemeral(interaction, message)
         if self.picker is not None:
             await self.picker.reload(guild_id, keep_selection=True)
 
@@ -715,7 +729,7 @@ class RulesEmbedModal(NexusModal):
     async def on_submit(self, interaction: discord.Interaction):
         color = await db_settings.get_color(interaction.guild_id)
         embed = _build_embed(self.embed_title.value, self.embed_description.value, color)
-        if not await _send_embed(interaction, self.lang, self.channel, embed):
+        if await _send_embed(interaction, self.lang, self.channel, embed) is None:
             return
 
         await send_ephemeral(interaction, self.lang.get(
@@ -825,11 +839,7 @@ class Embeds(commands.Cog):
                         channel = None
 
                 color = await db_settings.get_color(embed_data["guild_id"])
-                embed = discord.Embed(
-                    title=embed_data["title"],
-                    description=embed_data["description"],
-                    color=color,
-                )
+                embed = _build_embed(embed_data["title"], embed_data["description"], color)
 
                 if channel is None:
                     log.warning(
@@ -839,7 +849,8 @@ class Embeds(commands.Cog):
                     continue
 
                 try:
-                    await channel.send(embed=embed)
+                    message = await channel.send(embed=embed)
+                    await track_post(embed_data["id"], message)
                     log.info("Geplanter Embed %s in %s gepostet.", embed_data["id"], channel)
                 except discord.HTTPException as e:
                     log.error("Konnte geplantes Embed %s nicht senden: %s", embed_data["id"], e)

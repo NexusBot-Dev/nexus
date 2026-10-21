@@ -78,6 +78,10 @@ COMMANDS: dict[str, str] = {
     "cmd_level_roles_desc":     "Gestionar roles por nivel",
     "cmd_levelup_channel_desc": "Establece el canal para los mensajes de subida de nivel",
 
+    # ─── MEE6 Importer Commands ─────────────────────────────────────────
+    "cmd_import_mee6_desc": "Importa la EXP de la tabla de clasificación pública de MEE6",
+    "cmd_import_mee6_roles_desc": "Importa también las recompensas de roles por nivel de MEE6 (por defecto: sí)",
+
     # ─── React Commands ──────────────────────────────────────────────
     "cmd_rr_create_desc":       "Crea un mensaje de roles por reacción",
     "cmd_rr_list_desc":         "Muestra todos los mensajes de roles por reacción",

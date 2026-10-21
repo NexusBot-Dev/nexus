@@ -172,3 +172,46 @@ async def update_embed(
                 (embed_id, guild_id),
             )
             return await cur.fetchone() is not None
+
+# ─── Gepostete Nachrichten (embed_posts) ─────────────────────────────────────
+
+MAX_TRACKED_POSTS = 25   # pro Embed; ältere Einträge werden beim Hinzufügen verworfen
+
+async def add_post(embed_id: int, guild_id: int, channel_id: int, message_id: int) -> None:
+    """Merkt sich eine gepostete Nachricht, damit spätere Bearbeitungen sie aktualisieren können."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """INSERT INTO embed_posts (embed_id, guild_id, channel_id, message_id)
+                   VALUES (%s, %s, %s, %s)""",
+                (embed_id, guild_id, channel_id, message_id),
+            )
+            # Nur die neuesten MAX_TRACKED_POSTS behalten
+            await cur.execute(
+                "SELECT id FROM embed_posts WHERE embed_id = %s ORDER BY id DESC",
+                (embed_id,),
+            )
+            stale = [row[0] for row in await cur.fetchall()][MAX_TRACKED_POSTS:]
+            if stale:
+                marks = ", ".join(["%s"] * len(stale))
+                await cur.execute(f"DELETE FROM embed_posts WHERE id IN ({marks})", stale)
+
+async def get_posts(embed_id: int, guild_id: int) -> list[dict]:
+    """Alle gemerkten Nachrichten eines Embeds, neueste zuerst."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                """SELECT id, channel_id, message_id FROM embed_posts
+                   WHERE embed_id = %s AND guild_id = %s ORDER BY id DESC""",
+                (embed_id, guild_id),
+            )
+            return await cur.fetchall()
+
+async def delete_posts(post_ids: list[int]) -> None:
+    """Entfernt Einträge zu Nachrichten, die es nicht mehr gibt."""
+    if not post_ids:
+        return
+    marks = ", ".join(["%s"] * len(post_ids))
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(f"DELETE FROM embed_posts WHERE id IN ({marks})", list(post_ids))

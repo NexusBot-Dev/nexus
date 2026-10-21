@@ -78,6 +78,10 @@ COMMANDS: dict[str, str] = {
     "cmd_level_roles_desc":     "Manage level roles",
     "cmd_levelup_channel_desc": "Set the channel for level-up messages",
 
+    # ─── MEE6 Importer Commands ─────────────────────────────────────────
+    "cmd_import_mee6_desc": "Import XP from your public MEE6 leaderboard",
+    "cmd_import_mee6_roles_desc": "Also import MEE6 level role rewards (default: yes)",
+
     # ─── React Commands ──────────────────────────────────────────────
     "cmd_rr_create_desc":       "Creates a reaction role message",
     "cmd_rr_list_desc":         "Displays all reaction role messages",

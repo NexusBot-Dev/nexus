@@ -21,6 +21,14 @@ DEFAULT_MODULES = {
 }
 _settings_cache: TTLCache[int, dict] = TTLCache(maxsize=2_000, ttl=900)
 
+UPDATABLE_COLUMNS = frozenset({
+    "log_channel_id", "rules_channel_id", "welcome_channel_id",
+    "goodbye_enabled", "goodbye_channel_id",
+    "boost_channel_id", "announcements_enabled", "announcement_channel_id",
+    "ticket_log_channel_id", "honeypot_channel_id", "brand_role_id",
+    "modules", "setup_complete", "color", "locale", "timezone", "left_at",
+})
+
 async def get_guild(guild_id: int) -> dict | None:
     if guild_id in _settings_cache:
         return copy.deepcopy(_settings_cache[guild_id])
@@ -65,10 +73,14 @@ async def update_guild(guild_id: int, **kwargs):
     if not kwargs:
         return
 
+    unknown = kwargs.keys() - UPDATABLE_COLUMNS
+    if unknown:
+        raise ValueError(f"update_guild: unbekannte oder nicht erlaubte Spalte(n): {', '.join(sorted(unknown))}")
+
     if "modules" in kwargs and not isinstance(kwargs["modules"], str):
         kwargs["modules"] = json.dumps(kwargs["modules"])
 
-    sets   = ", ".join(f"{k} = %s" for k in kwargs)
+    sets   = ", ".join(f"`{k}` = %s" for k in kwargs)
     values = list(kwargs.values()) + [guild_id]
 
     async with db.pool.acquire() as conn:
@@ -135,7 +147,6 @@ async def reset_guild(guild_id: int):
                 """UPDATE guild_settings SET
                     log_channel_id      = NULL,
                     rules_channel_id    = NULL,
-                    member_role_id      = NULL,
                     welcome_channel_id  = NULL,
                     boost_channel_id    = NULL,
                     color               = NULL,
@@ -177,7 +188,7 @@ async def delete_old_guilds(days: int = 7):
             try:
                 for table in tables:
                     await cur.execute(
-                        f"DELETE FROM {table} WHERE guild_id IN ({format_strings})",
+                        f"DELETE FROM `{table}` WHERE guild_id IN ({format_strings})",
                         tuple(guild_ids)
                     )
                 await conn.commit()

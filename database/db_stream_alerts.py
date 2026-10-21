@@ -168,7 +168,15 @@ async def update_subscription(
                     WHERE guild_id = %s AND monitored_channel_id = %s""",
                 tuple(params),
             )
-            return cur.rowcount > 0
+            if cur.rowcount > 0:
+                return True
+
+            # rowcount zählt nur *geänderte* Zeilen: Speichern ohne Änderung liefert 0, obwohl das Abo existiert.
+            await cur.execute(
+                "SELECT 1 FROM guild_subscriptions WHERE guild_id = %s AND monitored_channel_id = %s",
+                (guild_id, monitored_channel_id),
+            )
+            return await cur.fetchone() is not None
 
 async def count_subscriptions_for_guild(guild_id: int, platform: str) -> int:
     """Für Free/Premium-Limits — pro Plattform getrennt gezählt."""

@@ -3,6 +3,7 @@ from datetime import datetime, timezone as tz
 from .registry import register_action, get_bot
 from database import db_embeds, db_settings, db_limits
 from systems.premium import is_premium
+from systems.embed_posts import build_embed, track_post, refresh_posts
 
 async def _ensure_active(guild_id: int, embed_id: int) -> None:
     premium = await is_premium(guild_id)
@@ -81,9 +82,14 @@ async def edit_embed(guild_id: int, payload: dict) -> dict:
     if len(description) > 4000:
         raise ValueError("Inhalt zu lang (max. 4000 Zeichen)")
 
-    channel_id_int = None
+    existing = await db_embeds.get_embed(int(embed_id), guild_id)
+    if existing is None:
+        raise ValueError("Embed wurde nicht gefunden")
+
+    bot = get_bot()
+    # Wird kein Channel mitgeschickt, bleibt der gespeicherte erhalten (statt auf NULL zu fallen)
+    channel_id_int = existing["channel_id"]
     if channel_id and str(channel_id).isdigit():
-        bot = get_bot()
         guild = bot.get_guild(guild_id)
         if guild is None or guild.get_channel(int(channel_id)) is None:
             raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
@@ -92,7 +98,15 @@ async def edit_embed(guild_id: int, payload: dict) -> dict:
     updated = await db_embeds.update_embed(int(embed_id), guild_id, title, description, channel_id_int)
     if not updated:
         raise ValueError("Embed wurde nicht gefunden")
-    return {"id": embed_id}
+
+    # Bereits gepostete Nachrichten mitziehen
+    refreshed = await refresh_posts(bot, guild_id, {"id": int(embed_id), "title": title, "description": description})
+    return {
+        "id": embed_id,
+        "posts_updated": refreshed.updated,
+        "posts_removed": refreshed.removed,
+        "posts_failed": refreshed.failed,
+    }
 
 @register_action("embeds", "delete")
 async def delete_embed(guild_id: int, payload: dict) -> dict:
@@ -129,13 +143,14 @@ async def post_now(guild_id: int, payload: dict) -> dict:
         raise ValueError("Channel existiert nicht (mehr)")
 
     color = await db_settings.get_color(guild_id)
-    discord_embed = discord.Embed(title=embed_data["title"], description=embed_data["description"], color=color)
+    discord_embed = build_embed(embed_data["title"], embed_data["description"], color)
 
     try:
-        await channel.send(embed=discord_embed)
+        message = await channel.send(embed=discord_embed)
     except discord.HTTPException as e:
         raise ValueError(f"Discord hat das Posten abgelehnt: {e}")
 
+    await track_post(int(embed_id), message)
     return {"id": embed_id, "posted_in": str(channel.id)}
 
 @register_action("embeds", "schedule")

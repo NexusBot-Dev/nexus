@@ -11,13 +11,16 @@ async def dashboard_auth_middleware(request: web.Request, handler):
     if request.path == "/api/dashboard/health":
         return await handler(request)
 
+    expected = request.app["dashboard_token"]
+    if not expected:
+        return web.json_response({"ok": False, "error": "dashboard_disabled"}, status=503)
+
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return web.json_response({"ok": False, "error": "missing_token"}, status=401)
 
     token = auth_header.removeprefix("Bearer ").strip()
-    expected = request.app["dashboard_token"]
-    if not hmac.compare_digest(token, expected):
+    if not hmac.compare_digest(token.encode("utf-8", "surrogateescape"), expected.encode("utf-8")):
         return web.json_response({"ok": False, "error": "invalid_token"}, status=401)
 
     if request.method != "POST":
@@ -38,7 +41,7 @@ async def dashboard_auth_middleware(request: web.Request, handler):
         return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
 
     raw_user_id = body.get("acting_user_id")
-    if not isinstance(raw_user_id, str) or not raw_user_id.isdigit():
+    if not isinstance(raw_user_id, str) or not (raw_user_id.isascii() and raw_user_id.isdigit()):
         return web.json_response({"ok": False, "error": "missing_user"}, status=401)
 
     try:

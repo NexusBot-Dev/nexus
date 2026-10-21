@@ -4,7 +4,14 @@ import copy
 from systems.exp_system import calculate_level, xp_for_level
 from cachetools import TTLCache
 
+IMPORT_CHUNK = 500
+IMPORT_MAX_XP = 2_000_000_000
 _levels_settings_cache: TTLCache[int, dict] = TTLCache(maxsize=2000, ttl=900)
+
+UPDATABLE_LEVELS_COLUMNS = frozenset({
+    "xp_min", "xp_max", "currency_name", "points_min", "points_max",
+    "cooldown", "shop_enabled", "levelup_channel_id",
+})
 
 async def get_or_create_user(guild_id: int, user_id: int) -> dict:
     async with db.pool.acquire() as conn:
@@ -185,7 +192,7 @@ async def get_levels_settings(guild_id: int) -> dict:
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id
+                """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id, mee6_imported_at
                    FROM levels_settings WHERE guild_id = %s""",
                 (guild_id,),
             )
@@ -198,7 +205,7 @@ async def get_levels_settings(guild_id: int) -> dict:
                     (guild_id,),
                 )
                 await cur.execute(
-                    """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id
+                    """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id, mee6_imported_at
                        FROM levels_settings WHERE guild_id = %s""",
                     (guild_id,),
                 )
@@ -214,9 +221,13 @@ async def update_levels_settings(guild_id: int, **fields) -> dict:
     if not fields:
         return await get_levels_settings(guild_id)
 
+    unknown = fields.keys() - UPDATABLE_LEVELS_COLUMNS
+    if unknown:
+        raise ValueError(f"update_levels_settings: unbekannte oder nicht erlaubte Spalte(n): {', '.join(sorted(unknown))}")
+
     await get_levels_settings(guild_id)  # stellt sicher, dass die Zeile existiert
 
-    columns = ", ".join(f"{key} = %s" for key in fields)
+    columns = ", ".join(f"`{key}` = %s" for key in fields)
     values = list(fields.values()) + [guild_id]
 
     async with db.pool.acquire() as conn:
@@ -229,3 +240,49 @@ async def update_levels_settings(guild_id: int, **fields) -> dict:
     _levels_settings_cache.pop(guild_id, None)
 
     return await get_levels_settings(guild_id)
+
+async def import_xp(guild_id: int, entries: list[tuple[int, int]]) -> int | None:
+    """Addiert importierte XP zu den bestehenden (einmalig pro Guild), alles in einer Transaktion.
+    Das Flag wird atomar gesetzt; bei einem Fehler wird alles zurückgerollt, inklusive Flag.
+    Gibt die Anzahl importierter Mitglieder zurück, None wenn schon importiert wurde."""
+    await get_levels_settings(guild_id)   # stellt sicher, dass die Zeile existiert
+    async with db.pool.acquire() as conn:
+        await conn.begin()
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """UPDATE levels_settings SET mee6_imported_at = UTC_TIMESTAMP()
+                       WHERE guild_id = %s AND mee6_imported_at IS NULL""",
+                    (guild_id,),
+                )
+                if cur.rowcount == 0:
+                    await conn.rollback()
+                    return None
+
+                for i in range(0, len(entries), IMPORT_CHUNK):
+                    chunk = entries[i:i + IMPORT_CHUNK]
+                    await cur.executemany(
+                        f"""INSERT INTO levels (guild_id, user_id, xp, level)
+                            VALUES (%s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE xp = LEAST(xp + VALUES(xp), {IMPORT_MAX_XP})""",
+                        [(guild_id, uid, xp, 1) for uid, xp in chunk],
+                    )
+                    ids = [uid for uid, _ in chunk]
+                    placeholders = ", ".join(["%s"] * len(ids))
+                    await cur.execute(
+                        f"SELECT user_id, xp FROM levels WHERE guild_id = %s AND user_id IN ({placeholders})",
+                        (guild_id, *ids),
+                    )
+                    rows = await cur.fetchall()
+                    await cur.executemany(
+                        """INSERT INTO levels (guild_id, user_id, xp, level)
+                           VALUES (%s, %s, %s, %s)
+                           ON DUPLICATE KEY UPDATE level = VALUES(level)""",
+                        [(guild_id, uid, xp, calculate_level(xp)) for uid, xp in rows],
+                    )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+    _levels_settings_cache.pop(guild_id, None)
+    return len(entries)

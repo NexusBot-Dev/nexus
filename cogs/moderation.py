@@ -1,5 +1,6 @@
 import enum
 import logging
+import time
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -9,6 +10,8 @@ from emojis import NexusEmojis
 from systems.hierarchy import can_act_on_member, can_manage_role, format_issue, Issue
 
 log = logging.getLogger(__name__)
+
+BAN_CACHE_TTL = 60  # Sekunden, Ban-Liste für /unban-Autocomplete
 
 class SlowmodeDuration(enum.Enum):
     deaktiviert = (0,     "slowmode_dur_0",     "Disabled")
@@ -63,6 +66,7 @@ class ModAction(enum.Enum):
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._ban_cache: dict[int, tuple[float, list[tuple[str, int]]]] = {}
 
     # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -201,6 +205,10 @@ class Moderation(commands.Cog):
                 ephemeral=True,
             )
             return
+        except discord.HTTPException:
+            log.exception("ban failed (guild=%s, target=%s)", interaction.guild_id, member.id)
+            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            return
         await post_logging(
             self.bot,
             guild_id=interaction.guild_id,
@@ -243,7 +251,6 @@ class Moderation(commands.Cog):
             if reason is None:
                 reason = lang.get("no_reason", "No reason given")
             await interaction.guild.unban(user_obj, reason=reason)
-            from emojis import NexusEmojis
             await dm_user(
                 user_obj,
                 title=lang.get(ModAction.UNBAN.key, "{nexus_checkmark} You were unbanned").format(nexus_checkmark=NexusEmojis.CHECKMARK),
@@ -281,11 +288,23 @@ class Moderation(commands.Cog):
 
     @unban.autocomplete("user")
     async def unban_autocomplete(self, interaction: discord.Interaction, current: str):
-        bans = [ban async for ban in interaction.guild.bans()]
+        guild_id = interaction.guild_id
+        now = time.monotonic()
+        cached = self._ban_cache.get(guild_id)
+        if cached is None or now - cached[0] > BAN_CACHE_TTL:
+            try:
+                bans = [(b.user.name, b.user.id) async for b in interaction.guild.bans()]
+            except discord.HTTPException:
+                log.warning("unban autocomplete: could not fetch bans (guild=%s)", guild_id)
+                bans = cached[1] if cached else []
+            self._ban_cache[guild_id] = (now, bans)
+        else:
+            bans = cached[1]
+        current = current.lower()
         return [
-            app_commands.Choice(name=ban.user.name, value=str(ban.user.id))
-            for ban in bans
-            if current.lower() in ban.user.name.lower()
+            app_commands.Choice(name=name[:100], value=str(uid))
+            for name, uid in bans
+            if current in name.lower()
         ][:25]
 
     # ─── Rollen ──────────────────────────────────────────────────────────────────
@@ -317,27 +336,33 @@ class Moderation(commands.Cog):
         if not (role_check := can_manage_role(interaction.guild, role_obj, actor=interaction.user)):
             await interaction.response.send_message(format_issue(role_check, lang), ephemeral=True)
             return
+
+        await interaction.response.defer(ephemeral=True)  # Rolle vergeben + Log können >3s dauern
         try:
             await member.add_roles(role_obj)
-            await post_logging(
-                self.bot,
-                guild_id=interaction.guild_id,
-                title=lang.get("log_add_role", "{target} received the role {role}.").format(
-                    target=member,
-                    role=role_obj,
-                ),
-                moderator=interaction.user,
-                lang = lang,
-                target=member,
-                color=discord.Color.green(),
-            )
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("add_role_no_permission", "❌ I don't have permission to grant a role."),
                 ephemeral=True,
             )
             return
-        await interaction.response.send_message(lang.get("add_role_success", "{user} received {role}.").format(
+        except discord.HTTPException:
+            log.exception("add_role failed (guild=%s, target=%s)", interaction.guild_id, member.id)
+            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            return
+        await post_logging(
+            self.bot,
+            guild_id=interaction.guild_id,
+            title=lang.get("log_add_role", "{target} received the role {role}.").format(
+                target=member,
+                role=role_obj,
+            ),
+            moderator=interaction.user,
+            lang = lang,
+            target=member,
+            color=discord.Color.green(),
+        )
+        await interaction.followup.send(lang.get("add_role_success", "{user} received {role}.").format(
             user=member.mention,
             role=role_obj.mention
         ), ephemeral=True)
@@ -379,23 +404,29 @@ class Moderation(commands.Cog):
         if not (role_check := can_manage_role(interaction.guild, role_obj, actor=interaction.user)):
             await interaction.response.send_message(format_issue(role_check, lang), ephemeral=True)
             return
+
+        await interaction.response.defer(ephemeral=True)  # Rolle entziehen + Log können >3s dauern
         try:
             await member.remove_roles(role_obj)
-            await post_logging(
-                self.bot,
-                guild_id=interaction.guild_id,
-                title=lang.get("log_remove_role", "{target} lost the role {role}.").format(target=member, role=role_obj),
-                moderator=interaction.user,
-                target=member,
-                lang=lang
-            )
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("remove_role_no_permission", "❌ I don't have permission to remove this role."),
                 ephemeral=True,
             )
             return
-        await interaction.response.send_message(
+        except discord.HTTPException:
+            log.exception("remove_role failed (guild=%s, target=%s)", interaction.guild_id, member.id)
+            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            return
+        await post_logging(
+            self.bot,
+            guild_id=interaction.guild_id,
+            title=lang.get("log_remove_role", "{target} lost the role {role}.").format(target=member, role=role_obj),
+            moderator=interaction.user,
+            target=member,
+            lang=lang
+        )
+        await interaction.followup.send(
             lang.get("remove_role_success", "{user} lost {role}.").format(user=member.mention, role=role_obj.mention),
             ephemeral=True,
         )
@@ -428,14 +459,19 @@ class Moderation(commands.Cog):
         channel: discord.TextChannel,
         duration: int,
     ):
+        await interaction.response.defer(ephemeral=True)  # channel.edit + Log können >3s dauern
         lang = await get_lang(interaction.guild_id)
         try:
             await channel.edit(slowmode_delay=duration)
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("slowmode_no_permission", "❌ I don't have permission to edit this channel."),
                 ephemeral=True,
             )
+            return
+        except discord.HTTPException:
+            log.exception("slowmode failed (guild=%s, channel=%s)", interaction.guild_id, channel.id)
+            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
             return
 
         duration_enum = next((d for d in SlowmodeDuration if d.value == duration), None)
@@ -458,7 +494,7 @@ class Moderation(commands.Cog):
             color=color,
             lang=lang
         )
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.followup.send(msg, ephemeral=True)
 
     @set_slowmode.autocomplete("duration")
     async def slowmode_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -745,13 +781,15 @@ class Moderation(commands.Cog):
         member: discord.Member,
         warning_id: int,
     ):
+        await interaction.response.defer(ephemeral=True)  # DB + Log können >3s dauern
         lang = await get_lang(interaction.guild_id)
         removed = await db_warnings.remove_warning(
             warning_id=warning_id,
             guild_id=interaction.guild_id,
+            user_id=member.id,
         )
         if not removed:
-            await interaction.response.send_message(lang.get("unwarn_not_found", "Warning #{id} not found.").format(
+            await interaction.followup.send(lang.get("unwarn_not_found", "Warning #{id} not found.").format(
                 id=warning_id
                 ), ephemeral=True)
             return
@@ -767,7 +805,7 @@ class Moderation(commands.Cog):
             lang=lang,
             color=discord.Color.green(),
         )
-        await interaction.response.send_message(lang.get("unwarn_success", "Warning #{id} from {user} has been removed.").format(
+        await interaction.followup.send(lang.get("unwarn_success", "Warning #{id} from {user} has been removed.").format(
             id=warning_id,
             user=member.mention
             ), ephemeral=True,)
@@ -782,13 +820,14 @@ class Moderation(commands.Cog):
         interaction: discord.Interaction,
         member: discord.Member,
     ):
+        await interaction.response.defer(ephemeral=True)  # DB + Log können >3s dauern
         lang = await get_lang(interaction.guild_id)
         count = await db_warnings.clear_warnings(
             guild_id=interaction.guild_id,
             user_id=member.id,
         )
         if count == 0:
-            await interaction.response.send_message(lang.get("clearwarnings_none", "{user} has no warnings.").format(
+            await interaction.followup.send(lang.get("clearwarnings_none", "{user} has no warnings.").format(
                 user=member.mention
             ), ephemeral=True)
             return
@@ -804,7 +843,7 @@ class Moderation(commands.Cog):
             lang=lang,
             color=discord.Color.green(),
         )
-        await interaction.response.send_message(lang.get("clearwarnings_success", "All **{count}** warning(s) from {user} have been removed.").format(
+        await interaction.followup.send(lang.get("clearwarnings_success", "All **{count}** warning(s) from {user} have been removed.").format(
             user=member.mention,
             count=count), ephemeral=True)
 
