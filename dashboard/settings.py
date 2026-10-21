@@ -1,4 +1,5 @@
 import logging
+import re
 from zoneinfo import ZoneInfo
 from database import db_settings
 
@@ -64,10 +65,9 @@ async def update_settings(bot, guild_id: int, fields: dict) -> dict:
 
     if fields.get("color"):
         hex_color = str(fields["color"]).lstrip("#")
-        try:
-            color_int = int(hex_color, 16)
-        except ValueError:
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", hex_color):
             raise ValueError("Ungültiges Farbformat — erwartet z.B. '#00F5D4'")
+        color_int = int(hex_color, 16)
 
         color_set = await db_settings.set_color(guild_id, color_int)
         if not color_set:
