@@ -1,6 +1,7 @@
 import asyncio
 import discord
 from .registry import register_action, get_bot
+from systems.hierarchy import can_act_on_member, Issue
 
 _chunk_locks: dict[int, asyncio.Lock] = {}
 
@@ -25,6 +26,23 @@ async def ensure_members_cached(guild: discord.Guild) -> None:
             await asyncio.wait_for(guild.chunk(), timeout=10)
         except asyncio.TimeoutError:
             pass
+
+async def _get_acting_member(guild: discord.Guild, payload: dict) -> discord.Member:
+    """Holt den im Dashboard eingeloggten User als Member dieser Guild.
+    Die Auth-Middleware hat acting_user_id bereits auf Guild-Zugriff geprüft,
+    aber für Rechte-/Hierarchie-Checks brauchen wir das volle Member-Objekt."""
+    raw_user_id = payload.get("acting_user_id")
+    if not raw_user_id or not str(raw_user_id).isdigit():
+        raise ValueError("acting_user_id wird benötigt")
+
+    acting_user_id = int(raw_user_id)
+    member = guild.get_member(acting_user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(acting_user_id)
+        except discord.NotFound:
+            raise ValueError("Du bist kein Mitglied dieses Servers (mehr)")
+    return member
 
 @register_action("moderation", "list-bans")
 async def list_bans(guild_id: int, payload: dict) -> dict:
@@ -61,9 +79,16 @@ async def unban(guild_id: int, payload: dict) -> dict:
         raise ValueError("Gültige user_id wird benötigt")
 
     guild = _guild_or_raise(guild_id)
+    actor = await _get_acting_member(guild, payload)
+
+    # Unban kennt keine Rollen-Hierarchie (der User ist nicht mehr Member) —
+    # hier reicht die reine Discord-Berechtigung des Dashboard-Nutzers.
+    if not actor.guild_permissions.ban_members:
+        raise ValueError("Dir fehlt die Berechtigung 'Mitglieder bannen' (Ban Members)")
+
     user = discord.Object(id=int(user_id))
     try:
-        await guild.unban(user, reason="Nexus Dashboard — entbannt")
+        await guild.unban(user, reason=f"Nexus Dashboard — entbannt von {actor}")
     except discord.NotFound:
         raise ValueError("User ist nicht gebannt")
     except discord.Forbidden:
@@ -78,6 +103,8 @@ async def remove_timeout(guild_id: int, payload: dict) -> dict:
         raise ValueError("Gültige user_id wird benötigt")
 
     guild = _guild_or_raise(guild_id)
+    actor = await _get_acting_member(guild, payload)
+
     member = guild.get_member(int(user_id))
     if member is None:
         try:
@@ -85,8 +112,17 @@ async def remove_timeout(guild_id: int, payload: dict) -> dict:
         except discord.NotFound:
             raise ValueError("Mitglied nicht gefunden")
 
+    check = can_act_on_member(
+        guild, member,
+        actor=actor, perms=("moderate_members",), is_timeout=True,
+    )
+    if not check:
+        if check.issue is Issue.ACTOR_HIERARCHY:
+            raise ValueError("Du kannst keine Timeouts bei Mitgliedern aufheben, die dir in der Rolle gleich- oder übergeordnet sind")
+        raise ValueError("Dir fehlt die Berechtigung 'Timeout aufheben' (Moderate Members) oder die Hierarchie passt nicht")
+
     try:
-        await member.timeout(None, reason="Nexus Dashboard — Timeout aufgehoben")
+        await member.timeout(None, reason=f"Nexus Dashboard — Timeout aufgehoben von {actor}")
     except discord.Forbidden:
         raise ValueError("Fehlende Berechtigung (Hierarchie?)")
 

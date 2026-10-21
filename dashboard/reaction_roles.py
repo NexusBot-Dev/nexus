@@ -2,7 +2,7 @@ import discord
 from .registry import register_action, get_bot
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
-from cogs.reaction_roles import parse_emoji_for_select, _update_dropdown_message
+from cogs.reaction_roles import _update_dropdown_message
 
 def _guild_or_raise(guild_id: int) -> discord.Guild:
     guild = get_bot().get_guild(guild_id)
@@ -139,6 +139,10 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     except discord.NotFound:
         raise ValueError("Nachricht existiert nicht (mehr)")
 
+    msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
+    if msg_ref is None:
+        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+
     existing_emoji = await db_reaction_roles.get_reaction_role(guild_id, int(message_id), emoji)
     if existing_emoji is not None:
         raise ValueError("Dieses Emoji ist auf dieser Nachricht bereits vergeben")
@@ -154,7 +158,6 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     if mode == "unique" and not premium:
         raise ValueError("Unique-Modus ist ein Premium-Feature")
 
-    msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
     display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
 
     group_id_int = int(group_id) if group_id else None
@@ -194,14 +197,15 @@ async def delete_entry(guild_id: int, payload: dict) -> dict:
     channel = guild.get_channel(int(channel_id))
     if channel is not None:
         try:
-            message = await channel.fetch_message(int(message_id))
             msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
-            display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
-            if display_mode == "dropdown":
-                lang = {}
-                await _update_dropdown_message(message, guild_id, int(message_id), lang)
-            else:
-                await message.clear_reaction(emoji)
+            if msg_ref is not None:
+                message = await channel.fetch_message(int(message_id))
+                display_mode = msg_ref["display_mode"]
+                if display_mode == "dropdown":
+                    lang = {}
+                    await _update_dropdown_message(message, guild_id, int(message_id), lang)
+                else:
+                    await message.clear_reaction(emoji)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
@@ -215,12 +219,16 @@ async def delete_message_entries(guild_id: int, payload: dict) -> dict:
         raise ValueError("channel_id und message_id werden benötigt")
 
     guild = _guild_or_raise(guild_id)
+
+    msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
+    if msg_ref is None:
+        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+
     channel = guild.get_channel(int(channel_id))
     if channel is not None:
         try:
             message = await channel.fetch_message(int(message_id))
-            msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
-            display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
+            display_mode = msg_ref["display_mode"]
             if display_mode == "dropdown":
                 await message.edit(view=None)
             else:
