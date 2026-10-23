@@ -1,7 +1,36 @@
 import hmac
+import math
+import time
+from collections import deque
 import discord
 from aiohttp import web
 from .discord_auth_check import verify_guild_access
+
+RATE_LIMIT_WINDOW_SECONDS = 10
+RATE_LIMIT_MAX_REQUESTS = 60
+_PURGE_THRESHOLD = 1000
+_request_log: dict[int, deque[float]] = {}
+
+
+def _check_rate_limit(user_id: int) -> int | None:
+    """None = erlaubt, sonst Sekunden bis wieder Platz im Fenster ist."""
+    now = time.monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+
+    if len(_request_log) > _PURGE_THRESHOLD:
+        for uid in [u for u, q in _request_log.items() if not q or q[-1] < window_start]:
+            del _request_log[uid]
+
+    log = _request_log.setdefault(user_id, deque())
+    while log and log[0] < window_start:
+        log.popleft()
+
+    if len(log) >= RATE_LIMIT_MAX_REQUESTS:
+        return max(1, math.ceil(log[0] + RATE_LIMIT_WINDOW_SECONDS - now))
+
+    log.append(now)
+    return None
+
 
 @web.middleware
 async def dashboard_auth_middleware(request: web.Request, handler):
@@ -43,6 +72,14 @@ async def dashboard_auth_middleware(request: web.Request, handler):
     raw_user_id = body.get("acting_user_id")
     if not isinstance(raw_user_id, str) or not (raw_user_id.isascii() and raw_user_id.isdigit()):
         return web.json_response({"ok": False, "error": "missing_user"}, status=401)
+
+    retry_after = _check_rate_limit(int(raw_user_id))
+    if retry_after is not None:
+        return web.json_response(
+            {"ok": False, "error": "rate_limited", "retry_after": retry_after},
+            status=429,
+            headers={"Retry-After": str(retry_after)},
+        )
 
     try:
         has_access = await verify_guild_access(int(raw_user_id), guild_id)

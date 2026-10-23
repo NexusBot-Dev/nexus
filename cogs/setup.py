@@ -6,7 +6,7 @@ from database import db_settings
 from config import NEXUS_COLOR, DASHBOARD_URL
 from emojis import NexusEmojis
 from cogs.utils import get_lang, MODULE_DISPLAY, CORE_MODULES
-from systems.hierarchy import check_bot_hierarchy, get_bot_position_info
+from systems.hierarchy import check_bot_hierarchy, get_bot_position_info, can_apply_overwrites, format_issue
 from systems.ui import NexusView
 
 log = logging.getLogger(__name__)
@@ -115,8 +115,6 @@ async def _validate_restored_channels(interaction: discord.Interaction) -> dict[
 
 async def _finish_restore(interaction: discord.Interaction, lang: dict[str, str], setup_channel=None):
     """Gemeinsamer Abschluss für Restore (direkt oder nach der Hierarchie-Prüfung)."""
-    # Brand-Rolle, Channel-Prüfung und History-Scan sind mehrere API-Calls — zusammen
-    # leicht >3s. Deshalb zuerst quittieren, sonst läuft die Interaction ab (10062).
     await interaction.response.defer()
     await _apply_brand_role(interaction)
     channels = await _validate_restored_channels(interaction)
@@ -143,6 +141,25 @@ async def _finish_restore(interaction: discord.Interaction, lang: dict[str, str]
 
     await interaction.edit_original_response(embed=embed, view=None)
     log.info("Guild %s (%s) hat Einstellungen wiederhergestellt.", interaction.guild.name, interaction.guild_id)
+
+async def _overwrites_ok(interaction: discord.Interaction, lang: dict, overwrites: dict) -> bool:
+    """Prüft vorab, ob Nexus diese Overwrites setzen darf, und meldet sonst den konkreten Grund."""
+    check = can_apply_overwrites(interaction.guild, overwrites)
+    if check:
+        return True
+    await interaction.response.send_message(format_issue(check, lang), ephemeral=True)
+    return False
+
+async def _skip_channel(guild: discord.Guild, column: str) -> str:
+    """Skip = Einstellung unverändert lassen. Gibt die Anzeige für den nächsten Schritt zurück:
+    die Erwähnung des bereits gespeicherten Channels oder '—'."""
+    settings = await db_settings.get_guild(guild.id) or {}
+    channel_id = settings.get(column)
+    if channel_id:
+        if guild.get_channel(channel_id):
+            return f"<#{channel_id}>"
+        await db_settings.update_guild(guild.id, **{column: None})   # Channel existiert nicht mehr
+    return "—"
 
 # ─── Embeds ──────────────────────────────────────────────────────────────────
 
@@ -318,8 +335,8 @@ class ChannelPermissionWarningView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary)
     async def skip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await db_settings.update_guild(interaction.guild_id, **{self._column: None})
-        await self._proceed_next_step(interaction, "—")
+        mention = await _skip_channel(interaction.guild, self._column)
+        await self._proceed_next_step(interaction, mention)
 
     @property
     def _column(self) -> str:
@@ -442,12 +459,14 @@ class LogChannelView(SetupStepView):
             bot_role:                       discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True, attach_files=True),
         }
         for role in interaction.guild.roles:
-            if role.permissions.manage_guild:
+            if role.permissions.manage_guild and role not in overwrites:
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True)
 
         try:
             channel_name = self.lang.get("setup_cnl_logs_name", "📝┃nexus-logs")
             channel_reason = self.lang.get("setup_cnl_logs_reason", "Nexus Setup — Log Channel")
+            if not await _overwrites_ok(interaction, self.lang, overwrites):
+                return
             channel = await interaction.guild.create_text_channel(
                 name=channel_name,
                 overwrites=overwrites,
@@ -467,10 +486,10 @@ class LogChannelView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await db_settings.update_guild(interaction.guild_id, log_channel_id=None)
+        mention = await _skip_channel(interaction.guild, "log_channel_id")
         await self.show(
             interaction, RulesChannelView(self.setup_owner_id, self.lang, self.setup_channel),
-            embed=await _rules_channel_embed(interaction.guild_id, "—", self.lang),
+            embed=await _rules_channel_embed(interaction.guild_id, mention, self.lang),
         )
 
 # ─── Schritt 2: Regel-Channel ─────────────────────────────────────────────────
@@ -517,6 +536,8 @@ class RulesChannelView(SetupStepView):
         try:
             channel_name = self.lang.get("setup_cnl_rules_name", "📜┃rules")
             channel_reason = self.lang.get("setup_cnl_rules_reason", "Nexus Setup — Rules channel")
+            if not await _overwrites_ok(interaction, self.lang, overwrites):
+                return
             channel = await interaction.guild.create_text_channel(
                 name=channel_name,
                 overwrites=overwrites,
@@ -536,10 +557,10 @@ class RulesChannelView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await db_settings.update_guild(interaction.guild_id, rules_channel_id=None)
+        mention = await _skip_channel(interaction.guild, "rules_channel_id")
         await self.show(
             interaction, WelcomeChannelView(self.setup_owner_id, self.lang, self.setup_channel),
-            embed=await _welcome_channel_embed(interaction.guild_id, "—", self.lang),
+            embed=await _welcome_channel_embed(interaction.guild_id, mention, self.lang),
         )
 
 # ─── Schritt 3: Willkommens-Channel ──────────────────────────────────────────
@@ -586,6 +607,8 @@ class WelcomeChannelView(SetupStepView):
         try:
             channel_name = self.lang.get("setup_cnl_welcome_name", "👋┃welcome")
             channel_reason = self.lang.get("setup_cnl_welcome_reason", "Nexus Setup — Welcome Channel")
+            if not await _overwrites_ok(interaction, self.lang, overwrites):
+                return
             channel = await interaction.guild.create_text_channel(
                 name=channel_name,
                 overwrites=overwrites,
@@ -605,7 +628,7 @@ class WelcomeChannelView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await db_settings.update_guild(interaction.guild_id, welcome_channel_id=None)
+        await _skip_channel(interaction.guild, "welcome_channel_id")
         await self.show(
             interaction, ModulesView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _modules_embed(interaction.guild_id, self.lang),
@@ -665,6 +688,12 @@ class ModulesView(SetupStepView):
         for key in self.available:
             modules[key] = key in self.selected
 
+        await db_settings.update_guild(
+            interaction.guild_id,
+            modules=modules,
+            setup_complete=True,
+        )
+
         settings   = await db_settings.get_guild(interaction.guild_id)
         not_set    = "—"
         log_ch     = f"<#{settings['log_channel_id']}>"     if settings and settings.get("log_channel_id")     else not_set
@@ -695,13 +724,17 @@ class ModulesView(SetupStepView):
         final_view.add_item(_dashboard_button(interaction.guild_id, self.lang))
 
         self.stop()
-        await interaction.response.edit_message(embed=embed, view=final_view)
-
-        await db_settings.update_guild(
-            interaction.guild_id,
-            modules=modules,
-            setup_complete=True,
+        ready_embed = embed.copy()
+        ready_embed.add_field(
+            name=self.lang.get("setup_news_title", "📢 Stay up to date"),
+            value=self.lang.get(
+                "setup_news_hint",
+                "Optional: Use `/announcement` to receive news about Nexus in a channel of your choice.",
+            ),
+            inline=False,
         )
+
+        await interaction.response.edit_message(embed=ready_embed, view=final_view)
 
         if settings and settings.get("log_channel_id"):
             log_channel = interaction.guild.get_channel(settings["log_channel_id"])

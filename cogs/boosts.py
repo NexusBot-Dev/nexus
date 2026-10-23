@@ -64,7 +64,13 @@ class Boosts(commands.Cog):
             )
             embed.set_thumbnail(url=member.display_avatar.url)
             embed.set_footer(text=member.guild.name)
-            await channel.send(embed=embed)
+
+            content = member.mention if str(member.id) in description else None
+            await channel.send(
+                content=content,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(users=[member]) if content else None,
+            )
 
             log.info("%s hat %s geboostet.", member, member.guild.name)
 

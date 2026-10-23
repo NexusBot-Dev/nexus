@@ -1,5 +1,5 @@
 MESSAGES: dict[str, str] = {
-    # ─── General ──────────────────────────────────────────────────────
+    # ─── Allgemein ────────────────────────────────────────────────────
     "no_permission":        "You don't have permission to use this command.",
     "module_disabled":      "This module is disabled on this server.",
     "language":             "English",
@@ -17,6 +17,7 @@ MESSAGES: dict[str, str] = {
     "confirm_no":     "Cancel",
     "msg_inactive_tag":  "🔒 inactive",
     "msg_inactive_hint": "🔒 Messages beyond your limit of {limit} are kept but not used. They become active again with Premium or when you delete an active one.",
+    "error_occurred": "❌ Something went wrong. Please try again.",
 
     # ─── Error Handling ───────────────────────────────────────────────
     "perm_issue_missing_perms":     "❌ I'm missing the following permissions: {perms}",
@@ -29,7 +30,7 @@ MESSAGES: dict[str, str] = {
     "perm_issue_role_default":      "❌ @everyone can't be assigned.",
     "perm_issue_no_channel_access": "❌ I can't see {subject}. Please give Nexus access to that channel.",
 
-    # ─── Diagnose ───────────────────────────────────────────────────
+    # ─── Diagnose ─────────────────────────────────────────────────────
     "diag_title":               "🩺 Nexus Diagnosis",
     "diag_summary_ok":          "Everything looks good! 🎉",
     "diag_summary_problems":    "Found **{count}** issue(s). Details below.",
@@ -63,6 +64,7 @@ MESSAGES: dict[str, str] = {
     "diag_alert_role_deleted":       "🔔 Ping role for {platform} no longer exists",
     "diag_alert_role_unmentionable": "🔔 {role} can't be pinged: it isn't mentionable and I lack “Mention Everyone”",
     "diag_levelup_channel": "📈 Level-up channel",
+    "diag_channels_ok": "All configured channels are accessible.",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} was kicked.",
@@ -124,7 +126,7 @@ MESSAGES: dict[str, str] = {
     "timeout_dur_14400": "1 day",
     "timeout_dur_10080": "1 week",
 
-    # ─── DM Messages ──────────────────────────────────────────────────
+    # ─── DM Nachrichten ───────────────────────────────────────────────
     "dm_kicked":            "👢 You were kicked",
     "dm_banned":            "🔨 You were banned",
     "dm_unbanned":          "{nexus_checkmark} You were unbanned",
@@ -133,7 +135,7 @@ MESSAGES: dict[str, str] = {
     "dm_info":              "Info",
     "dm_warn_count":        "Total warnings: {count}",
 
-    # ─── Log Messages ─────────────────────────────────────────────────
+    # ─── Log Nachrichten ──────────────────────────────────────────────
     "log_kicked":           "{target} was kicked by {mod}.",
     "log_banned":           "{target} was banned by {mod}.",
     "log_unbanned":         "{target} was unbanned by {mod}.",
@@ -149,7 +151,7 @@ MESSAGES: dict[str, str] = {
     "log_reason":           "Reason",
     "log_purge":            "{amount} Messages in #{channel} deleted.",
 
-    # ─── Levels ───────────────────────────────────────────────────────
+    # ─── Level ────────────────────────────────────────────────────────
     "level_up":             "{user} reached **Level {level}**!",
     "rank_title":           "Rank of {user}",
     "rank_level":           "Level",
@@ -227,7 +229,7 @@ MESSAGES: dict[str, str] = {
     "welcome_msg_panel_default_notice": "*No custom messages set — default message will be used.*",
     "welcome_msg_panel_placeholders":   "Placeholders: {user} {username} {server} {membercount}",
 
-    # ─── Reaction Roles ───────────────────────────────────────────────
+    # ─── Reaction Roles ──────────────────────────────────────────────
     "rr_role_given":        "{nexus_checkmark} Role **{role}** has been granted.",
     "rr_role_removed":      "{nexus_checkmark} Role **{role}** has been removed.",
     "rr_not_found":         "❌ This reaction role no longer exists.",
@@ -242,32 +244,32 @@ MESSAGES: dict[str, str] = {
     "rr_setup_description": "The target message was created in {channel}.\n[🔗 Jump to message]({url})\n\nClick **Add Role** to get started!",
     "rr_done":              "{nexus_checkmark} Reaction roles configured!",
     "rr_done_description":  "The message in {channel} is ready.",
-    "rr_btn_add_role":        "➕ Add Role",
-    "rr_btn_finish":          "Finish",
-    "rr_btn_emoji":           "😀 Select Emoji",
-    "rr_btn_toggle":          "Toggle",
-    "rr_btn_unique":          "🔒 Unique (Premium)",
-    "rr_btn_new_group":       "➕ Create New Group",
+    "rr_btn_add_role":      "➕ Add Role",
+    "rr_btn_finish":        "Finish",
+    "rr_btn_emoji":         "😀 Select Emoji",
+    "rr_btn_toggle":        "Toggle",
+    "rr_btn_unique":        "🔒 Unique (Premium)",
+    "rr_btn_new_group":     "➕ Create New Group",
     "rr_btn_existing_group":  "📋 Existing Group",
     "rr_waiting_emoji_title": "⏳ Waiting for Emoji...",
     "rr_waiting_emoji_desc":  "React to the created message in {channel} now!\n\nYou have **60 seconds**.",
-    "rr_emoji_feedback":      "{nexus_checkmark} Emoji {emoji} has been applied! Go back to <#{channel_id}> to continue.",
-    "rr_timeout":             "❌ Time expired. Click the button again.",
-    "rr_no_groups":           "No existing groups found.",
-    "rr_modal_group_title":   "Create Group",
-    "rr_role_added_title":    "{nexus_checkmark} Role added!",
-    "rr_add_another_hint":    "Would you like to add more roles?",
-    "rr_step1_title":         "🎭 Step 1: Select Role",
-    "rr_step1_desc":          "Select the role that should be assigned.",
-    "rr_step2_title":         "😀 Step 2: Choose Emoji",
-    "rr_step2_desc":          "Role: {role}\n\n1. Click the blue button below.\n2. React **directly on the setup message** with your desired emoji.\n\n**Custom Server Emojis:** ⭐ Premium Only",
-    "rr_step3_title":         "⚙️ Step 3: Choose Mode",
-    "rr_step3_desc":          "Role: {role} | Emoji: {emoji}\n\n**Toggle** — Clicking grants the role, clicking again removes it.\n**Unique** ⭐ — Users can only own one role from this group.",
-    "rr_step4_title":         "📋 Step 4: Choose Group",
-    "rr_step4_desc":          "Role: {role} | Emoji: {emoji}\n\nGroups ensure that when selecting a role, all other roles in this group are automatically removed.",
+    "rr_emoji_feedback":    "{nexus_checkmark} Emoji {emoji} has been applied! Go back to <#{channel_id}> to continue.",
+    "rr_timeout":           "❌ Time expired. Click the button again.",
+    "rr_no_groups":         "No existing groups found.",
+    "rr_modal_group_title": "Create Group",
+    "rr_role_added_title":  "{nexus_checkmark} Role added!",
+    "rr_add_another_hint":  "Would you like to add more roles?",
+    "rr_step1_title":       "🎭 Step 1: Select Role",
+    "rr_step1_desc":        "Select the role that should be assigned.",
+    "rr_step2_title":       "😀 Step 2: Choose Emoji",
+    "rr_step2_desc":        "Role: {role}\n\n1. Click the blue button below.\n2. React **directly on the setup message** with your desired emoji.\n\n**Custom Server Emojis:** ⭐ Premium Only",
+    "rr_step3_title":       "⚙️ Step 3: Choose Mode",
+    "rr_step3_desc":        "Role: {role} | Emoji: {emoji}\n\n**Toggle** — Clicking grants the role, clicking again removes it.\n**Unique** ⭐ — Users can only own one role from this group.",
+    "rr_step4_title":       "📋 Step 4: Choose Group",
+    "rr_step4_desc":        "Role: {role} | Emoji: {emoji}\n\nGroups ensure that when selecting a role, all other roles in this group are automatically removed.",
     "rr_group_select_title":  "📋 Select Existing Group",
-    "rr_group_select_desc":   "Select an existing group from the dropdown.",
-    "invalid_id":             "❌ Invalid ID.",
+    "rr_group_select_desc": "Select an existing group from the dropdown.",
+    "invalid_id":           "❌ Invalid ID.",
     "rr_modal_create_title":        "Create Reaction Role",
     "rr_modal_field_title":         "Message Title",
     "rr_modal_title_placeholder":   "e.g., 🎭 Role Selection",
@@ -297,11 +299,11 @@ MESSAGES: dict[str, str] = {
     "rr_modal_group_label":       "Group Name",
     "rr_modal_group_placeholder": "e.g., Colors, Teams, Regions...",
     "rr_select_group":            "Select a group...",
-    "rr_prem_name":          "Unknown Role",
-    "rr_prem_label_prefix":  "Role:",
-    "rr_prem_desc_template": "Select this for the {role_name} role",
-    "rr_prem_placeholder":   "Select your roles...",
-    "rr_roles_updated":      "{nexus_checkmark} Your roles have been successfully updated!",
+    "rr_prem_name":             "Unknown Role",
+    "rr_prem_label_prefix":     "Role:",
+    "rr_prem_desc_template":    "Select this for the {role_name} role",
+    "rr_prem_placeholder":      "Select your roles...",
+    "rr_roles_updated":         "{nexus_checkmark} Your roles have been successfully updated!",
     "rr_autocomplete_label":       "Message in {channel_name} ({msg_id})",
     "rr_autocomplete_id_fallback": "ID:",
     "rr_mode_reaction_label":      "Emoji reactions",
@@ -309,8 +311,12 @@ MESSAGES: dict[str, str] = {
     "rr_mode_dropdown_label":      "Dropdown menu",
     "rr_mode_dropdown_desc":       "Tidy overview for many roles — one click opens a personal menu",
     "rr_dropdown_open_button":     "🎭 Select your roles",
-    "rr_emoji_foreign":           "❌ I can't use this emoji because it's from a server I'm not on. Please pick another one.",
-    "rr_roles_partially_updated": "⚠️ Your roles were updated, but I couldn't change: {roles}. Please let a server admin know.",
+    "rr_emoji_foreign":            "❌ I can't use this emoji because it's from a server I'm not on. Please pick another one.",
+    "rr_roles_partially_updated":  "⚠️ Your roles were updated, but I couldn't change: {roles}. Please let a server admin know.",
+    "rr_btn_unique_free": "🔒 Unique (Premium)",
+    "rr_btn_unique_premium": "Unique",
+    "rr_mode_select_label": "How should users pick their roles?",
+    "rr_no_permission": "❌ I don't have permission to manage roles.",
 
     # ─── Boosts ───────────────────────────────────────────────────────
     "boost_title":       "{boost} New Server Boost!",
@@ -341,7 +347,7 @@ MESSAGES: dict[str, str] = {
     "boost_msg_panel_default_notice": "*No custom messages set — default message will be used.*",
     "boost_msg_panel_placeholders":   "Placeholders: {user} {username} {server} {count}",
 
-    # ─── GDPR ─────────────────────────────────────────────────────────
+    # ─── DSGVO ────────────────────────────────────────────────────────
     "delete_data_title":    "🗑️ Data deleted",
     "delete_data_description":
         "The following data has been deleted from this server:\n\n"
@@ -360,16 +366,16 @@ MESSAGES: dict[str, str] = {
     "setup_only_owner":     "Only the server owner can run the setup.",
     "setup_hello_title":    "👋 Hello, I'm Nexus!",
     "setup_hello_description": "I'll help you manage your server.\nClick **Start Setup** to get started.",
-    "setup_start_title":     "🚀 Start Setup",
+    "setup_start_title":    "🚀 Start Setup",
     "setup_validate":       "🔍 Validate",
     "setup_placeholder":    "📋 Choose an existing Channel...",
     "setup_create":         "✨ Create one for me",
-    "setup_cnl_rules_name": "📜┃rules",
-    "setup_cnl_welcome_name": "👋┃welcome",
-    "setup_cnl_logs_name": "📝┃nexus-logs",
-    "setup_cnl_rules_reason": "Nexus Setup — Rules channel",
+    "setup_cnl_rules_name":     "📜┃rules",
+    "setup_cnl_welcome_name":   "👋┃welcome",
+    "setup_cnl_logs_name":      "📝┃nexus-logs",
+    "setup_cnl_rules_reason":   "Nexus Setup — Rules channel",
     "setup_cnl_welcome_reason": "Nexus Setup — Welcome channel",
-    "setup_cnl_logs_reason": "Nexus Setup — Log channel",
+    "setup_cnl_logs_reason":    "Nexus Setup — Log channel",
     "setup_finish":         "Finish Setup",
     "setup_done_title":     "Nexus is ready!",
     "setup_welcome_back_title": "👋 Welcome back!",
@@ -381,7 +387,7 @@ MESSAGES: dict[str, str] = {
     "setup_done_description":"Setup was completed successfully.",
     "setup_right_error":    "I am missing the 'Manage Channels' permission.",
     "setup_on":             "ON",
-    "setup_off":            "OFF",
+    "setup_off":             "OFF",
     "setup_step":           "Step",
     "setup_completed":      "Setup completed",
     "setup_step_one_title": "✨ Step 1: Get your Nexus ready",
@@ -430,10 +436,10 @@ MESSAGES: dict[str, str] = {
         "⚠️ I couldn't **post a welcome message in any channel** "
         "because I'm missing the `View Channel`, `Send Messages`, or `Embed Links` permissions.\n\n"
         "Please grant me the required permissions on your server and run `/setup` to get started.",
-    "setup_dashboard_button":       "🌐 Open Dashboard",
-    "setup_perm_warning_title":     "⚠️ Permissions Required",
-    "setup_channel_private":        "🔒 **This channel is private.**",
-    "setup_channel_missing_perm":   "✍️ **This channel is read-only or restricted.**",
+    "setup_dashboard_button": "🌐 Open Dashboard",
+    "setup_perm_warning_title": "⚠️ Permissions Required",
+    "setup_channel_private": "🔒 **This channel is private.**",
+    "setup_channel_missing_perm": "✍️ **This channel is read-only or restricted.**",
     "setup_perm_warning_desc":
         "I do not have all required permissions in {channel}.\n\n"
         "{scenario_note}\n\n"
@@ -444,8 +450,11 @@ MESSAGES: dict[str, str] = {
         "{num_2} Add or select the **Nexus** role\n"
         "{num_3} Enable the permissions listed above (**Allow / ✅**)\n"
         "{num_4} Click on **🔍 Validate** below",
+    "setup_news_title": "📢 Stay up to date",
+    "setup_news_hint": "Optional: Use `/announcement` to receive news about Nexus in a channel of your choice.",
+    "setup_restored_perm_hint": "⚠️ = Nexus is missing permissions in this channel. Check via /setup or the dashboard.",
 
-    # ─── Modules ──────────────────────────────────────────────────────
+    # ─── Module ───────────────────────────────────────────────────────
     "module_core":          "🔒 Core Module",
     "module_active":        "Active",
     "module_inactive":      "❌ Disabled",
@@ -453,6 +462,11 @@ MESSAGES: dict[str, str] = {
     "module_core_error":    "The module `{module}` is a core module and cannot be disabled.",
     "module_config":        "{settings} Manage Modules",
     "module_config_desc":   "Activate or deactivate Modules for this Server.",
+    "module_core_title": "🔒 Always active",
+    "module_dashboard_btn": "🌐 Open Dashboard",
+    "module_disabled_desc": "To use this feature on your server, enable it or adjust the settings in the web dashboard.",
+    "module_disabled_title": "{emoji} {name} is currently disabled",
+    "module_enable_btn": "Enable module",
 
     # ─── Admin ────────────────────────────────────────────────────────
     "settings_title":       "{settings} Server Settings",
@@ -462,16 +476,26 @@ MESSAGES: dict[str, str] = {
     "settings_welcome":     "👋 Welcome-Channel",
     "settings_boost":       "Boost-Channel",
     "settings_level":       "📈 Level-System",
+    "settings_goodbye_channel": "Channel",
+    "settings_goodbye_status": "Status",
     "choose_language":      "🌍 Choose Language...",
     "log_cnl_label":        "📋 Change Log-Channel",
     "log_cnl_new":          "Choose a new Log-Channel:",
     "rules_cnl_label":      "📜 Change Rules-Channel",
-    "rules_cnl_new":         "Choose a new Rules-Channel:",
+    "rules_cnl_new":        "Choose a new Rules-Channel:",
     "welcome_cnl_label":    "👋 Change Welcome-Channel",
-    "welcome_cnl_new":       "Choose a new Welcome-Channel:",
+    "welcome_cnl_new":      "Choose a new Welcome-Channel:",
     "boost_cnl_label":      "Change Boost-Channel",
-    "boost_cnl_new":         "Choose a new Boost-Channel:",
+    "boost_cnl_new":        "Choose a new Boost-Channel:",
     "channel_switched":     "{nexus_checkmark} **{label}** was set to {channel}.",
+    "color_btn_label": "🎨 Embed color",
+    "color_modal_title": "Embed color",
+    "color_modal_label": "Hex color (empty = Nexus default)",
+    "color_invalid": "❌ Please enter a valid hex color like `#00F5D4`.",
+    "color_premium_required": "⭐ A custom embed color is a Premium feature. See `/premium` for details.",
+    "color_premium_stored_hint": "Your saved color {color} becomes active again with Premium.",
+    "color_saved": "{nexus_checkmark} Embed color set to **{color}**. This is how your embeds look now.",
+    "color_reset": "{nexus_checkmark} Embed color reset to the Nexus default.",
 
     # ─── Automod ──────────────────────────────────────────────────────
     "automod_title":        "🛡️ AutoMod Configuration",
@@ -486,9 +510,10 @@ MESSAGES: dict[str, str] = {
     "automod_rule_exists":   "❌ An external AutoMod rule already exists for this type.",
     "automod_rule_enabled":  "Nexus AutoMod — enabled",
     "automod_rule_disabled": "Nexus AutoMod — disabled",
-    "automod_rule_duplicate":"Nexus AutoMod — Old duplicate removed",
     "automod_rule_updated":  "Nexus AutoMod — Keywords updated",
+    "automod_rule_duplicate":"Nexus AutoMod — Old duplicate removed",
     "automod_placeholder":   "spam\nwadvertisement\nbad_word",
+    "automod_shield_desc": "Monitors audit logs with risk-scoring against rapid server nukes.",
     "shield_triggered_title":  "🚨 Nexus Shield — Anti-Nuke Triggered!",
     "shield_triggered_desc":   "Suspicious activity detected from {user} (Score: {score}).",
     "shield_log_attacker_bot": "🤖 Attacking Bot",
@@ -498,21 +523,21 @@ MESSAGES: dict[str, str] = {
     "shield_log_roles_failed": "Role removal failed (Missing permissions/hierarchy)",
     "shield_log_bot":          "🤖 Recently invited bot",
     "shield_log_invites":      "🔗 Invite Links",
-    "shield_log_invites_revoked":           "{count} invite(s) revoked",
+    "shield_log_invites_revoked": "{count} invite(s) revoked",
     "honeypot_modal_title":                 "Create Honeypot",
     "honeypot_modal_name_label":            "Channel Name",
     "honeypot_modal_name_placeholder":      "e.g. dont-write-here",
     "honeypot_modal_warntext_label":        "Warning Text in Channel",
     "honeypot_modal_warntext_placeholder":  "⚠️ Raid bot trap: Anyone posting here will be automatically timed out.",
-    "honeypot_channel_title":       "⚠️ Warning",
-    "honeypot_created":             "{nexus_checkmark} Honeypot set up in {channel}.",
-    "automod_honeypot_desc":        "Anyone posting here will be timed out for {days} days.",
-    "honeypot_log_title":           "🍯 Honeypot Triggered",
-    "honeypot_log_desc":            "{user} posted in the honeypot channel.",
-    "honeypot_log_message":         "💬 Message",
-    "honeypot_log_status":          "Status",
-    "honeypot_log_timeout_success": "{days} day timeout applied",
-    "honeypot_log_timeout_failed":  "Timeout failed (Hierarchy/Permissions?)",
+    "honeypot_channel_title":               "⚠️ Warning",
+    "honeypot_created":                     "{nexus_checkmark} Honeypot set up in {channel}.",
+    "automod_honeypot_desc":                "Anyone posting here will be timed out for {days} days.",
+    "honeypot_log_title":                   "🍯 Honeypot Triggered",
+    "honeypot_log_desc":                    "{user} posted in the honeypot channel.",
+    "honeypot_log_message":                 "💬 Message",
+    "honeypot_log_status":                  "Status",
+    "honeypot_log_timeout_success":         "{days} day timeout applied",
+    "honeypot_log_timeout_failed":          "Timeout failed (Hierarchy/Permissions?)",
     "shield_warn_title":         "⚠️ Nexus Shield — Suspicious Activity",
     "shield_warn_desc":          "{user} triggered the early warning (Score: {score}). Deleted roles and channels were restored, nobody was punished. If this repeats within {minutes} minutes, the full reaction follows.",
     "shield_log_escalated":      "Escalated: the activity continued after the early warning.",
@@ -520,8 +545,16 @@ MESSAGES: dict[str, str] = {
     "shield_log_ban_failed":     "Ban failed (Missing permissions/hierarchy)",
     "shield_log_warn_no_action": "No action taken (warning only)",
     "shield_log_removed_roles":  "Removed roles: {roles}",
+    "shield_admin_hint": "⚠️ Nexus Shield is active and will detect attacks and stop the attackers. To fully **restore** deleted roles and channels with their permissions, Nexus needs **Administrator**. Without it, restores may be incomplete.",
+    "shield_log_invites_pause_failed": "⚠️ Failed to pause invites (Missing permissions)",
+    "shield_log_invites_paused": "🔒 Invites temporarily paused",
+    "shield_log_restore_bans": "Bans revoked",
+    "shield_log_restore_channels": "Channels",
+    "shield_log_restore_no_admin": "⚠️ Nexus has no Administrator. Roles and channels with permissions Nexus doesn't have may not have been restored.",
+    "shield_log_restore_roles": "Roles",
+    "shield_log_restore_title": "♻️ Restored",
 
-    # ─── Announcement ───────────────────────────────────────────────────
+    # ─── Tickets ────────────────────────────────────────────────────────
     "ticket_add_category_modal_title":     "Create Ticket Category",
     "ticket_add_category_name_label":      "Category Name",
     "ticket_add_category_name_placeholder":"e.g. 🐞 Bug Reports",
@@ -610,9 +643,19 @@ MESSAGES: dict[str, str] = {
     "announcement_updated":             "{nexus_checkmark} Announcement settings updated.",
     "announcement_footer":              "Nexus • Update",
     "announcement_disable_button":      "Disable announcements",
+    "announcement_need_channel": "❌ Please select a channel first.",
 
-    # ─── Help ───────────────────────────────────────────────────────
+    # ─── Support ──────────────────────────────────────────────────────
+    "support_pin_title":        "🔐 Support-PIN",
+    "support_pin_desc":         "Share this PIN with Nexus support: **`{pin}`**\nValid for 15 minutes.",
+    "support_invalid_pin":      "❌ Invalid or expired PIN.",
+    "support_no_access":         "❌ This channel has no verified support access. Use `/verify-pin` first.",
+    "support_guild_unreachable": "❌ The server is currently not reachable by the bot.",
+    "support_premium_already":   "ℹ️ The server already has Premium: {status}\nNothing was changed.",
+
+    # ─── Hilfe ────────────────────────────────────────────────────────
     "help_mod_moderation":      "Moderation",
+    "help_mod_welcome":         "Welcome",
     "help_mod_levels":          "Levels",
     "help_mod_reaction_roles":  "Reaction Roles",
     "help_mod_embeds":          "Embeds",
@@ -621,10 +664,14 @@ MESSAGES: dict[str, str] = {
     "help_mod_stream_alerts":   "Stream Alerts",
     "help_mod_tickets":         "Tickets",
     "help_mod_giveaways":       "Giveaways",
+    "help_click_details": "Select in the menu",
     "help_title":        "📖 Nexus — Help",
     "help_overview_desc":"Select a module to see the available commands.\n\n⭐ = Premium Feature",
     "help_btn_overview": "📋 Overview",
     "help_no_commands":  "No commands available.",
+    "help_select_placeholder": "Select a module …",
+    "help_select_count": "{count} commands",
+    "help_select_overview_count": "{modules} modules · {commands} commands",
     "info_title":        "ℹ️ Nexus",
     "info_desc":         "Nexus is a modern, modular Discord bot that takes your server to the next level.",
     "info_docu":         "📚 Documentation",
@@ -634,24 +681,16 @@ MESSAGES: dict[str, str] = {
     "info_privacy":      "📜 Privacy",
     "info_terms":        "📋 Terms",
 
-    # ─── Support ──────────────────────────────────────────────────────
-    "support_invalid_pin":      "❌ Invalid or expired PIN.",
-    "support_pin_desc":         "Share this PIN with Nexus support: **`{pin}`**\nValid for 15 minutes.",
-    "support_pin_title":        "🔐 Support-PIN",
-    "support_no_access":         "❌ This channel has no verified support access. Use `/verify-pin` first.",
-    "support_guild_unreachable": "❌ The server is currently not reachable by the bot.",
-    "support_premium_already":   "ℹ️ The server already has Premium: {status}\nNothing was changed.",
-
-    # ─── Help Commands ────────────────────────────────────────────────
-    "help_cmd_kick":            "Kicks a user",
-    "help_cmd_ban":             "Bans a user",
-    "help_cmd_unban":           "Unbans a user",
-    "help_cmd_timeout":         "Times out a user",
-    "help_cmd_warn":            "Warns a user",
-    "help_cmd_warnings":        "Shows all warnings",
-    "help_cmd_unwarn":          "Removes a warning",
+    # ─── Hilfe Commands ───────────────────────────────────────────────
+    "help_cmd_kick":     "Kicks a user",
+    "help_cmd_ban":      "Bans a user",
+    "help_cmd_unban":    "Unbans a user",
+    "help_cmd_timeout":  "Times out a user",
+    "help_cmd_warn":     "Warns a user",
+    "help_cmd_warnings": "Shows all warnings",
+    "help_cmd_unwarn":   "Removes a warning",
     "help_cmd_clearwarnings":   "Clears all warnings",
-    "help_cmd_add_role":        "Assigns a role",
+    "help_cmd_add_role": "Assigns a role",
     "help_cmd_remove_role":     "Removes a role",
     "help_cmd_set_slowmode":    "Sets the slow mode",
     "help_cmd_purge_messages":  "Purges multiple messages",
@@ -667,6 +706,11 @@ MESSAGES: dict[str, str] = {
     "help_cmd_set_level_role":    "Links a role to a level",
     "help_cmd_remove_level_role": "Removes a level role",
     "help_cmd_list_level_roles":  "Lists all levels with roles",
+    "help_cmd_levelup_channel": "Set the channel for level-up messages",
+    "help_cmd_import_mee6": "Import XP from your public MEE6 leaderboard",
+    "help_cmd_level_roles": "Manages level roles",
+    "help_cmd_goodbye": "Enables goodbye messages and sets a channel",
+    "help_cmd_diagnose": "Checks permissions and settings",
 
     # ─── React Commands ───────────────────────────────────────────────
     "help_cmd_reactionrole_create": "Creates a reaction role message",
@@ -679,7 +723,7 @@ MESSAGES: dict[str, str] = {
 
     # ─── Boost Commands ───────────────────────────────────────────────
     "help_cmd_boost_message": "Manage boost messages",
-    
+
     # ─── Welcome Commands ─────────────────────────────────────────────
     "help_cmd_welcome_message": "Manages Welcome Messages",
 
@@ -700,7 +744,7 @@ MESSAGES: dict[str, str] = {
     "help_cmd_force_close":     "Permanently closes a ticket.",
 
     # ─── Giveaway Commands ─────────────────────────────────────────────
-    "help_cmd_giveaways": "Manages giveaways (create and end)",
+    "help_cmd_giveaways":   "Manages giveaways (create and end)",
 
     # ─── ALWAYS_SHOWN ─────────────────────────────────────────────────
     "help_always_general":      "{settings} General",
@@ -739,7 +783,7 @@ MESSAGES: dict[str, str] = {
     "embed_inactive_hint":      "🔒 Inactive — over the limit. Delete embeds or get Premium.",
     "embed_over_limit":         "⚠️ Only the {limit} oldest embeds are active.",
     "embed_list_page":          "Page {page}/{pages}",
-    "embed_hub_title":          "📋 Embeds",
+    "embed_hub_title":         "📋 Embeds",
     "embed_hub_text":          "Create, edit, post, schedule (Premium) or delete saved embeds.",  # geändert
     "embed_btn_edit":          "Edit",
     "embed_pick_title_edit":   "✏️ Edit embed",
@@ -779,8 +823,8 @@ MESSAGES: dict[str, str] = {
     "embed_mode_both":                "Save & Post",
     "embed_saved":                    "{checkmark} Embed saved as #{id}.",
     "embed_saved_posted":             "{checkmark} Embed saved as #{id} and posted in {channel}.",
-
-    # ─── Stream Alerts ───────────────────────────────────────────────────
+    
+    # ─── Twitch ────────────────────────────────────────────────────────
     "alert_invalid_username":  "❌ That doesn't look like a valid Username or Link.",
     "alert_limit_reached":     "❌ Limit of {limit} monitored channels reached.",
     "alert_user_not_found":    "❌ User `{login}` was not found.",
@@ -809,15 +853,15 @@ MESSAGES: dict[str, str] = {
     "alert_platform_unavailable": "❌ This platform isn't available yet.",
     "alert_live":                 "🔴 Live",
     "alert_offline":              "⚫ Offline",
-    "alert_add_modal_title":             "Add {platform} Channel",
-    "alert_add_modal_streamer_label":    "Username or Link",
+    "alert_add_modal_title":              "Add {platform} Channel",
+    "alert_add_modal_streamer_label":     "Username or Link",
     "alert_add_modal_streamer_twitch_placeholder":  "e.g. Username or https://twitch.tv/Username",
     "alert_add_modal_streamer_youtube_placeholder": "e.g. Username or https://youtube.com/@Username",
-    "alert_add_modal_message_label":     "Custom Message (optional)",
+    "alert_add_modal_message_label":      "Custom Message (optional)",
     "alert_add_modal_message_placeholder": "e.g., Let's go, team! 🎉",
-    "alert_role_prompt":                 "🔔 Would you like to set a role to be pinged during live events?",
-    "alert_role_prompt_placeholder":     "Select a role (optional)...",
-    "alert_role_prompt_skipped":         "Alright, no ping configured.",
+    "alert_role_prompt":                  "🔔 Would you like to set a role to be pinged during live events?",
+    "alert_role_prompt_placeholder":      "Select a role (optional)...",
+    "alert_role_prompt_skipped":          "Alright, no ping configured.",
     "alert_edit_none_for_platform": "❌ Nothing is currently being monitored on this platform.",
     "alert_edit_pick_streamer":     "Which channel would you like to edit?",
     "alert_edit_select_placeholder": "Select a channel...",
@@ -832,6 +876,7 @@ MESSAGES: dict[str, str] = {
     "alert_message_modal_title":   "Edit Custom Message",
     "alert_message_modal_label":   "Message (leave empty to remove)",
     "alert_edit_success":          "{nexus_checkmark} Settings for `{login}` have been updated.",
+    "alert_inactive_premium": "⏸️ Inactive (Premium limit)",
 
     # ─── Premium (/premium) ───────────────────────────────────────────
     "help_cmd_premium":            "Shows your server's Premium status",

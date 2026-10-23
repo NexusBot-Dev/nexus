@@ -1,4 +1,5 @@
 import logging
+import re
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,10 +8,13 @@ from emojis import NexusEmojis
 from config import NEXUS_FOOTER
 from translations import LOCALE_MAP
 from cogs.utils import get_user_lang
+from systems.ui import NexusView
 
 log = logging.getLogger(__name__)
 
 SITE_LOCALES = {"de", "en"}
+
+_LEADING_EMOJI = re.compile(r"^\s*(?:<a?:\w+:\d+>|[^\w\s])+\s*")
 
 # ─── Modul-Beschreibungen ────────────────────────────────────────────────────
 MODULE_INFO = {
@@ -44,6 +48,8 @@ MODULE_INFO = {
             "remove_xp":         "help_cmd_remove_xp",
             "wipe_xp":           "help_cmd_wipe_xp",
             "level_roles":       "help_cmd_level_roles",
+            "levelup_channel":   "help_cmd_levelup_channel",
+            "import_mee6":       "help_cmd_import_mee6",
         }
     },
     "Reaction Roles": {
@@ -132,76 +138,65 @@ ALWAYS_SHOWN = {
     }
 }
 
-# ─── Views ───────────────────────────────────────────────────────────────────
+# ─── View ────────────────────────────────────────────────────────────────────
 
-class HelpView(discord.ui.View):
+class HelpView(NexusView):
+    """Ein Dropdown statt Buttons: bis zu 25 Einträge, kein Zeilen-/Spalten-Limit wie bei Buttons."""
+
     def __init__(self, owner_id: int, lang: dict, color: int, active_modules: dict):
-        super().__init__(timeout=120)
-        self.owner_id      = owner_id
-        self.lang          = lang
-        self.color         = color
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=120)
+        self.color          = color
         self.active_modules = active_modules
-        self.current_page  = "overview"
-        self._update_buttons()
+        self.current_page   = "overview"
+        self.select_module.placeholder = lang.get("help_select_placeholder", "Select a module …")
+        self._refresh_options()
 
     def _is_active(self, module: str, info: dict) -> bool:
         if info.get("always"):
             return True
         return bool(self.active_modules.get(module.lower().replace(" ", "_")))
 
-    def _update_buttons(self):
-        self.clear_items()
+    @staticmethod
+    def _plain(text: str, fallback: str) -> str:
+        """Text ohne führendes Emoji; fällt auf fallback zurück, wenn nichts übrig bleibt."""
+        return _LEADING_EMOJI.sub("", text).strip() or fallback
 
-        # Übersicht Button
-        overview_btn = discord.ui.Button(
-            label     = self.lang.get("help_btn_overview", "📋 Overview"),
-            style     = discord.ButtonStyle.primary if self.current_page == "overview" else discord.ButtonStyle.secondary,
-            custom_id = "help_overview",
-            row       = 0,
-        )
-        overview_btn.callback = self._show_overview
-        self.add_item(overview_btn)
+    def _refresh_options(self):
+        """Baut die Optionen neu auf, damit der aktuelle Eintrag als Vorauswahl markiert ist."""
+        active = [
+            (module, info) for module, info in MODULE_INFO.items()
+            if self._is_active(module, info) and info["commands"]
+        ]
+        total_commands = len(ALWAYS_SHOWN["commands"]) + sum(len(info["commands"]) for _, info in active)
 
-        # Modul-Buttons
-        row = 1
-        col = 0
-        for module, info in MODULE_INFO.items():
-            if not self._is_active(module, info) or not info["commands"]:
-                continue
-
-            label_text = self.lang.get(info.get("name_key"), module.replace('_', ' ').capitalize())
-            btn = discord.ui.Button(
-                label     = label_text,
-                emoji     = info["emoji"],
-                style     = discord.ButtonStyle.primary if self.current_page == module else discord.ButtonStyle.secondary,
-                custom_id = f"help_{module}",
-                row       = row,
+        options = [
+            discord.SelectOption(
+                label=self._plain(self.lang.get("help_btn_overview", "Overview"), "Overview"),
+                value="overview",
+                description=self.lang.get(
+                    "help_select_overview_count", "{modules} modules · {commands} commands"
+                ).format(modules=len(active), commands=total_commands),
+                emoji="📋",
+                default=self.current_page == "overview",
             )
-            btn.callback = self._make_module_callback(module)
-            self.add_item(btn)
+        ]
+        for module, info in active:
+            options.append(discord.SelectOption(
+                label=self._plain(self.lang.get(info["name_key"], module), module)[:100],
+                value=module,
+                description=self.lang.get("help_select_count", "{count} commands").format(count=len(info["commands"])),
+                emoji=info["emoji"],
+                default=self.current_page == module,
+            ))
+        self.select_module.options = options[:25]
 
-            col += 1
-            if col >= 3:
-                col  = 0
-                row += 1
-
-    def _make_module_callback(self, module: str):
-        async def callback(interaction: discord.Interaction):
-            self.current_page = module
-            self._update_buttons()
-            await interaction.response.edit_message(
-                embed=self._module_embed(module),
-                view=self,
-            )
-        return callback
-
-    async def _show_overview(self, interaction: discord.Interaction):
-        self.current_page = "overview"
-        self._update_buttons()
-        await interaction.response.edit_message(
-            embed=self._overview_embed(),
-            view=self,
-        )
+    @discord.ui.select(min_values=1, max_values=1)
+    async def select_module(self, interaction: discord.Interaction, select: discord.ui.Select):
+        choice = select.values[0]
+        self.current_page = choice if choice in MODULE_INFO else "overview"
+        self._refresh_options()
+        embed = self._overview_embed() if self.current_page == "overview" else self._module_embed(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
 
     def _overview_embed(self) -> discord.Embed:
         embed = discord.Embed(
@@ -229,7 +224,7 @@ class HelpView(discord.ui.View):
                 continue
             embed.add_field(
                 name=self.lang.get(info["name_key"], f"{info['emoji']} {module}"),
-                value=f"{len(info['commands'])} Commands — {self.lang.get('help_click_details', 'Click for details')}",
+                value=f"{self.lang.get('help_select_count', '{count} commands').format(count=len(info['commands']))} — {self.lang.get('help_click_details', 'Select in the menu')}",
                 inline=True,
             )
 
@@ -249,14 +244,6 @@ class HelpView(discord.ui.View):
         embed.description = cmds or self.lang.get("help_no_commands", "No commands available.")
         embed.set_footer(text=NEXUS_FOOTER)
         return embed
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                self.lang.get("no_permission", "No permission."), ephemeral=True
-            )
-            return False
-        return True
 
 # ─── Cog ─────────────────────────────────────────────────────────────────────
 
@@ -279,6 +266,7 @@ class Help(commands.Cog):
             view=view,
             ephemeral=True,
         )
+        view.bind(interaction)
 
     @app_commands.command(name="info", description=app_commands.locale_str("cmd_info_desc"))
     async def info(self, interaction: discord.Interaction):

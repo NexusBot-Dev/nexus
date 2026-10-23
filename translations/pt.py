@@ -17,6 +17,7 @@ MESSAGES: dict[str, str] = {
     "confirm_no":     "Cancelar",
     "msg_inactive_tag":  "🔒 inativo",
     "msg_inactive_hint": "🔒 As mensagens acima do seu limite de {limit} são mantidas, mas não são usadas. Voltam a ficar ativas com o Premium ou ao excluir uma ativa.",
+    "error_occurred": "❌ Algo deu errado. Por favor, tente novamente.",
 
     # ─── Error Handling ───────────────────────────────────────────────
     "perm_issue_missing_perms":     "❌ Faltam as seguintes permissões para mim: {perms}",
@@ -47,7 +48,7 @@ MESSAGES: dict[str, str] = {
     "diag_channel_deleted":     "O canal não existe mais",
     "diag_channel_no_access":   "sem acesso",
     "diag_section_roles":       "🎭 Cargos de Módulos",
-    "diag_src_level":           "Nível {level}",
+    "diag_src_level":           "Nivel {level}",
     "diag_src_rr":              "Reaction Role",
     "diag_role_deleted":        "O cargo não existe mais",
     "diag_role_not_manageable": "O Nexus não pode gerenciar este cargo",
@@ -55,14 +56,15 @@ MESSAGES: dict[str, str] = {
     "diag_section_tickets":     "🎫 Tickets",
     "diag_tickets_missing":     "Não é possível criar tickets. Falta: {perms}",
     "diag_tickets_ok":          "Os tickets podem ser criados normalmente.",
-    "diag_goodbye_channel":     "👋 Canal de Despedidas",
-    "diag_boost_channel":       "🚀 Canal de Boosts",
-    "diag_section_alerts":      "📡 Alertas de Live",
-    "diag_alerts_ok":           "Todos os canais de alerta e cargos de menção estão corretos.",
-    "diag_alert_channel":       "📡 Alertas ({streamers})",
-    "diag_alert_role_deleted":  "🔔 O cargo de menção para {platform} não existe mais",
+    "diag_goodbye_channel":          "👋 Canal de Despedidas",
+    "diag_boost_channel":            "🚀 Canal de Boosts",
+    "diag_section_alerts":           "📡 Alertas de Live",
+    "diag_alerts_ok":                "Todos os canais de alerta e cargos de menção estão corretos.",
+    "diag_alert_channel":            "📡 Alertas ({streamers})",
+    "diag_alert_role_deleted":       "🔔 O cargo de menção para {platform} não existe mais",
     "diag_alert_role_unmentionable": "🔔 {role} não pode ser mencionado: não é mencionável e falta a permissão 'Mencionar todos os cargos'",
     "diag_levelup_channel": "📈 Canal de subida de nível",
+    "diag_channels_ok": "Todos os canais configurados estão acessíveis.",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} foi expulso.",
@@ -183,16 +185,16 @@ MESSAGES: dict[str, str] = {
     "level_roles_pick_role": "Qual cargo o nível {level} deve conceder?",
     "level_roles_remove_placeholder": "Selecione um cargo por nível para remover...",
     "level_roles_hierarchy_user": 
-        "⚠️ Este cargo está no mesmo nível ou acima do seu próprio cargo mais alto."
+        "⚠️ Este cargo está no mesmo nível ou acima do seu próprio cargo mais alto. "
         "Você não pode defini-lo como cargo de nível. Escolha outro cargo.",
     "level_roles_hierarchy_nexus": "❌ O cargo {role} está acima do Nexus na hierarquia. Mova o cargo do Nexus para cima no Discord.",
-    "level_roles_managed_role_error": "❌ O cargo {role.mention} é gerenciado por uma integração/bot e não pode ser atribuído manualmente.",
+    "level_roles_managed_role_error": "❌ O cargo {role} é gerenciado por uma integração/bot e não pode ser atribuído manualmente.",
     "level_roles_everyone_role_error": "❌ O cargo `@everyone` não pode ser usado como recompensa de nível.",
-    "levelup_title": "📈 Canal de subida de nível",
-    "levelup_desc_set": "As mensagens de subida de nível aparecerão em {channel} e permanecerão lá.",
-    "levelup_desc_default": "Nenhum canal definido: As subidas de nível aparecerão no canal da mensagem e desaparecerão após 30 segundos.",
-    "levelup_select_placeholder": "📋 Selecionar canal...",
-    "levelup_btn_reset": "Redefinir para o padrão",
+    "levelup_title":                "📈 Canal de subida de nível",
+    "levelup_desc_set":             "As mensagens de subida de nível aparecerão em {channel} e permanecerão lá.",
+    "levelup_desc_default":         "Nenhum canal definido: As subidas de nível aparecerão no canal da mensagem e desaparecerão após 30 segundos.",
+    "levelup_select_placeholder":   "📋 Selecionar canal...",
+    "levelup_btn_reset":            "Redefinir para o padrão",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 Boas-vindas!",
@@ -311,6 +313,10 @@ MESSAGES: dict[str, str] = {
     "rr_dropdown_open_button":     "🎭 Escolher cargos",
     "rr_emoji_foreign":            "❌ Não posso usar este emoji porque ele vem de um servidor onde não estou presente. Escolha outro.",
     "rr_roles_partially_updated":  "⚠️ Seus cargos foram atualizados, mas não consegui alterar os seguintes: {roles}. Avise a um administrador.",
+    "rr_btn_unique_free": "🔒 Único (Premium)",
+    "rr_btn_unique_premium": "Único",
+    "rr_mode_select_label": "Como os membros devem escolher seus cargos?",
+    "rr_no_permission": "❌ Não tenho permissão para gerenciar cargos.",
 
     # ─── Boosts ───────────────────────────────────────────────────────
     "boost_title":       "{boost} Novo Boost no Servidor!",
@@ -364,12 +370,12 @@ MESSAGES: dict[str, str] = {
     "setup_validate":       "🔍 Verificar",
     "setup_placeholder":    "📋 Escolha um canal existente...",
     "setup_create":         "✨ Criar um para mim",
-    "setup_cnl_rules_name": "📜┃regras",
-    "setup_cnl_welcome_name": "👋┃boas-vindas",
-    "setup_cnl_logs_name": "📝┃nexus-logs",
-    "setup_cnl_rules_reason": "Nexus Setup — Canal de regras",
+    "setup_cnl_rules_name":     "📜┃regras",
+    "setup_cnl_welcome_name":   "👋┃boas-vindas",
+    "setup_cnl_logs_name":      "📝┃nexus-logs",
+    "setup_cnl_rules_reason":   "Nexus Setup — Canal de regras",
     "setup_cnl_welcome_reason": "Nexus Setup — Canal de boas-vindas",
-    "setup_cnl_logs_reason": "Nexus Setup — Canal de registros",
+    "setup_cnl_logs_reason":    "Nexus Setup — Canal de registros",
     "setup_finish":         "Concluir configuração",
     "setup_done_title":     "O Nexus está pronto!",
     "setup_welcome_back_title": "👋 Bem-vindo de volta!",
@@ -378,10 +384,10 @@ MESSAGES: dict[str, str] = {
     "setup_restart":            "🔄 Reiniciar do zero",
     "setup_restored_title":     "{nexus_checkmark} Configurações restauradas!",
     "setup_restored_desc":      "Suas configurações antigas foram restauradas com sucesso.",
-    "setup_done_description":   "A configuração foi concluída com sucesso.",
+    "setup_done_description":"A configuração foi concluída com sucesso.",
     "setup_right_error":    "Falta a permissão 'Gerenciar Canais' para mim.",
     "setup_on":             "LIGADO",
-    "setup_off":            "DESLIGADO",
+    "setup_off":             "DESLIGADO",
     "setup_step":           "Etapa",
     "setup_completed":      "Configuração concluída",
     "setup_step_one_title": "✨ Etapa 1: Deixar o Nexus pronto para uso",
@@ -443,6 +449,9 @@ MESSAGES: dict[str, str] = {
         "{num_2} Adicione ou selecione o cargo **Nexus**\n"
         "{num_3} Defina as permissões listadas acima como **Permitido (✅)**\n"
         "{num_4} Clique em **🔍 Verificar** abaixo",
+    "setup_news_title": "📢 Fique por dentro",
+    "setup_news_hint": "Opcional: Use `/announcement` para receber novidades sobre o Nexus em um canal de sua escolha.",
+    "setup_restored_perm_hint": "⚠️ = O Nexus não tem permissões neste canal. Verifique em /setup ou no painel.",
 
     # ─── Module ───────────────────────────────────────────────────────
     "module_core":          "🔒 Módulo Principal",
@@ -452,6 +461,11 @@ MESSAGES: dict[str, str] = {
     "module_core_error":    "O módulo `{module}` é essencial e não pode ser desativado.",
     "module_config":        "{settings} Gerenciar Módulos",
     "module_config_desc":   "Ative ou desative módulos para este servidor.",
+    "module_core_title": "🔒 Sempre ativos",
+    "module_dashboard_btn": "🌐 Abrir painel",
+    "module_disabled_desc": "Para usar este recurso no seu servidor, ative-o ou ajuste as configurações no painel web.",
+    "module_disabled_title": "{emoji} {name} está desativado no momento",
+    "module_enable_btn": "Ativar módulo",
 
     # ─── Admin ────────────────────────────────────────────────────────
     "settings_title":       "{settings} Configurações do Servidor",
@@ -461,6 +475,8 @@ MESSAGES: dict[str, str] = {
     "settings_welcome":     "👋 Canal de Boas-vindas",
     "settings_boost":       "Canal de Boosts",
     "settings_level":       "📈 Sistema de Níveis",
+    "settings_goodbye_channel": "Canal",
+    "settings_goodbye_status": "Status",
     "choose_language":      "🌍 Escolher idioma...",
     "log_cnl_label":        "📋 Alterar canal de logs",
     "log_cnl_new":          "Escolha um novo canal de logs:",
@@ -471,9 +487,17 @@ MESSAGES: dict[str, str] = {
     "boost_cnl_label":      "Alterar canal de boosts",
     "boost_cnl_new":        "Escolha um novo canal de boosts:",
     "channel_switched":     "{nexus_checkmark} **{label}** foi definido para {channel}.",
+    "color_btn_label": "🎨 Cor dos embeds",
+    "color_modal_title": "Cor dos embeds",
+    "color_modal_label": "Cor hex (vazio = padrão do Nexus)",
+    "color_invalid": "❌ Digite uma cor hexadecimal válida, por exemplo `#00F5D4`.",
+    "color_premium_required": "⭐ Uma cor de embed personalizada é um recurso Premium. Saiba mais com `/premium`.",
+    "color_premium_stored_hint": "Sua cor salva {color} volta a ficar ativa com o Premium.",
+    "color_saved": "{nexus_checkmark} Cor dos embeds definida como **{color}**. É assim que seus embeds ficam agora.",
+    "color_reset": "{nexus_checkmark} Cor dos embeds redefinida para o padrão do Nexus.",
 
     # ─── Automod ──────────────────────────────────────────────────────
-    "automod_title":        "🛡️️ Configuração do AutoMod",
+    "automod_title":        "🛡 Configuração do AutoMod",
     "automod_desc":         "Gerencie a moderação automática e a proteção deste servidor.",
     "automod_spam_desc":    "Bloqueia spam automático repetitivo.",
     "automod_mention_desc": "Bloqueia excesso de menções (máx. 5).",
@@ -488,6 +512,7 @@ MESSAGES: dict[str, str] = {
     "automod_rule_updated":  "Nexus AutoMod — palavras-chave atualizadas",
     "automod_rule_duplicate":"Nexus AutoMod — duplicata antiga removida",
     "automod_placeholder":   "spam\ndivulgacao\npalavrao",
+    "automod_shield_desc": "Monitora o registro de auditoria com pontuação de risco contra nukes rápidos no servidor.",
     "shield_triggered_title":  "🚨 Nexus Shield — Anti-Nuke disparado!",
     "shield_triggered_desc":   "Atividade suspeita detectada de {user} (Pontuação: {score}).",
     "shield_log_attacker_bot": "🤖 Bot invasor",
@@ -519,6 +544,14 @@ MESSAGES: dict[str, str] = {
     "shield_log_ban_failed":     "Falha ao banir (permissões/hierarquia em falta)",
     "shield_log_warn_no_action": "Nenhuma medida (apenas alerta)",
     "shield_log_removed_roles":  "Cargos removidos: {roles}",
+    "shield_admin_hint": "⚠️ O Nexus Shield está ativo, detecta ataques e impede os atacantes. Para **restaurar** completamente cargos e canais excluídos com suas permissões, o Nexus precisa de **Administrador**. Sem isso, a restauração pode ficar incompleta.",
+    "shield_log_invites_pause_failed": "⚠️ Não foi possível pausar os convites (permissões em falta)",
+    "shield_log_invites_paused": "🔒 Convites pausados temporariamente",
+    "shield_log_restore_bans": "Banimentos revogados",
+    "shield_log_restore_channels": "Canais",
+    "shield_log_restore_no_admin": "⚠️ O Nexus não tem Administrador. Cargos e canais com permissões que o Nexus não possui podem não ter sido restaurados.",
+    "shield_log_restore_roles": "Cargos",
+    "shield_log_restore_title": "♻️ Restaurado",
 
     # ─── Tickets ────────────────────────────────────────────────────────
     "ticket_add_category_modal_title":     "Criar categoria de tickets",
@@ -609,6 +642,7 @@ MESSAGES: dict[str, str] = {
     "announcement_updated":             "{nexus_checkmark} Configurações de anúncios atualizadas.",
     "announcement_footer":              "Nexus • Atualização",
     "announcement_disable_button":      "Desativar anúncios",
+    "announcement_need_channel": "❌ Selecione um canal primeiro.",
 
     # ─── Support ──────────────────────────────────────────────────────
     "support_pin_title":        "🔐 PIN de Suporte",
@@ -620,6 +654,7 @@ MESSAGES: dict[str, str] = {
 
     # ─── Hilfe ────────────────────────────────────────────────────────
     "help_mod_moderation":      "Moderação",
+    "help_mod_welcome":         "Boas-vindas",
     "help_mod_levels":          "Níveis",
     "help_mod_reaction_roles":  "Reaction Roles",
     "help_mod_embeds":          "Embeds",
@@ -628,10 +663,14 @@ MESSAGES: dict[str, str] = {
     "help_mod_stream_alerts":   "Alertas de Live",
     "help_mod_tickets":         "Tickets",
     "help_mod_giveaways":       "Giveaways",
+    "help_click_details": "Selecione no menu",
     "help_title":        "📖 Nexus — Ajuda",
     "help_overview_desc":"Selecione um módulo para visualizar os comandos disponíveis.\n\n⭐ = Recurso Premium",
     "help_btn_overview": "📋 Visão geral",
     "help_no_commands":  "Nenhum comando disponível.",
+    "help_select_placeholder": "Selecione um módulo…",
+    "help_select_count": "{count} comandos",
+    "help_select_overview_count": "{modules} módulos · {commands} comandos",
     "info_title":        "ℹ️ Nexus",
     "info_desc":         "Nexus é um bot modular moderno desenvolvido para elevar o nível do seu servidor.",
     "info_docu":         "📚 Documentação",
@@ -666,6 +705,11 @@ MESSAGES: dict[str, str] = {
     "help_cmd_set_level_role":    "Vincula um cargo a um nível",
     "help_cmd_remove_level_role": "Remove um cargo por nível",
     "help_cmd_list_level_roles":  "Exibe todos os cargos por nível.",
+    "help_cmd_levelup_channel": "Define o canal para as mensagens de subida de nível",
+    "help_cmd_import_mee6": "Importe o XP do placar de líderes público do MEE6",
+    "help_cmd_level_roles": "Gerencia os cargos por nível",
+    "help_cmd_goodbye": "Ativa as mensagens de despedida e define um canal",
+    "help_cmd_diagnose": "Verifica permissões e configurações",
 
     # ─── React Commands ───────────────────────────────────────────────
     "help_cmd_reactionrole_create": "Cria mensagem de cargos por reação",
@@ -698,6 +742,9 @@ MESSAGES: dict[str, str] = {
     "help_cmd_ticket_panel":    "Envia painel de tickets no canal escolhido.",
     "help_cmd_force_close":     "Fecha um ticket permanentemente.",
 
+    # ─── Giveaway Commands ─────────────────────────────────────────────
+    "help_cmd_giveaways":   "Gerencia sorteios (criar e encerrar)",
+
     # ─── ALWAYS_SHOWN ─────────────────────────────────────────────────
     "help_always_general":      "{settings} Geral",
     "help_cmd_setup":           "Configurar o Nexus",
@@ -708,9 +755,6 @@ MESSAGES: dict[str, str] = {
     "help_cmd_info":            "Informações sobre o Nexus",
     "help_cmd_announcement":    "Gerenciar anúncios",
     "help_cmd_invite":          "Link de convite do Nexus",
-
-    # ─── Giveaway Commands ─────────────────────────────────────────────
-    "help_cmd_giveaways": "Gerencia sorteios (criar e encerrar)",
 
     # ─── Embed ────────────────────────────────────────────────────────
     "embed_modal_title":        "Criar Embed",
@@ -830,6 +874,7 @@ MESSAGES: dict[str, str] = {
     "alert_message_modal_title":   "Editar mensagem personalizada",
     "alert_message_modal_label":   "Mensagem (deixe em branco para remover)",
     "alert_edit_success":          "{nexus_checkmark} Configurações de `{login}` atualizadas.",
+    "alert_inactive_premium": "⏸️ Inativo (limite do Premium)",
 
     # ─── Premium (/premium) ───────────────────────────────────────────
     "help_cmd_premium":            "Exibe o status Premium do seu servidor",
@@ -935,5 +980,5 @@ MESSAGES: dict[str, str] = {
     "log_mee6_import": "{mod} importou os níveis do MEE6.",
     "mee6_done": "{check} Importação do MEE6 concluída: **{members}** membros, **{roles}** cargos por nível.",
     "mee6_roles_partial": "⚠️ Nem todos os cargos por nível puderam ser salvos. Verifique `/level_roles`.",
-    "mee6_cancelled": "Importação cancelada. Nada foi alterado."
+    "mee6_cancelled": "Importação cancelada. Nada foi alterado.",
 }

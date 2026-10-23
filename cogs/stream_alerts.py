@@ -466,7 +466,7 @@ class StreamAlerts(commands.Cog):
             entry_blocks = []
             for i, s in enumerate(sorted_entries):
                 if i >= limit:
-                    status_text = lang.get("alert_inactive_premium", "⏸️ Inaktiv (Premium-Limit)")
+                    status_text = lang.get("alert_inactive_premium", "⏸️ Inactive (Premium limit)")
                 else:
                     status_text = lang.get("alert_live", "🔴 Live") if s["live"] else lang.get("alert_offline", "⚫ Offline")
                 

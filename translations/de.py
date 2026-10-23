@@ -17,7 +17,7 @@ MESSAGES: dict[str, str] = {
     "confirm_no":     "Abbrechen",
     "msg_inactive_tag":  "🔒 Inaktiv",
     "msg_inactive_hint": "🔒 Nachrichten über deinem Limit von {limit} bleiben gespeichert, werden aber nicht verwendet. Mit Premium oder nach dem Löschen einer aktiven werden sie wieder aktiv.",
-
+    "error_occurred": "❌ Da ist etwas schiefgelaufen. Bitte versuch es nochmal.",
 
     # ─── Error Handling ───────────────────────────────────────────────
     "perm_issue_missing_perms":     "❌ Mir fehlen folgende Rechte: {perms}",
@@ -64,6 +64,7 @@ MESSAGES: dict[str, str] = {
     "diag_alert_role_deleted":       "🔔 Die Ping-Rolle für {platform} existiert nicht mehr",
     "diag_alert_role_unmentionable": "🔔 {role} kann nicht gepingt werden: Sie ist nicht erwähnbar und mir fehlt „Alle erwähnen“",
     "diag_levelup_channel": "📈 Level-up channel",
+    "diag_channels_ok": "Alle eingerichteten Channels sind erreichbar.",
 
     # ─── Moderation ───────────────────────────────────────────────────
     "kick_success":         "{user} wurde gekickt.",
@@ -184,10 +185,10 @@ MESSAGES: dict[str, str] = {
     "level_roles_pick_role": "Welche Rolle sollte Level {level} gewähren?",
     "level_roles_remove_placeholder": "Eine Level-Rolle zum Entfernen auswählen...",
     "level_roles_hierarchy_user": 
-        "⚠️ Diese Rolle steht in der Hierarchie gleich hoch oder höher als deine eigene höchste Rolle."
+        "⚠️ Diese Rolle steht in der Hierarchie gleich hoch oder höher als deine eigene höchste Rolle. "
         "Du kannst sie nicht als Level-Rolle festlegen. Bitte wähle eine andere Rolle.",
     "level_roles_hierarchy_nexus": "❌ Die Rolle {role} steht in der Rollenhierarchie über Nexus. Bitte verschiebe die Nexus-Rolle im Discord darüber.",
-    "level_roles_managed_role_error": "❌ Die Rolle {role.mention} wird von einer Integration/einem Bot verwaltet und kann nicht manuell vergeben werden.",
+    "level_roles_managed_role_error": "❌ Die Rolle {role} wird von einer Integration/einem Bot verwaltet und kann nicht manuell vergeben werden.",
     "level_roles_everyone_role_error": "❌ Die Rolle `@everyone` kann nicht als Level-Rolle verwendet werden.",
     "levelup_title":                "📈 Level-Up-Channel",
     "levelup_desc_set":             "Level-Up-Nachrichten erscheinen in {channel} und bleiben dort stehen.",
@@ -312,6 +313,10 @@ MESSAGES: dict[str, str] = {
     "rr_dropdown_open_button":     "🎭 Rollen auswählen",
     "rr_emoji_foreign":            "❌ Dieses Emoji kann ich nicht nutzen, weil es von einem Server stammt, auf dem ich nicht bin. Bitte nimm ein anderes.",
     "rr_roles_partially_updated":  "⚠️ Deine Rollen wurden aktualisiert, aber folgende konnte ich nicht ändern: {roles}. Bitte gib einem Server-Admin Bescheid.",
+    "rr_btn_unique_free": "🔒 Unique (Premium)",
+    "rr_btn_unique_premium": "Unique",
+    "rr_mode_select_label": "Wie sollen Mitglieder ihre Rollen auswählen?",
+    "rr_no_permission": "❌ Ich habe keine Berechtigung, Rollen zu verwalten.",
 
     # ─── Boosts ───────────────────────────────────────────────────────
     "boost_title":       "{boost} Neuer Server Boost!",
@@ -445,6 +450,9 @@ MESSAGES: dict[str, str] = {
         "{num_2} Rolle **Nexus** (oder Bot) hinzufügen bzw. auswählen\n"
         "{num_3} Die oben gelisteten Rechte auf **Erlaubt (✅)** setzen\n"
         "{num_4} Unten auf **🔍 Prüfen** klicken",
+    "setup_news_title": "📢 Bleib auf dem Laufenden",
+    "setup_news_hint": "Optional: Mit `/announcement` erhältst du Neuigkeiten zu Nexus in einem Channel deiner Wahl.",
+    "setup_restored_perm_hint": "⚠️ = Nexus fehlen Rechte in diesem Channel. Prüfe das über /setup oder das Dashboard.",
 
     # ─── Module ───────────────────────────────────────────────────────
     "module_core":          "🔒 Kern-Modul",
@@ -454,6 +462,11 @@ MESSAGES: dict[str, str] = {
     "module_core_error":    "Das Modul `{module}` ist ein Kern-Modul und kann nicht deaktiviert werden.",
     "module_config":        "{settings} Module verwalten",
     "module_config_desc":   "Aktiviere oder deaktiviere Module für diesen Server.",
+    "module_core_title": "🔒 Immer aktiv",
+    "module_dashboard_btn": "🌐 Dashboard öffnen",
+    "module_disabled_desc": "Um diese Funktion auf deinem Server zu nutzen, aktiviere sie oder passe die Einstellungen im Web-Dashboard an.",
+    "module_disabled_title": "{emoji} {name} ist aktuell deaktiviert",
+    "module_enable_btn": "Modul aktivieren",
 
     # ─── Admin ────────────────────────────────────────────────────────
     "settings_title":       "{settings} Server-Einstellungen",
@@ -463,6 +476,8 @@ MESSAGES: dict[str, str] = {
     "settings_welcome":     "👋 Willkommens-Channel",
     "settings_boost":       "Boost-Channel",
     "settings_level":       "📈 Level-System",
+    "settings_goodbye_channel": "Channel",
+    "settings_goodbye_status": "Status",
     "choose_language":      "🌍 Sprache wählen...",
     "log_cnl_label":        "📋 Log-Channel ändern",
     "log_cnl_new":          "Wähle einen neuen Log-Channel:",
@@ -473,6 +488,14 @@ MESSAGES: dict[str, str] = {
     "boost_cnl_label":      "Boost-Channel ändern",
     "boost_cnl_new":        "Wähle einen neuen Boost-Channel:",
     "channel_switched":     "{nexus_checkmark} **{label}** wurde auf {channel} gesetzt.",
+    "color_btn_label": "🎨 Embed-Farbe",
+    "color_modal_title": "Embed-Farbe",
+    "color_modal_label": "Hex-Farbe (leer = Nexus-Standard)",
+    "color_invalid": "❌ Bitte gib eine gültige Hex-Farbe an, z. B. `#00F5D4`.",
+    "color_premium_required": "⭐ Eine eigene Embed-Farbe ist ein Premium-Feature. Mehr dazu mit `/premium`.",
+    "color_premium_stored_hint": "Deine gespeicherte Farbe {color} wird mit Premium wieder aktiv.",
+    "color_saved": "{nexus_checkmark} Embed-Farbe auf **{color}** gesetzt. So sehen deine Embeds jetzt aus.",
+    "color_reset": "{nexus_checkmark} Embed-Farbe auf den Nexus-Standard zurückgesetzt.",
 
     # ─── Automod ──────────────────────────────────────────────────────
     "automod_title":        "🛡️ AutoMod Konfiguration",
@@ -490,6 +513,7 @@ MESSAGES: dict[str, str] = {
     "automod_rule_updated":  "Nexus AutoMod — Keywords aktualisiert",
     "automod_rule_duplicate":"Nexus AutoMod — Altes Duplikat entfernt",
     "automod_placeholder":   "spam\nwerbung\nbad_word",
+    "automod_shield_desc": "Überwacht das Audit-Log mit Risiko-Bewertung gegen schnelle Server-Nukes.",
     "shield_triggered_title":  "🚨 Nexus Shield — Anti-Nuke ausgelöst!",
     "shield_triggered_desc":   "Verdächtige Aktivität von {user} erkannt (Score: {score}).",
     "shield_log_attacker_bot": "🤖 Angreifender Bot",
@@ -521,6 +545,14 @@ MESSAGES: dict[str, str] = {
     "shield_log_ban_failed":     "Bann fehlgeschlagen (fehlende Rechte/Hierarchie)",
     "shield_log_warn_no_action": "Keine Maßnahme (nur Vorwarnung)",
     "shield_log_removed_roles":  "Entfernte Rollen: {roles}",
+    "shield_admin_hint": "⚠️ Nexus Shield ist aktiv, erkennt Angriffe und stoppt die Angreifer. Um gelöschte Rollen und Channels samt Berechtigungen vollständig **wiederherzustellen**, braucht Nexus **Administrator**. Ohne dieses Recht kann die Wiederherstellung unvollständig sein.",
+    "shield_log_invites_pause_failed": "⚠️ Einladungen konnten nicht pausiert werden (fehlende Rechte)",
+    "shield_log_invites_paused": "🔒 Einladungen vorübergehend pausiert",
+    "shield_log_restore_bans": "Bans aufgehoben",
+    "shield_log_restore_channels": "Channels",
+    "shield_log_restore_no_admin": "⚠️ Nexus hat kein Administrator-Recht. Rollen und Channels mit Berechtigungen, die Nexus selbst nicht besitzt, wurden eventuell nicht wiederhergestellt.",
+    "shield_log_restore_roles": "Rollen",
+    "shield_log_restore_title": "♻️ Wiederhergestellt",
 
     # ─── Tickets ────────────────────────────────────────────────────────
     "ticket_add_category_modal_title":     "Ticket-Kategorie erstellen",
@@ -611,6 +643,7 @@ MESSAGES: dict[str, str] = {
     "announcement_updated":             "{nexus_checkmark} Announcement-Einstellungen aktualisiert.",
     "announcement_footer":              "Nexus • Update",
     "announcement_disable_button":      "Announcements abbestellen",
+    "announcement_need_channel": "❌ Bitte wähle zuerst einen Channel aus.",
 
     # ─── Support ──────────────────────────────────────────────────────
     "support_pin_title":        "🔐 Support-PIN",
@@ -622,6 +655,7 @@ MESSAGES: dict[str, str] = {
 
     # ─── Hilfe ────────────────────────────────────────────────────────
     "help_mod_moderation":      "Moderation",
+    "help_mod_welcome":         "Willkommen",
     "help_mod_levels":          "Levels",
     "help_mod_reaction_roles":  "Reaction Roles",
     "help_mod_embeds":          "Embeds",
@@ -630,10 +664,14 @@ MESSAGES: dict[str, str] = {
     "help_mod_stream_alerts":   "Stream Alerts",
     "help_mod_tickets":         "Tickets",
     "help_mod_giveaways":       "Giveaways",
+    "help_click_details": "Im Menü auswählen",
     "help_title":        "📖 Nexus — Hilfe",
     "help_overview_desc":"Wähle ein Modul aus um die verfügbaren Commands zu sehen.\n\n⭐ = Premium Feature",
     "help_btn_overview": "📋 Übersicht",
     "help_no_commands":  "Keine Commands verfügbar.",
+    "help_select_placeholder": "Modul auswählen …",
+    "help_select_count": "{count} Commands",
+    "help_select_overview_count": "{modules} Module · {commands} Commands",
     "info_title":        "ℹ️ Nexus",
     "info_desc":         "Nexus ist ein moderner, modularer Discord Bot der deinen Server auf das nächste Level bringt.",
     "info_docu":         "📚 Dokumentation",
@@ -668,6 +706,11 @@ MESSAGES: dict[str, str] = {
     "help_cmd_set_level_role":    "Verknüpft eine Rolle mit einem Level",
     "help_cmd_remove_level_role": "Entfernt eine Level-Rolle",
     "help_cmd_list_level_roles":  "Zeigt alle Level mit Rollen an.",
+    "help_cmd_levelup_channel": "Channel für Level-Up-Nachrichten festlegen",
+    "help_cmd_import_mee6": "XP aus deinem öffentlichen MEE6-Leaderboard importieren",
+    "help_cmd_level_roles": "Verwaltet Level-Rollen",
+    "help_cmd_goodbye": "Aktiviert Abschiedsnachrichten und legt einen Channel fest",
+    "help_cmd_diagnose": "Prüft Rechte und Einstellungen",
 
     # ─── React Commands ───────────────────────────────────────────────
     "help_cmd_reactionrole_create": "Erstellt eine Reaktionsrollen-Nachricht",
@@ -833,6 +876,7 @@ MESSAGES: dict[str, str] = {
     "alert_message_modal_title":   "Eigene Nachricht bearbeiten",
     "alert_message_modal_label":   "Nachricht (leer lassen zum Löschen)",
     "alert_edit_success":          "{nexus_checkmark} Einstellungen für `{login}` wurden aktualisiert.",
+    "alert_inactive_premium": "⏸️ Inaktiv (Premium-Limit)",
 
     # ─── Premium (/premium) ───────────────────────────────────────────
     "help_cmd_premium":            "Zeigt den Premium-Status deines Servers",
