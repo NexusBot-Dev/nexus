@@ -1,4 +1,4 @@
-from typing import Callable, Awaitable, Optional
+from typing import Callable, Awaitable
 
 ModuleHandler = Callable[[int, dict], Awaitable[dict]]
 

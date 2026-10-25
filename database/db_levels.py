@@ -7,6 +7,7 @@ from cachetools import TTLCache
 IMPORT_CHUNK = 500
 IMPORT_MAX_XP = 2_000_000_000
 _levels_settings_cache: TTLCache[int, dict] = TTLCache(maxsize=2000, ttl=900)
+_excluded_cache: TTLCache[int, frozenset[int]] = TTLCache(maxsize=2000, ttl=900)
 
 UPDATABLE_LEVELS_COLUMNS = frozenset({
     "xp_min", "xp_max", "currency_name", "points_min", "points_max",
@@ -240,6 +241,39 @@ async def update_levels_settings(guild_id: int, **fields) -> dict:
     _levels_settings_cache.pop(guild_id, None)
 
     return await get_levels_settings(guild_id)
+
+async def get_excluded_channels(guild_id: int) -> frozenset[int]:
+    """Channels/Kategorien ohne XP. Gecacht (hot path: wird bei jeder Nachricht gefragt)."""
+    cached = _excluded_cache.get(guild_id)
+    if cached is not None:
+        return cached
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT channel_id FROM levels_excluded_channels WHERE guild_id = %s", (guild_id,),
+            )
+            rows = await cur.fetchall()
+    result = frozenset(int(r[0]) for r in rows)
+    _excluded_cache[guild_id] = result
+    return result
+
+async def set_excluded_channels(guild_id: int, channel_ids: list[int]) -> None:
+    """Ersetzt die komplette Liste in einer Transaktion."""
+    async with db.pool.acquire() as conn:
+        await conn.begin()
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute("DELETE FROM levels_excluded_channels WHERE guild_id = %s", (guild_id,))
+                if channel_ids:
+                    await cur.executemany(
+                        "INSERT INTO levels_excluded_channels (guild_id, channel_id) VALUES (%s, %s)",
+                        [(guild_id, cid) for cid in channel_ids],
+                    )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+    _excluded_cache.pop(guild_id, None)
 
 async def import_xp(guild_id: int, entries: list[tuple[int, int]]) -> int | None:
     """Addiert importierte XP zu den bestehenden (einmalig pro Guild), alles in einer Transaktion.

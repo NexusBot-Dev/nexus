@@ -77,6 +77,7 @@ COMMANDS: dict[str, str] = {
     "cmd_remove_amount_desc":   "The amount of XP to remove",
     "cmd_level_roles_desc":     "Manage level roles",
     "cmd_levelup_channel_desc": "Set the channel for level-up messages",
+    "cmd_xp_channels_desc":     "Choose channels that earn no XP",
 
     # ─── MEE6 Importer Commands ─────────────────────────────────────────
     "cmd_import_mee6_desc": "Import XP from your public MEE6 leaderboard",
@@ -95,7 +96,6 @@ COMMANDS: dict[str, str] = {
     "cmd_alert_role_role_desc": "Set a role — leave empty to remove it",
     "cmd_alert_role_platform_desc": "Premium only: Set for a specific platform instead of all",
     "cmd_alert_platform_desc":      "Select the platform (e.g. Twitch, YouTube)",
-    "cmd_alert_role_platform_desc": "Premium only: Set for a specific platform instead of all",
     "cmd_alert_channel_desc":            "Which channel should the alerts be posted in?",
     "cmd_alert_edit_desc": "Changes the channel or message of a monitored channel",
 

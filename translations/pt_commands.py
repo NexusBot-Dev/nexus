@@ -77,6 +77,7 @@ COMMANDS: dict[str, str] = {
     "cmd_remove_amount_desc":   "A quantidade de EXP a remover",
     "cmd_level_roles_desc":     "Gerenciar cargos por nível",
     "cmd_levelup_channel_desc": "Define o canal para as mensagens de subida de nível",
+    "cmd_xp_channels_desc": "Escolher canais em que não se ganha XP",
 
     # ─── MEE6 Importer Commands ─────────────────────────────────────────
     "cmd_import_mee6_desc": "Importe o XP do placar de líderes público do MEE6",

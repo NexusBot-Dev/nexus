@@ -195,6 +195,10 @@ MESSAGES: dict[str, str] = {
     "levelup_desc_default":         "No channel set: Level-up messages appear where the user wrote and disappear after 30 seconds.",
     "levelup_select_placeholder":   "📋 Select channel...",
     "levelup_btn_reset":            "Reset to default",
+    "xpx_title": "🚫 Channels without XP",
+    "xpx_desc_set": "No XP is earned in these channels. A category covers all channels and threads inside it:\n{channels}",
+    "xpx_desc_none": "XP is earned everywhere. Select channels or categories below to exclude them.",
+    "xpx_select_placeholder": "📋 Select channels or categories...",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 Welcome!",
@@ -295,7 +299,6 @@ MESSAGES: dict[str, str] = {
         "💎 **Nexus Premium Feature**\n"
         "Using custom server emojis is a premium feature.\n"
         "I have reset your selection – please use a standard emoji or choose a different role.",
-    "rr_modal_group_title":       "Create Group",
     "rr_modal_group_label":       "Group Name",
     "rr_modal_group_placeholder": "e.g., Colors, Teams, Regions...",
     "rr_select_group":            "Select a group...",
@@ -711,6 +714,7 @@ MESSAGES: dict[str, str] = {
     "help_cmd_level_roles": "Manages level roles",
     "help_cmd_goodbye": "Enables goodbye messages and sets a channel",
     "help_cmd_diagnose": "Checks permissions and settings",
+    "help_cmd_xp_channels": "Exclude channels from earning XP",
 
     # ─── React Commands ───────────────────────────────────────────────
     "help_cmd_reactionrole_create": "Creates a reaction role message",
@@ -891,13 +895,13 @@ MESSAGES: dict[str, str] = {
     "premium_status_unlimited":    "{nexus_checkmark} Premium active — unlimited.",
     "premium_status_expired":      "❌ Premium expired on {date}.",
     "premium_perks_title":         "What Premium gives you",
-    "premium_perk_embeds":         "📋 Saved embeds",
-    "premium_perk_tickets":        "🎫 Ticket categories",
-    "premium_perk_welcome":        "👋 Welcome messages",
-    "premium_perk_boosts":         "🚀 Boost messages",
-    "premium_perk_alerts_twitch":  "📡 Twitch alerts",
-    "premium_perk_alerts_youtube": "📡 YouTube alerts",
-    "premium_perk_alerts_kick":    "📡 Kick alerts",
+    "premium_perk_embeds":         "{emoji} Saved embeds",
+    "premium_perk_tickets":        "{emoji} Ticket categories",
+    "premium_perk_welcome":        "{emoji} Welcome messages",
+    "premium_perk_boosts":         "{emoji} Boost messages",
+    "premium_perk_alerts_twitch":  "{emoji} Twitch alerts",
+    "premium_perk_alerts_youtube": "{emoji} YouTube alerts",
+    "premium_perk_alerts_kick":    "{emoji} Kick alerts",
     "premium_perk_schedule":       "⏰ Scheduled embed posting",
     "premium_perk_unique":         "🎭 Unique mode for reaction roles",
     "premium_perk_alert_roles":    "🔔 Platform-specific ping roles for stream alerts",

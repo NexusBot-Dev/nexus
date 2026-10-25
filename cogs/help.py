@@ -49,6 +49,7 @@ MODULE_INFO = {
             "wipe_xp":           "help_cmd_wipe_xp",
             "level_roles":       "help_cmd_level_roles",
             "levelup_channel":   "help_cmd_levelup_channel",
+            "xp_channels":       "help_cmd_xp_channels",
             "import_mee6":       "help_cmd_import_mee6",
         }
     },

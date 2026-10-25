@@ -76,7 +76,8 @@ COMMANDS: dict[str, str] = {
     "cmd_amount_desc":          "Die Menge an EXP, die hinzugefügt werden soll",
     "cmd_remove_amount_desc":   "Die Menge an EXP, die entfernt werden soll",
     "cmd_level_roles_desc":     "Level-Rollen verwalten",
-    "cmd_levelup_channel_desc":  "Channel für Level-Up-Nachrichten festlegen",
+    "cmd_levelup_channel_desc": "Channel für Level-Up-Nachrichten festlegen",
+    "cmd_xp_channels_desc":     "Channels festlegen, in denen es keine XP gibt",
 
     # ─── MEE6 Importer Commands ─────────────────────────────────────────
     "cmd_import_mee6_desc": "XP aus deinem öffentlichen MEE6-Leaderboard importieren",
@@ -95,7 +96,6 @@ COMMANDS: dict[str, str] = {
     "cmd_alert_role_role_desc": "Rolle festlegen — leer lassen, um sie zu entfernen",
     "cmd_alert_role_platform_desc": "Nur mit Premium: für eine bestimmte Plattform statt für alle setzen",
     "cmd_alert_platform_desc":      "Plattform auswählen (z.B. Twitch, YouTube)",
-    "cmd_alert_role_platform_desc": "Nur mit Premium: für eine bestimmte Plattform statt für alle setzen",
     "cmd_alert_channel_desc":            "In welchem Kanal sollen die Alerts gepostet werden?",
     "cmd_alert_edit_desc": "Ändert Channel oder Nachricht eines überwachten Kanals",
 

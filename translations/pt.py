@@ -165,7 +165,7 @@ MESSAGES: dict[str, str] = {
     "add_xp_success":       "{user} recebeu **{amount} EXP**. Total atual: {xp} EXP (Nível {level}).",
     "remove_xp_success":    "{user} perdeu **{amount} EXP**. Total atual: {xp} EXP (Nível {level}).",
     "wipe_xp_success":      "EXP e nível de {user} foram redefinidos.",
-    "remove_level_role_success":"A recompensa de cargo para o nível **{level}** foi removida.",
+    "remove_level_role_success":"{check} A recompensa de cargo para o nível **{level}** foi removida.",
     "log_set_level":        "{mod} definiu o nível de {target} para {level}.",
     "log_add_xp":           "{mod} adicionou {amount} EXP para {target}.",
     "log_remove_xp":        "{mod} removeu {amount} EXP de {target}.",
@@ -195,6 +195,10 @@ MESSAGES: dict[str, str] = {
     "levelup_desc_default":         "Nenhum canal definido: As subidas de nível aparecerão no canal da mensagem e desaparecerão após 30 segundos.",
     "levelup_select_placeholder":   "📋 Selecionar canal...",
     "levelup_btn_reset":            "Redefinir para o padrão",
+    "xpx_title": "🚫 Canais sem XP",
+    "xpx_desc_set": "Nestes canais não se ganha XP. Uma categoria abrange todos os canais e tópicos dentro dela:\n{channels}",
+    "xpx_desc_none": "Ganha-se XP em todos os lugares. Selecione abaixo canais ou categorias para excluí-los.",
+    "xpx_select_placeholder": "📋 Selecione canais ou categorias...",
 
     # ─── Welcome ──────────────────────────────────────────────────────
     "welcome_title":        "👋 Boas-vindas!",
@@ -295,7 +299,6 @@ MESSAGES: dict[str, str] = {
         "💎 **Recurso Nexus Premium**\n"
         "O uso de emojis personalizados do servidor é exclusivo do Premium.\n"
         "Sua seleção foi redefinida — use um emoji padrão ou escolha outro cargo.",
-    "rr_modal_group_title":       "Criar grupo",
     "rr_modal_group_label":       "Nome do grupo",
     "rr_modal_group_placeholder": "ex: Cores, Times, Regiões...",
     "rr_select_group":            "Selecionar grupo...",
@@ -710,6 +713,7 @@ MESSAGES: dict[str, str] = {
     "help_cmd_level_roles": "Gerencia os cargos por nível",
     "help_cmd_goodbye": "Ativa as mensagens de despedida e define um canal",
     "help_cmd_diagnose": "Verifica permissões e configurações",
+    "help_cmd_xp_channels": "Excluir canais do ganho de XP",
 
     # ─── React Commands ───────────────────────────────────────────────
     "help_cmd_reactionrole_create": "Cria mensagem de cargos por reação",
@@ -889,13 +893,13 @@ MESSAGES: dict[str, str] = {
     "premium_status_unlimited":    "{nexus_checkmark} Premium ativo — Ilimitado.",
     "premium_status_expired":      "❌ O Premium expirou em {date}.",
     "premium_perks_title":         "Vantagens do Nexus Premium",
-    "premium_perk_embeds":         "📋 Embeds salvos",
-    "premium_perk_tickets":        "🎫 Categorias de tickets",
-    "premium_perk_welcome":        "👋 Mensagens de boas-vindas",
-    "premium_perk_boosts":         "🚀 Mensagens de boost",
-    "premium_perk_alerts_twitch":  "📡 Alertas da Twitch",
-    "premium_perk_alerts_youtube": "📡 Alertas do YouTube",
-    "premium_perk_alerts_kick":    "📡 Alertas da Kick",
+    "premium_perk_embeds":         "{emoji} Embeds salvos",
+    "premium_perk_tickets":        "{emoji} Categorias de tickets",
+    "premium_perk_welcome":        "{emoji} Mensagens de boas-vindas",
+    "premium_perk_boosts":         "{emoji} Mensagens de boost",
+    "premium_perk_alerts_twitch":  "{emoji} Alertas da Twitch",
+    "premium_perk_alerts_youtube": "{emoji} Alertas do YouTube",
+    "premium_perk_alerts_kick":    "{emoji} Alertas da Kick",
     "premium_perk_schedule":       "⏰ Postagem agendada de embeds",
     "premium_perk_unique":         "🎭 Modo Único em Reaction Roles",
     "premium_perk_alert_roles":    "🔔 Menção de cargos por plataforma em alertas",

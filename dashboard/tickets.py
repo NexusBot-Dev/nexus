@@ -15,7 +15,6 @@ async def list_categories(guild_id: int, payload: dict) -> dict:
     guild = _guild_or_raise(guild_id)
     categories = await db_ticket_categories.get_categories(guild_id)
     premium = await is_premium(guild_id)
-    limit = await db_limits.get_limit(guild_id, "ticket_categories", premium)
 
     result = []
     for cat in categories:

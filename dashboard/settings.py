@@ -1,4 +1,5 @@
 import logging
+import re
 from zoneinfo import ZoneInfo
 from database import db_settings
 
@@ -15,6 +16,12 @@ CHANNEL_FIELDS = (
     "ticket_log_channel_id",
 )
 
+ENABLE_NEEDS_CHANNEL = (
+    ("goodbye_enabled",       "goodbye_channel_id",      "Bitte zuerst einen Goodbye-Channel wählen"),
+    ("announcements_enabled", "announcement_channel_id", "Bitte zuerst einen Announcement-Channel wählen"),
+)
+
+HEX_COLOR_RE = re.compile(r"#?([0-9a-fA-F]{6})")
 
 def _parse_channel_id(guild, value) -> int | None:
     if value in (None, ""):
@@ -26,11 +33,24 @@ def _parse_channel_id(guild, value) -> int | None:
         raise ValueError(f"Channel {channel_id} existiert nicht (mehr) auf diesem Server")
     return channel_id
 
+def _parse_color(value) -> int:
+    """'#00f5d4' / '00F5D4' -> int. Wirft ValueError bei allem anderen (z.B. '#fff', '0x123456', 'zzz')."""
+    match = HEX_COLOR_RE.fullmatch(str(value).strip())
+    if match is None:
+        raise ValueError("Ungültiges Farbformat — erwartet z.B. '#00F5D4'")
+    color = int(match.group(1), 16)
+    if color == 0:
+        raise ValueError("Schwarz (#000000) zeigt Discord als „keine Farbe“ — bitte eine andere Farbe wählen")
+    return color
 
 async def update_settings(bot, guild_id: int, fields: dict) -> dict:
     guild = bot.get_guild(guild_id)
     if guild is None:
         raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+
+    color_int = None
+    if fields.get("color"):
+        color_int = _parse_color(fields["color"])
 
     updates: dict = {}
     warnings: list[str] = []
@@ -59,16 +79,20 @@ async def update_settings(bot, guild_id: int, fields: dict) -> dict:
     if "goodbye_enabled" in fields:
         updates["goodbye_enabled"] = bool(fields["goodbye_enabled"])
 
+    if any(flag in updates or channel in updates for flag, channel, _ in ENABLE_NEEDS_CHANNEL):
+        stored = await db_settings.get_guild(guild_id) or {}
+        for flag, channel, message in ENABLE_NEEDS_CHANNEL:
+            effective = updates[channel] if channel in updates else stored.get(channel)
+            if updates.get(flag) and not effective:
+                raise ValueError(message)
+            if channel in updates and updates[channel] is None and flag not in updates:
+                updates[flag] = False
+
     if updates:
         await db_settings.update_guild(guild_id, **updates)
 
-    if fields.get("color"):
-        hex_color = str(fields["color"]).lstrip("#")
-        try:
-            color_int = int(hex_color, 16)
-        except ValueError:
-            raise ValueError("Ungültiges Farbformat — erwartet z.B. '#00F5D4'")
-
+    color_int: int | None = _parse_color(fields["color"]) if fields.get("color") else None
+    if color_int is not None:
         color_set = await db_settings.set_color(guild_id, color_int)
         if not color_set:
             warnings.append("Farbe konnte nicht gesetzt werden — Premium erforderlich.")

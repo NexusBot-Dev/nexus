@@ -3,7 +3,7 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
-from config import INVITE_URL, NEXUS_COLOR, NEXUS_FOOTER
+from config import INVITE_URL, NEXUS_FOOTER
 from database import db_giveaways, db_levels, db_settings, db_activity
 from emojis import NexusEmojis
 from systems.card_generator import generate_rank_card
@@ -93,8 +93,7 @@ class UserCommands(commands.Cog):
     @app_commands.command(name="invite", description=app_commands.locale_str("cmd_invite_desc"))
     async def invite(self, interaction: discord.Interaction):
         lang = get_user_lang(interaction)
-        settings = await db_settings.get_guild(interaction.guild_id)
-        color = (settings.get("color") if settings else None) or NEXUS_COLOR
+        color = await db_settings.get_color(interaction.guild_id)
 
         invite_view = discord.ui.View()
         invite_view.add_item(
@@ -121,8 +120,7 @@ class UserCommands(commands.Cog):
     @app_commands.command(name="delete_my_data", description=app_commands.locale_str("cmd_delete_desc"))
     async def delete_my_data(self, interaction: discord.Interaction):
         lang = get_user_lang(interaction)
-        settings = await db_settings.get_guild(interaction.guild_id)
-        color = (settings.get("color") if settings else None) or NEXUS_COLOR
+        color = await db_settings.get_color(interaction.guild_id)
 
         warn_embed = discord.Embed(
             title=lang.get("delete_data_warn_title", "⚠️ Are you absolutely sure?"),

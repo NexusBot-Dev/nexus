@@ -107,6 +107,12 @@ class Levels(commands.Cog):
                 except discord.HTTPException as e:
                     log.error("HTTP-Fehler beim Senden des Level-Up-Embeds: %s", e)
 
+    @staticmethod
+    def _is_excluded(channel, excluded: frozenset[int]) -> bool:
+        """Der Channel selbst, seine Kategorie oder (bei Threads) der Eltern-Channel."""
+        ids = {channel.id, getattr(channel, "category_id", None), getattr(channel, "parent_id", None)}
+        return bool(ids & excluded)
+
     # ─── Events ──────────────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
@@ -115,6 +121,10 @@ class Levels(commands.Cog):
             if message.author.bot or not message.guild:
                 return
             if not await db_settings.is_module_enabled(message.guild.id, "levels"):
+                return
+
+            excluded = await db_levels.get_excluded_channels(message.guild.id)
+            if excluded and self._is_excluded(message.channel, excluded):
                 return
 
             key = (message.guild.id, message.author.id)
@@ -419,6 +429,22 @@ class Levels(commands.Cog):
         )
         view.bind(interaction)
 
+    @app_commands.command(name="xp_channels", description=app_commands.locale_str("cmd_xp_channels_desc"))
+    @app_commands.default_permissions(manage_guild=True)
+    @module_required("levels")
+    async def xp_channels(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lang = await get_lang(interaction.guild_id)
+        excluded = await db_levels.get_excluded_channels(interaction.guild_id)
+        valid = sorted(cid for cid in excluded if interaction.guild.get_channel(cid))
+        if len(valid) != len(excluded):   # gelöschte Channels aufräumen
+            await db_levels.set_excluded_channels(interaction.guild_id, valid)
+        view = LevelExcludeView(lang, valid)
+        await interaction.followup.send(
+            embed=await _exclude_embed(interaction.guild, lang), view=view, ephemeral=True,
+        )
+        view.bind(interaction)
+
 # ─── Views & Modals ──────────────────────────────────────────────────────────
 
 class LevelRolesView(NexusView):
@@ -610,6 +636,51 @@ class LevelUpChannelView(NexusView):
         button.disabled = True
         await interaction.response.edit_message(
             embed=await _levelup_embed(interaction.guild_id, self.lang), view=self,
+        )
+
+async def _exclude_embed(guild: discord.Guild, lang: dict) -> discord.Embed:
+    excluded = await db_levels.get_excluded_channels(guild.id)
+    embed = discord.Embed(
+        title=lang.get("xpx_title", "🚫 Channels without XP"),
+        color=await db_settings.get_color(guild.id),
+    )
+    if excluded:
+        embed.description = lang.get(
+            "xpx_desc_set",
+            "No XP is earned in these channels. A category covers all channels and threads inside it:\n{channels}",
+        ).format(channels="\n".join(f"<#{cid}>" for cid in sorted(excluded)))
+    else:
+        embed.description = lang.get(
+            "xpx_desc_none", "XP is earned everywhere. Select channels or categories below to exclude them.",
+        )
+    embed.set_footer(text=NEXUS_FOOTER)
+    return embed
+
+
+def _channel_defaults(ids: list[int]) -> list[discord.SelectDefaultValue]:
+    return [discord.SelectDefaultValue(id=cid, type=discord.SelectDefaultValueType.channel) for cid in ids]
+
+
+class LevelExcludeView(NexusView):
+    def __init__(self, lang: dict, current_ids: list[int]):
+        super().__init__(lang, timeout=180)
+        self.select_channels.placeholder = lang.get("xpx_select_placeholder", "📋 Select channels or categories...")
+        self.select_channels.default_values = _channel_defaults(current_ids)
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text, discord.ChannelType.news,
+                       discord.ChannelType.forum, discord.ChannelType.category],
+        min_values=0,
+        max_values=25,
+        row=0,
+    )
+    async def select_channels(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ids = sorted({c.id for c in select.values})
+        await db_levels.set_excluded_channels(interaction.guild_id, ids)
+        select.default_values = _channel_defaults(ids)
+        await interaction.response.edit_message(
+            embed=await _exclude_embed(interaction.guild, self.lang), view=self,
         )
 
 async def setup(bot: commands.Bot):
