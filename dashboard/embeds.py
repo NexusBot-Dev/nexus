@@ -1,9 +1,13 @@
+import logging
+import discord
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone as tz
 from .registry import register_action, get_bot
 from database import db_embeds, db_settings, db_limits
 from systems.premium import is_premium
 from systems.embed_posts import build_embed, track_post, refresh_posts
+
+log = logging.getLogger(__name__)
 
 async def _ensure_active(guild_id: int, embed_id: int) -> None:
     premium = await is_premium(guild_id)
@@ -120,7 +124,6 @@ async def delete_embed(guild_id: int, payload: dict) -> dict:
 
 @register_action("embeds", "post-now")
 async def post_now(guild_id: int, payload: dict) -> dict:
-    import discord
 
     embed_id = payload.get("embed_id")
     if not embed_id:
@@ -146,12 +149,12 @@ async def post_now(guild_id: int, payload: dict) -> dict:
     discord_embed = build_embed(embed_data["title"], embed_data["description"], color)
 
     try:
-        message = await channel.send(embed=discord_embed)
-    except discord.HTTPException as e:
-        raise ValueError(f"Discord hat das Posten abgelehnt: {e}")
-
-    await track_post(int(embed_id), message)
-    return {"id": embed_id, "posted_in": str(channel.id)}
+        await channel.send(embed=discord_embed)
+    except discord.Forbidden:
+        raise ValueError("Fehlende Berechtigung zum Posten in diesem Channel")
+    except discord.HTTPException:
+        log.exception("Dashboard: Embed %s auf %s konnte nicht gepostet werden", embed_id, guild_id)
+        raise ValueError("Discord hat das Posten abgelehnt — bitte später erneut versuchen")
 
 @register_action("embeds", "schedule")
 async def schedule_embed(guild_id: int, payload: dict) -> dict:
