@@ -1,10 +1,11 @@
 import asyncio
-from .registry import register_action, parse_id
+from .registry import register_action, parse_id, DashCtx
 from database import db_boosts, db_limits
 from systems.premium import is_premium
 
 @register_action("boosts", "list")
-async def list_messages(guild_id: int, payload: dict) -> dict:
+async def list_messages(ctx: DashCtx) -> dict:
+    guild_id = ctx.guild_id
     messages, limit_free, limit_premium = await asyncio.gather(
         db_boosts.get_boost_messages(guild_id),
         db_limits.get_limit(guild_id, "boost_messages", False),
@@ -17,7 +18,8 @@ async def list_messages(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("boosts", "add-message")
-async def add_message(guild_id: int, payload: dict) -> dict:
+async def add_message(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     text = (payload.get("message") or "").strip()
     if not text:
         raise ValueError("Nachricht darf nicht leer sein")
@@ -33,7 +35,8 @@ async def add_message(guild_id: int, payload: dict) -> dict:
     return {"id": message_id, "message": text}
 
 @register_action("boosts", "edit-message")
-async def edit_message(guild_id: int, payload: dict) -> dict:
+async def edit_message(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     message_id = parse_id(payload.get("message_id"), "message_id und message werden benötigt")
     text = (payload.get("message") or "").strip()
     if not text:
@@ -47,7 +50,8 @@ async def edit_message(guild_id: int, payload: dict) -> dict:
     return {"id": message_id, "message": text}
 
 @register_action("boosts", "delete-message")
-async def delete_message(guild_id: int, payload: dict) -> dict:
+async def delete_message(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     message_id = parse_id(payload.get("message_id"), "message_id wird benötigt")
 
     deleted = await db_boosts.delete_boost_message(message_id, guild_id)

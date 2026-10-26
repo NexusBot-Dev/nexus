@@ -1,21 +1,21 @@
 import asyncio
 import discord
-from .registry import register_action, get_guild_or_raise, parse_id
+from .registry import register_action, parse_id, DashCtx
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
 from cogs.reaction_roles import _update_dropdown_message
 from cogs.utils import get_lang
 from systems.hierarchy import can_grant_role, can_set_up_self_roles, format_issue
-from .discord_auth_check import get_acting_member
 from .health import plain_mentions
 
 @register_action("reaction_roles", "list-groups")
-async def list_groups(guild_id: int, payload: dict) -> dict:
-    groups = await db_reaction_roles.get_groups(guild_id)
+async def list_groups(ctx: DashCtx) -> dict:
+    groups = await db_reaction_roles.get_groups(ctx.guild_id)
     return {"groups": [{"id": g["id"], "name": g["name"]} for g in groups]}
 
 @register_action("reaction_roles", "create-group")
-async def create_group(guild_id: int, payload: dict) -> dict:
+async def create_group(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     name = (payload.get("name") or "").strip()
     if not name or len(name) > 100:
         raise ValueError("Gültiger Gruppenname wird benötigt")
@@ -23,8 +23,8 @@ async def create_group(guild_id: int, payload: dict) -> dict:
     return {"id": group_id, "name": name}
 
 @register_action("reaction_roles", "list-messages")
-async def list_messages(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_messages(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     # Alle Einträge der Guild in einer Abfrage statt einer pro Nachricht
     premium, msg_refs, all_entries = await asyncio.gather(
         is_premium(guild_id),
@@ -62,7 +62,8 @@ async def list_messages(guild_id: int, payload: dict) -> dict:
     return {"messages": messages, "premium_active": premium}
 
 @register_action("reaction_roles", "create-message")
-async def create_message(guild_id: int, payload: dict) -> dict:
+async def create_message(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     channel_id = parse_id(payload.get("channel_id"), "Gültiger Channel wird benötigt")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
@@ -77,10 +78,8 @@ async def create_message(guild_id: int, payload: dict) -> dict:
     if display_mode == "dropdown" and not premium:
         raise ValueError("Dropdown-Modus ist ein Premium-Feature")
 
-    guild = get_guild_or_raise(guild_id)
     # Vor dem Posten prüfen — sonst bliebe eine Nachricht zurück, an die der User keine Rolle hängen darf
-    actor = await get_acting_member(guild, payload)
-    if not (check := can_set_up_self_roles(guild, actor)):
+    if not (check := can_set_up_self_roles(guild, ctx.actor)):
         raise ValueError(format_issue(check, await get_lang(guild_id)))
 
     channel = guild.get_channel(channel_id)
@@ -103,7 +102,8 @@ async def create_message(guild_id: int, payload: dict) -> dict:
     return {"message_id": str(msg.id), "channel_id": str(channel.id), "channel_name": channel.name, "display_mode": display_mode}
 
 @register_action("reaction_roles", "add-entry")
-async def add_entry(guild_id: int, payload: dict) -> dict:
+async def add_entry(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     channel_id = payload.get("channel_id")
     message_id = payload.get("message_id")
     role_id = payload.get("role_id")
@@ -120,12 +120,10 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     role_id = parse_id(role_id, "Ungültige role_id")
     group_id = parse_id(group_id, "Ungültige group_id") if group_id else None
 
-    guild = get_guild_or_raise(guild_id)
     role = guild.get_role(role_id)
     if role is None:
         raise ValueError("Rolle existiert nicht auf diesem Server")
-    actor = await get_acting_member(guild, payload)
-    if not (check := can_grant_role(guild, role, actor)):
+    if not (check := can_grant_role(guild, role, ctx.actor)):
         raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
 
     channel = guild.get_channel(channel_id)
@@ -174,7 +172,8 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     return {"entry_id": new_id, "role_id": str(role_id), "role_name": role.name, "emoji": emoji, "mode": mode}
 
 @register_action("reaction_roles", "delete-entry")
-async def delete_entry(guild_id: int, payload: dict) -> dict:
+async def delete_entry(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     entry_id = payload.get("entry_id")
     channel_id = payload.get("channel_id")
     message_id = payload.get("message_id")
@@ -190,7 +189,6 @@ async def delete_entry(guild_id: int, payload: dict) -> dict:
     if not deleted:
         raise ValueError("Eintrag wurde nicht gefunden")
 
-    guild = get_guild_or_raise(guild_id)
     channel = guild.get_channel(channel_id)
     if channel is not None:
         try:
@@ -208,15 +206,14 @@ async def delete_entry(guild_id: int, payload: dict) -> dict:
     return {"entry_id": entry_id}
 
 @register_action("reaction_roles", "delete-message")
-async def delete_message_entries(guild_id: int, payload: dict) -> dict:
+async def delete_message_entries(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     channel_id = payload.get("channel_id")
     message_id = payload.get("message_id")
     if not channel_id or not message_id:
         raise ValueError("channel_id und message_id werden benötigt")
     channel_id = parse_id(channel_id, "Ungültige channel_id")
     message_id = parse_id(message_id, "Ungültige message_id")
-
-    guild = get_guild_or_raise(guild_id)
 
     msg_ref = await db_reaction_roles.get_message_ref(guild_id, message_id)
     if msg_ref is None:

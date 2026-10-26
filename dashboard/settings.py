@@ -2,6 +2,7 @@ import logging
 import re
 from zoneinfo import ZoneInfo
 from database import db_settings
+from .registry import get_guild_or_raise
 
 log = logging.getLogger(__name__)
 
@@ -45,10 +46,8 @@ def _parse_color(value) -> int:
         raise ValueError("Schwarz (#000000) zeigt Discord als „keine Farbe“ — bitte eine andere Farbe wählen")
     return color
 
-async def update_settings(bot, guild_id: int, fields: dict) -> dict:
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+async def update_settings(guild_id: int, fields: dict) -> dict:
+    guild = get_guild_or_raise(guild_id)
 
     updates: dict = {}
     warnings: list[str] = []

@@ -1,7 +1,7 @@
 import asyncio
 import discord
 import logging
-from .registry import register_action, get_guild_or_raise, parse_id
+from .registry import register_action, parse_id, DashCtx
 from database import db_settings, db_ticket_categories, db_tickets, db_limits
 from systems.premium import is_premium
 from cogs.tickets import _build_panel_embed, _build_panel_view
@@ -11,8 +11,8 @@ from cogs.utils import get_lang
 log = logging.getLogger(__name__)
 
 @register_action("tickets", "list-categories")
-async def list_categories(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_categories(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     categories, roles_by_category, premium, limit_free, limit_premium = await asyncio.gather(
         db_ticket_categories.get_categories(guild_id),
         db_ticket_categories.get_category_roles_for_guild(guild_id),
@@ -38,7 +38,8 @@ async def list_categories(guild_id: int, payload: dict) -> dict:
     return {"categories": result, "limit_free": limit_free, "limit_premium": limit_premium, "premium_active": premium}
 
 @register_action("tickets", "create-category")
-async def create_category(guild_id: int, payload: dict) -> dict:
+async def create_category(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     name = (payload.get("name") or "").strip()
     role_ids = payload.get("role_ids") or []
 
@@ -47,7 +48,6 @@ async def create_category(guild_id: int, payload: dict) -> dict:
     if not isinstance(role_ids, list):
         raise ValueError("role_ids muss eine Liste sein")
 
-    guild = get_guild_or_raise(guild_id)
     current_count = await db_ticket_categories.get_category_count(guild_id)
     premium = await is_premium(guild_id)
     limit = await db_limits.get_limit(guild_id, "ticket_categories", premium)
@@ -93,13 +93,13 @@ async def create_category(guild_id: int, payload: dict) -> dict:
     return {"id": category_id, "name": name}
 
 @register_action("tickets", "rename-category")
-async def rename_category(guild_id: int, payload: dict) -> dict:
+async def rename_category(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     category_id = parse_id(payload.get("category_id"), "category_id und ein gültiger Name werden benötigt")
     new_name = (payload.get("name") or "").strip()
     if not new_name or len(new_name) > 100:
         raise ValueError("category_id und ein gültiger Name werden benötigt")
 
-    guild = get_guild_or_raise(guild_id)
     category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
         raise ValueError("Kategorie wurde nicht gefunden")
@@ -118,13 +118,13 @@ async def rename_category(guild_id: int, payload: dict) -> dict:
     return {"id": category_id, "name": new_name}
 
 @register_action("tickets", "set-category-roles")
-async def set_category_roles(guild_id: int, payload: dict) -> dict:
+async def set_category_roles(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     category_id = parse_id(payload.get("category_id"), "category_id wird benötigt")
     role_ids = payload.get("role_ids") or []
     if not isinstance(role_ids, list):
         raise ValueError("role_ids muss eine Liste sein")
 
-    guild = get_guild_or_raise(guild_id)
     category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
         raise ValueError("Kategorie wurde nicht gefunden")
@@ -143,10 +143,10 @@ async def set_category_roles(guild_id: int, payload: dict) -> dict:
     return {"id": category_id, "roles": role_names}
 
 @register_action("tickets", "delete-category")
-async def delete_category(guild_id: int, payload: dict) -> dict:
+async def delete_category(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     category_id = parse_id(payload.get("category_id"), "category_id wird benötigt")
 
-    guild = get_guild_or_raise(guild_id)
     category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
         raise ValueError("Kategorie wurde nicht gefunden")
@@ -169,8 +169,8 @@ async def delete_category(guild_id: int, payload: dict) -> dict:
     return {"id": category_id}
 
 @register_action("tickets", "list-open")
-async def list_open(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_open(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     tickets, category_rows = await asyncio.gather(
         db_tickets.get_open_tickets_for_guild(guild_id),
         db_ticket_categories.get_categories(guild_id),
@@ -191,7 +191,8 @@ async def list_open(guild_id: int, payload: dict) -> dict:
     return {"tickets": result}
 
 @register_action("tickets", "post-panel")
-async def post_panel(guild_id: int, payload: dict) -> dict:
+async def post_panel(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     channel_id = payload.get("channel_id")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
@@ -201,7 +202,6 @@ async def post_panel(guild_id: int, payload: dict) -> dict:
     if not title or not description:
         raise ValueError("Titel und Beschreibung werden benötigt")
 
-    guild = get_guild_or_raise(guild_id)
     channel = guild.get_channel(int(channel_id))
     if channel is None:
         raise ValueError("Channel existiert nicht (mehr)")

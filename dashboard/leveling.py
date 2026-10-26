@@ -1,10 +1,9 @@
 import asyncio
 import discord
-from .registry import register_action, get_guild_or_raise
+from .registry import register_action, DashCtx
 from database import db_levels
 from systems.hierarchy import can_use_channel, can_grant_role, format_issue
 from cogs.utils import get_lang
-from .discord_auth_check import get_acting_member
 from .health import plain_mentions
 
 MAX_EXCLUDED = 25
@@ -19,8 +18,8 @@ def _exclude_target(ch) -> dict:
     }
 
 @register_action("leveling", "get-excluded")
-async def get_excluded(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def get_excluded(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
 
     excluded = await db_levels.get_excluded_channels(guild_id)
     targets = [_exclude_target(c) for c in (*guild.categories, *guild.text_channels, *guild.forums)]
@@ -33,7 +32,8 @@ async def get_excluded(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("leveling", "set-excluded")
-async def set_excluded(guild_id: int, payload: dict) -> dict:
+async def set_excluded(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     raw = payload.get("channel_ids")
     if not isinstance(raw, list) or not all(str(i).isdigit() for i in raw):
         raise ValueError("channel_ids muss eine Liste gültiger IDs sein")
@@ -42,7 +42,6 @@ async def set_excluded(guild_id: int, payload: dict) -> dict:
     if len(ids) > MAX_EXCLUDED:
         raise ValueError(f"Maximal {MAX_EXCLUDED} Einträge möglich")
 
-    guild = get_guild_or_raise(guild_id)
     for cid in ids:
         if not isinstance(guild.get_channel(cid), _EXCLUDABLE):
             raise ValueError("Channel existiert nicht (mehr) oder kann nicht ausgeschlossen werden")
@@ -51,8 +50,8 @@ async def set_excluded(guild_id: int, payload: dict) -> dict:
     return {"excluded_ids": [str(cid) for cid in ids]}
 
 @register_action("leveling", "list-roles")
-async def list_roles(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_roles(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
 
     rows = await db_levels.get_all_level_roles(guild_id)
     roles = []
@@ -67,7 +66,8 @@ async def list_roles(guild_id: int, payload: dict) -> dict:
     return {"roles": roles}
 
 @register_action("leveling", "set-role")
-async def set_role(guild_id: int, payload: dict) -> dict:
+async def set_role(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     level = payload.get("level")
     role_id = payload.get("role_id")
 
@@ -76,21 +76,19 @@ async def set_role(guild_id: int, payload: dict) -> dict:
     if not role_id or not str(role_id).isdigit():
         raise ValueError("Gültige role_id wird benötigt")
 
-    guild = get_guild_or_raise(guild_id)
-
     role = guild.get_role(int(role_id))
     if role is None:
         raise ValueError("Rolle existiert nicht auf diesem Server")
 
-    actor = await get_acting_member(guild, payload)
-    if not (check := can_grant_role(guild, role, actor)):
+    if not (check := can_grant_role(guild, role, ctx.actor)):
         raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
 
     await db_levels.set_level_role(guild_id, level, int(role_id))
     return {"level": level, "role_id": role_id, "role_name": role.name, "role_color": f"#{role.color.value:06x}" if role.color.value else "#94a3b8"}
 
 @register_action("leveling", "remove-role")
-async def remove_role(guild_id: int, payload: dict) -> dict:
+async def remove_role(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     level = payload.get("level")
     if not isinstance(level, int):
         raise ValueError("Ungültiges Level")
@@ -98,8 +96,8 @@ async def remove_role(guild_id: int, payload: dict) -> dict:
     return {"level": level}
 
 @register_action("leveling", "leaderboard")
-async def leaderboard(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def leaderboard(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
 
     rows = await db_levels.get_leaderboard(guild_id, limit=10)
 
@@ -126,8 +124,8 @@ async def leaderboard(guild_id: int, payload: dict) -> dict:
     return {"entries": entries}
 
 @register_action("leveling", "get-xp-settings")
-async def get_xp_settings(guild_id: int, payload: dict) -> dict:
-    settings = await db_levels.get_levels_settings(guild_id)
+async def get_xp_settings(ctx: DashCtx) -> dict:
+    settings = await db_levels.get_levels_settings(ctx.guild_id)
     return {
         "xp_min": settings["xp_min"],
         "xp_max": settings["xp_max"],
@@ -140,8 +138,9 @@ async def get_xp_settings(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("leveling", "set-levelup-channel")
-async def set_levelup_channel(guild_id: int, payload: dict) -> dict:
+async def set_levelup_channel(ctx: DashCtx) -> dict:
     """Setzt den Level-Up-Channel. Leer/None = Fallback (Nachricht im aktuellen Channel, nach 30s gelöscht)."""
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     channel_id = payload.get("channel_id")
 
     if channel_id in (None, ""):
@@ -150,8 +149,6 @@ async def set_levelup_channel(guild_id: int, payload: dict) -> dict:
 
     if not str(channel_id).isdigit():
         raise ValueError("Gültiger Channel wird benötigt")
-
-    guild = get_guild_or_raise(guild_id)
 
     channel = guild.get_channel(int(channel_id))
     if not isinstance(channel, discord.TextChannel):
@@ -163,7 +160,8 @@ async def set_levelup_channel(guild_id: int, payload: dict) -> dict:
     return {"levelup_channel_id": str(channel.id)}
 
 @register_action("leveling", "set-xp-settings")
-async def set_xp_settings(guild_id: int, payload: dict) -> dict:
+async def set_xp_settings(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     xp_min = payload.get("xp_min")
     xp_max = payload.get("xp_max")
 

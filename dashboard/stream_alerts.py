@@ -1,6 +1,6 @@
 import asyncio
 import aiomysql
-from .registry import register_action, get_guild_or_raise, parse_id
+from .registry import register_action, parse_id, DashCtx
 from database import db_stream_alerts, db_limits
 from systems.premium import is_premium
 from systems.platform_registry import PLATFORM_HANDLERS
@@ -9,8 +9,8 @@ PLATFORMS = ("twitch", "youtube", "kick")
 PING_ROLE_SCOPES = ("all", *PLATFORMS)
 
 @register_action("stream_alerts", "list")
-async def list_alerts(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_alerts(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     # Alles parallel: vorher liefen hier bis zu 12 Abfragen nacheinander
     subs, premium, stored_ping_roles, *limit_values = await asyncio.gather(
         db_stream_alerts.get_subscriptions_for_guild(guild_id),
@@ -58,7 +58,8 @@ async def list_alerts(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("stream_alerts", "add")
-async def add_alert(guild_id: int, payload: dict) -> dict:
+async def add_alert(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     platform = payload.get("platform")
     login_raw = (payload.get("username") or "").strip()
     channel_id = payload.get("channel_id")
@@ -72,7 +73,6 @@ async def add_alert(guild_id: int, payload: dict) -> dict:
     if message and len(message) > 200:
         raise ValueError("Nachricht zu lang (max. 200 Zeichen)")
 
-    guild = get_guild_or_raise(guild_id)
     if guild.get_channel(int(channel_id)) is None:
         raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
 
@@ -125,7 +125,8 @@ async def add_alert(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("stream_alerts", "edit")
-async def edit_alert(guild_id: int, payload: dict) -> dict:
+async def edit_alert(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     monitored_channel_id = payload.get("monitored_channel_id")
     channel_id = payload.get("channel_id")
     message = payload.get("message", ...)
@@ -135,7 +136,6 @@ async def edit_alert(guild_id: int, payload: dict) -> dict:
 
     channel_id_int = None
     if channel_id and str(channel_id).isdigit():
-        guild = get_guild_or_raise(guild_id)
         if guild.get_channel(int(channel_id)) is None:
             raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
         channel_id_int = int(channel_id)
@@ -152,7 +152,8 @@ async def edit_alert(guild_id: int, payload: dict) -> dict:
     return {"monitored_channel_id": monitored_channel_id}
 
 @register_action("stream_alerts", "remove")
-async def remove_alert(guild_id: int, payload: dict) -> dict:
+async def remove_alert(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     monitored_channel_id = payload.get("monitored_channel_id")
     if not monitored_channel_id:
         raise ValueError("monitored_channel_id wird benötigt")
@@ -178,7 +179,8 @@ async def remove_alert(guild_id: int, payload: dict) -> dict:
     return {"monitored_channel_id": monitored_channel_id}
 
 @register_action("stream_alerts", "set-ping-role")
-async def set_ping_role(guild_id: int, payload: dict) -> dict:
+async def set_ping_role(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     platform = payload.get("platform", "all")
     role_id = payload.get("role_id")
 
@@ -192,7 +194,6 @@ async def set_ping_role(guild_id: int, payload: dict) -> dict:
     if role_id:
         if not str(role_id).isdigit():
             raise ValueError("Ungültige role_id")
-        guild = get_guild_or_raise(guild_id)
         role = guild.get_role(int(role_id))
         if role is None:
             raise ValueError("Rolle existiert nicht auf diesem Server")
@@ -203,8 +204,8 @@ async def set_ping_role(guild_id: int, payload: dict) -> dict:
     return {"platform": platform, "role_id": role_id}
 
 @register_action("stream_alerts", "list-links")
-async def list_links(guild_id: int, payload: dict) -> dict:
-    rows = await db_stream_alerts.get_links_for_guild(guild_id)
+async def list_links(ctx: DashCtx) -> dict:
+    rows = await db_stream_alerts.get_links_for_guild(ctx.guild_id)
     return {
         "links": [
             {
@@ -217,7 +218,8 @@ async def list_links(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("stream_alerts", "create-link")
-async def create_link(guild_id: int, payload: dict) -> dict:
+async def create_link(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     sub_a_id = payload.get("subscription_a_id")
     sub_b_id = payload.get("subscription_b_id")
 
@@ -241,7 +243,8 @@ async def create_link(guild_id: int, payload: dict) -> dict:
     return {"id": link_id}
 
 @register_action("stream_alerts", "delete-link")
-async def delete_link(guild_id: int, payload: dict) -> dict:
+async def delete_link(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     link_id = payload.get("link_id")
     if not link_id:
         raise ValueError("link_id wird benötigt")

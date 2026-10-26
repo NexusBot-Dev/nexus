@@ -113,14 +113,13 @@ class WebhookServer(commands.Cog):
         if handler is None:
             return web.json_response({"ok": False, "error": "unknown_action"}, status=404)
 
-        try:
-            body = request.get("_cached_json") or await request.json()
-            guild_id = int(body["guild_id"])
-        except (ValueError, KeyError, TypeError):
-            return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
+        ctx = request.get("dash_ctx")
+        if ctx is None:  # kann nur passieren, wenn die Auth-Middleware umgangen wurde
+            log.error("Dashboard-Aktion ohne Auth-Kontext: %s/%s", module, action)
+            return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
 
         try:
-            result = await handler(guild_id, body)
+            result = await handler(ctx)
             return web.json_response({"ok": True, "data": result})
         except ValueError as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
@@ -230,22 +229,22 @@ class WebhookServer(commands.Cog):
         return hmac.compare_digest(computed.encode(), signature.encode())
 
     async def handle_settings_update(self, request: web.Request) -> web.Response:
-        try:
-            body = request.get("_cached_json") or await request.json()
-            guild_id = int(body["guild_id"])
-            fields = body.get("fields", {})
-            if not isinstance(fields, dict):
-                raise ValueError
-        except (ValueError, KeyError, TypeError):
+        ctx = request.get("dash_ctx")
+        if ctx is None:  # kann nur passieren, wenn die Auth-Middleware umgangen wurde
+            log.error("Settings-Update ohne Auth-Kontext")
+            return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+
+        fields = ctx.payload.get("fields", {})
+        if not isinstance(fields, dict):
             return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
 
         try:
-            result = await dashboard_settings.update_settings(self.bot, guild_id, fields)
+            result = await dashboard_settings.update_settings(ctx.guild_id, fields)
             return web.json_response({"ok": True, "data": result})
         except ValueError as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
         except Exception:
-            log.exception("Settings-Update fehlgeschlagen für Guild %s", guild_id)
+            log.exception("Settings-Update fehlgeschlagen für Guild %s", ctx.guild_id)
             return web.json_response({"ok": False, "error": "internal_error"}, status=500)
 
     async def handle_dashboard_health(self, request: web.Request) -> web.Response:

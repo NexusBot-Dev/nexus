@@ -5,17 +5,11 @@ from zoneinfo import ZoneInfo
 from cogs.giveaways import MAX_WINNERS, post_giveaway
 from cogs.utils import get_lang
 from database import db_giveaways, db_settings
-from .registry import register_action, get_bot, get_guild_or_raise
+from .registry import register_action, get_bot, parse_id, DashCtx
 
 MAX_PRIZE_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 2000
 HISTORY_LIMIT = 20
-
-def _to_int(value, error: str) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise ValueError(error) from None
 
 def _iso_utc(dt: datetime) -> str:
     """Naive UTC-Datetime aus der DB -> ISO-String mit 'Z'."""
@@ -36,8 +30,8 @@ def _serialize(guild: discord.Guild, g: dict) -> dict:
     }
 
 @register_action("giveaways", "list")
-async def list_giveaways(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_giveaways(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     active, history = await asyncio.gather(
         db_giveaways.get_giveaways_overview(guild_id, running=True),
         db_giveaways.get_giveaways_overview(guild_id, running=False, limit=HISTORY_LIMIT),
@@ -53,9 +47,8 @@ async def list_giveaways(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("giveaways", "create")
-async def create_giveaway(guild_id: int, payload: dict) -> dict:
-    bot = get_bot()
-    guild = get_guild_or_raise(guild_id)
+async def create_giveaway(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
 
     prize = str(payload.get("prize") or "").strip()
     if not prize or len(prize) > MAX_PRIZE_LENGTH:
@@ -65,12 +58,15 @@ async def create_giveaway(guild_id: int, payload: dict) -> dict:
     if len(description) > MAX_DESCRIPTION_LENGTH:
         raise ValueError(f"Beschreibung darf max. {MAX_DESCRIPTION_LENGTH} Zeichen lang sein")
 
-    winners_count = _to_int(payload.get("winners_count"), "Ungültige Gewinneranzahl")
-    if not 1 <= winners_count <= MAX_WINNERS:
+    # Anzahl, keine ID: Zahl oder Ziffern-String, aber kein Float/bool (int(2.7) wäre still 2)
+    winners_count = payload.get("winners_count")
+    if isinstance(winners_count, str) and winners_count.isascii() and winners_count.isdigit():
+        winners_count = int(winners_count)
+    if not isinstance(winners_count, int) or isinstance(winners_count, bool) or not 1 <= winners_count <= MAX_WINNERS:
         raise ValueError(f"Gewinneranzahl muss zwischen 1 und {MAX_WINNERS} liegen")
 
     # Channel immer über die Guild auflösen -> verhindert fremde Channel-IDs
-    channel = guild.get_channel(_to_int(payload.get("channel_id"), "Ungültiger Channel"))
+    channel = guild.get_channel(parse_id(payload.get("channel_id"), "Ungültiger Channel"))
     if not isinstance(channel, discord.TextChannel):
         raise ValueError("Channel nicht gefunden oder kein Text-Channel")
     perms = channel.permissions_for(guild.me)
@@ -87,9 +83,8 @@ async def create_giveaway(guild_id: int, payload: dict) -> dict:
         raise ValueError("Die Endzeit liegt in der Vergangenheit")
     end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
 
-    # Der Dashboard-Proxy schickt die Discord-ID des eingeloggten Users als acting_user_id
-    acting_user_id = str(payload.get("acting_user_id") or "")
-    host_id = int(acting_user_id) if acting_user_id.isdigit() else bot.user.id
+    # Host ist der eingeloggte Dashboard-User (von der Auth-Middleware geprüft)
+    host_id = ctx.actor.id
     lang = await get_lang(guild_id)
 
     try:
@@ -108,8 +103,9 @@ async def create_giveaway(guild_id: int, payload: dict) -> dict:
     return {"id": giveaway_id}
 
 @register_action("giveaways", "cancel")
-async def cancel_giveaway(guild_id: int, payload: dict) -> dict:
-    giveaway_id = _to_int(payload.get("id"), "Ungültige Giveaway-ID")
+async def cancel_giveaway(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
+    giveaway_id = parse_id(payload.get("id"), "Ungültige Giveaway-ID")
 
     # Über guild_id mitprüfen, dass das Giveaway wirklich zu diesem Server gehört
     giveaway = await db_giveaways.get_giveaway_by_id(guild_id, giveaway_id)

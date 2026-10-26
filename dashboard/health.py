@@ -5,7 +5,7 @@ import discord
 from database import db_settings
 from cogs.utils import get_lang
 from translations import TRANSLATIONS
-from dashboard.registry import register_action, get_guild_or_raise
+from dashboard.registry import register_action, DashCtx
 from systems.health_checks import get_guild_issues
 
 _ROLE_MENTION = re.compile(r"<@&(\d+)>")
@@ -27,10 +27,10 @@ def plain_mentions(guild: discord.Guild, text: str) -> str:
 
 
 @register_action("guild", "health-issues")
-async def get_health_issues(guild_id: int, payload: dict) -> dict:
+async def get_health_issues(ctx: DashCtx) -> dict:
     """Dieselben strukturierten Probleme wie /diagnose — als JSON fürs
     Notifications-Dropdown im Dashboard statt als Discord-Embed."""
-    guild = get_guild_or_raise(guild_id)
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
 
     # Dashboard-Sprache hat Vorrang vor der Bot-Sprache des Servers
     lang_code = payload.get("lang")

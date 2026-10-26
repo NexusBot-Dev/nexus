@@ -1,6 +1,25 @@
+import discord
+from dataclasses import dataclass
 from typing import Callable, Awaitable
 
-ModuleHandler = Callable[[int, dict], Awaitable[dict]]
+@dataclass(frozen=True, slots=True)
+class DashCtx:
+    """Kontext eines Dashboard-Requests — von der Auth-Middleware gebaut.
+
+    guild:   die Guild, auf die der Request zielt (Bot ist garantiert drauf)
+    actor:   der im Dashboard eingeloggte User als Member dieser Guild; hat
+             Administrator oder Server verwalten (von der Middleware geprüft)
+    payload: der Request-Body; guild_id ist darin bereits als int normalisiert
+    """
+    guild: discord.Guild
+    actor: discord.Member
+    payload: dict
+
+    @property
+    def guild_id(self) -> int:
+        return self.guild.id
+
+ModuleHandler = Callable[[DashCtx], Awaitable[dict]]
 
 _MODULE_ACTIONS: dict[str, dict[str, ModuleHandler]] = {}
 _bot = None
@@ -32,12 +51,8 @@ def get_guild_or_raise(guild_id: int):
 def parse_id(value, error: str) -> int:
     """Discord-/DB-ID aus dem Payload. Wirft ValueError mit lesbarer Meldung statt
     'invalid literal for int()' bzw. einem 500er bei Listen/Objekten."""
-    if isinstance(value, bool):
-        raise ValueError(error)
-    if isinstance(value, int):
-        if value <= 0:
-            raise ValueError(error)
-        return value
     if isinstance(value, str) and value.isascii() and value.isdigit():
-        return int(value)
-    raise ValueError(error)
+        value = int(value)
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(error)
+    return value

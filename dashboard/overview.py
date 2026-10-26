@@ -1,7 +1,7 @@
 import asyncio
 from datetime import timezone
 
-from .registry import register_action, get_guild_or_raise
+from .registry import register_action, DashCtx
 from .guild_info import get_guild_info
 from .moderation import ensure_members_cached
 from database import db_tickets, db_ticket_categories, db_stream_alerts, db_levels
@@ -21,13 +21,13 @@ def _iso_utc(value) -> str | None:
 
 
 @register_action("guild", "overview")
-async def get_guild_overview(guild_id: int, payload: dict) -> dict:
+async def get_guild_overview(ctx: DashCtx) -> dict:
     """Alles für die Übersichtsseite in einem Aufruf: die normalen Guild-Infos
     (Name, Icon, Mitgliederzahl, Online-Status, ...), die Kennzahlen für die
     Kacheln, die neuesten offenen Tickets und die Top-Level."""
-    guild = get_guild_or_raise(guild_id)
+    guild, guild_id = ctx.guild, ctx.guild_id
 
-    info = await get_guild_info(guild_id, payload)  # nur Cache-Zugriffe, parallelisieren bringt nichts
+    info = await get_guild_info(ctx)  # nur Cache-Zugriffe, parallelisieren bringt nichts
 
     async with asyncio.TaskGroup() as tg:
         tickets_task = tg.create_task(db_tickets.get_open_tickets_for_guild(guild_id))

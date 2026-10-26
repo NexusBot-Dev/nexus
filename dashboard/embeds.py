@@ -3,7 +3,7 @@ import logging
 import discord
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone as tz
-from .registry import register_action, get_bot, get_guild_or_raise, parse_id
+from .registry import register_action, get_bot, parse_id, DashCtx
 from database import db_embeds, db_settings, db_limits
 from systems.premium import is_premium
 from systems.embed_posts import build_embed, track_post, refresh_posts
@@ -20,7 +20,8 @@ async def _ensure_active(guild_id: int, embed_id: int) -> None:
         )
 
 @register_action("embeds", "list")
-async def list_embeds(guild_id: int, payload: dict) -> dict:
+async def list_embeds(ctx: DashCtx) -> dict:
+    guild_id = ctx.guild_id
     embeds, premium, limit_free, limit_premium = await asyncio.gather(
         db_embeds.get_embeds(guild_id),
         is_premium(guild_id),
@@ -45,7 +46,8 @@ async def list_embeds(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("embeds", "add")
-async def add_embed(guild_id: int, payload: dict) -> dict:
+async def add_embed(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     name = (payload.get("name") or "").strip()
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
@@ -57,12 +59,9 @@ async def add_embed(guild_id: int, payload: dict) -> dict:
         raise ValueError("Titel zu lang (max. 256 Zeichen)")
     if len(description) > 4000:
         raise ValueError("Inhalt zu lang (max. 4000 Zeichen)")
-    if not channel_id or not str(channel_id).isdigit():
-        raise ValueError("Gültiger Channel wird benötigt")
+    channel_id = parse_id(channel_id, "Gültiger Channel wird benötigt")
 
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None or guild.get_channel(int(channel_id)) is None:
+    if guild.get_channel(channel_id) is None:
         raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
 
     if not await db_embeds.can_save_embed(guild_id):
@@ -73,12 +72,13 @@ async def add_embed(guild_id: int, payload: dict) -> dict:
     color = await db_settings.get_color(guild_id)
     embed_id = await db_embeds.save_embed(
         guild_id=guild_id, name=name, title=title, description=description,
-        color=color, channel_id=int(channel_id),
+        color=color, channel_id=channel_id,
     )
-    return {"id": embed_id, "name": name, "title": title, "description": description, "channel_id": channel_id}
+    return {"id": embed_id, "name": name, "title": title, "description": description, "channel_id": str(channel_id)}
 
 @register_action("embeds", "edit")
-async def edit_embed(guild_id: int, payload: dict) -> dict:
+async def edit_embed(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     embed_id = parse_id(payload.get("embed_id"), "embed_id und Inhalt werden benötigt")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
@@ -98,11 +98,10 @@ async def edit_embed(guild_id: int, payload: dict) -> dict:
     bot = get_bot()
     # Wird kein Channel mitgeschickt, bleibt der gespeicherte erhalten (statt auf NULL zu fallen)
     channel_id_int = existing["channel_id"]
-    if channel_id and str(channel_id).isdigit():
-        guild = bot.get_guild(guild_id)
-        if guild is None or guild.get_channel(int(channel_id)) is None:
+    if channel_id not in (None, ""):
+        channel_id_int = parse_id(channel_id, "Ungültiger Channel")
+        if guild.get_channel(channel_id_int) is None:
             raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
-        channel_id_int = int(channel_id)
 
     updated = await db_embeds.update_embed(embed_id, guild_id, title, description, channel_id_int)
     if not updated:
@@ -118,7 +117,8 @@ async def edit_embed(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("embeds", "delete")
-async def delete_embed(guild_id: int, payload: dict) -> dict:
+async def delete_embed(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
     deleted = await db_embeds.delete_embed(embed_id, guild_id)
     if not deleted:
@@ -126,7 +126,8 @@ async def delete_embed(guild_id: int, payload: dict) -> dict:
     return {"id": embed_id}
 
 @register_action("embeds", "post-now")
-async def post_now(guild_id: int, payload: dict) -> dict:
+async def post_now(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
 
     embed_data = await db_embeds.get_embed(embed_id, guild_id)
@@ -135,8 +136,6 @@ async def post_now(guild_id: int, payload: dict) -> dict:
     await _ensure_active(guild_id, embed_id)
     if not embed_data.get("channel_id"):
         raise ValueError("Kein Ziel-Channel hinterlegt")
-
-    guild = get_guild_or_raise(guild_id)
 
     channel = guild.get_channel(embed_data["channel_id"])
     if channel is None:
@@ -158,7 +157,8 @@ async def post_now(guild_id: int, payload: dict) -> dict:
     return {"id": embed_id, "message_id": str(message.id)}
 
 @register_action("embeds", "schedule")
-async def schedule_embed(guild_id: int, payload: dict) -> dict:
+async def schedule_embed(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     if not await is_premium(guild_id):
         raise ValueError("Zeitgesteuertes Posten ist ein Premium-Feature")
 
@@ -186,7 +186,8 @@ async def schedule_embed(guild_id: int, payload: dict) -> dict:
     return {"id": embed_id, "scheduled_at": scheduled_utc.isoformat() + "Z"}  # wie in "list": naive UTC + "Z"
 
 @register_action("embeds", "unschedule")
-async def unschedule_embed(guild_id: int, payload: dict) -> dict:
+async def unschedule_embed(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
     updated = await db_embeds.set_schedule(embed_id, guild_id, None)
     if not updated:

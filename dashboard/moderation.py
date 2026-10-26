@@ -1,8 +1,7 @@
 import asyncio
 import discord
-from .registry import register_action, get_guild_or_raise
+from .registry import register_action, DashCtx
 from systems.hierarchy import can_act_on_member, Issue
-from .discord_auth_check import get_acting_member
 
 _chunk_locks: dict[int, asyncio.Lock] = {}
 
@@ -23,8 +22,8 @@ async def ensure_members_cached(guild: discord.Guild) -> None:
             pass
 
 @register_action("moderation", "list-bans")
-async def list_bans(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_bans(ctx: DashCtx) -> dict:
+    guild = ctx.guild
     bans = []
     async for entry in guild.bans(limit=200):
         bans.append({
@@ -36,8 +35,8 @@ async def list_bans(guild_id: int, payload: dict) -> dict:
     return {"bans": bans}
 
 @register_action("moderation", "list-timeouts")
-async def list_timeouts(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def list_timeouts(ctx: DashCtx) -> dict:
+    guild = ctx.guild
     await ensure_members_cached(guild)
     timeouts = []
     for member in guild.members:
@@ -51,13 +50,11 @@ async def list_timeouts(guild_id: int, payload: dict) -> dict:
     return {"timeouts": timeouts}
 
 @register_action("moderation", "unban")
-async def unban(guild_id: int, payload: dict) -> dict:
+async def unban(ctx: DashCtx) -> dict:
+    guild, actor, payload = ctx.guild, ctx.actor, ctx.payload
     user_id = payload.get("user_id")
     if not user_id or not str(user_id).isdigit():
         raise ValueError("Gültige user_id wird benötigt")
-
-    guild = get_guild_or_raise(guild_id)
-    actor = await get_acting_member(guild, payload)
 
     # Unban kennt keine Rollen-Hierarchie (der User ist nicht mehr Member) —
     # hier reicht die reine Discord-Berechtigung des Dashboard-Nutzers.
@@ -75,13 +72,11 @@ async def unban(guild_id: int, payload: dict) -> dict:
     return {"user_id": user_id}
 
 @register_action("moderation", "remove-timeout")
-async def remove_timeout(guild_id: int, payload: dict) -> dict:
+async def remove_timeout(ctx: DashCtx) -> dict:
+    guild, actor, payload = ctx.guild, ctx.actor, ctx.payload
     user_id = payload.get("user_id")
     if not user_id or not str(user_id).isdigit():
         raise ValueError("Gültige user_id wird benötigt")
-
-    guild = get_guild_or_raise(guild_id)
-    actor = await get_acting_member(guild, payload)
 
     member = guild.get_member(int(user_id))
     if member is None:

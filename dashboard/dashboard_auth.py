@@ -1,16 +1,16 @@
 import hmac
 import math
 import time
-from collections import deque
 import discord
+from collections import deque
 from aiohttp import web
-from .discord_auth_check import verify_guild_access
+from .discord_auth_check import resolve_actor
+from .registry import DashCtx
 
 RATE_LIMIT_WINDOW_SECONDS = 10
 RATE_LIMIT_MAX_REQUESTS = 60
 _PURGE_THRESHOLD = 1000
 _request_log: dict[int, deque[float]] = {}
-
 
 def _check_rate_limit(user_id: int) -> int | None:
     """None = erlaubt, sonst Sekunden bis wieder Platz im Fenster ist."""
@@ -30,7 +30,6 @@ def _check_rate_limit(user_id: int) -> int | None:
 
     log.append(now)
     return None
-
 
 @web.middleware
 async def dashboard_auth_middleware(request: web.Request, handler):
@@ -72,8 +71,9 @@ async def dashboard_auth_middleware(request: web.Request, handler):
     raw_user_id = body.get("acting_user_id")
     if not isinstance(raw_user_id, str) or not (raw_user_id.isascii() and raw_user_id.isdigit()):
         return web.json_response({"ok": False, "error": "missing_user"}, status=401)
+    user_id = int(raw_user_id)
 
-    retry_after = _check_rate_limit(int(raw_user_id))
+    retry_after = _check_rate_limit(user_id)
     if retry_after is not None:
         return web.json_response(
             {"ok": False, "error": "rate_limited", "retry_after": retry_after},
@@ -82,12 +82,13 @@ async def dashboard_auth_middleware(request: web.Request, handler):
         )
 
     try:
-        has_access = await verify_guild_access(int(raw_user_id), guild_id)
+        resolved = await resolve_actor(user_id, guild_id)
     except discord.HTTPException:
         return web.json_response({"ok": False, "error": "discord_unavailable"}, status=503)
-    if not has_access:
+    if resolved is None:
         return web.json_response({"ok": False, "error": "guild_access_denied"}, status=403)
 
+    guild, actor = resolved
     body["guild_id"] = guild_id
-    request["_cached_json"] = body
+    request["dash_ctx"] = DashCtx(guild=guild, actor=actor, payload=body)
     return await handler(request)

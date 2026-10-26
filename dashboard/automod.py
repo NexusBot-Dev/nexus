@@ -1,5 +1,5 @@
 import discord
-from .registry import register_action, get_guild_or_raise
+from .registry import register_action, DashCtx
 from database import db_settings, db_automod, db_honeypot
 from cogs.automod import (
        _get_nexus_rules, _get_existing_rule_by_type, _build_actions,
@@ -10,8 +10,8 @@ from cogs.utils import get_lang
 from systems.hierarchy import can_apply_overwrites, format_issue
 
 @register_action("automod", "status")
-async def status(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def status(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     active_rules = await _get_nexus_rules(guild)
     settings = await db_settings.get_guild(guild_id)
     shield_enabled = bool(await db_automod.get_antinuke(guild_id))
@@ -31,12 +31,12 @@ async def status(guild_id: int, payload: dict) -> dict:
     }
 
 @register_action("automod", "toggle-rule")
-async def toggle_rule(guild_id: int, payload: dict) -> dict:
+async def toggle_rule(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     rule_key = payload.get("rule_key")
     if rule_key not in AUTOMOD_RULES:
         raise ValueError("Unbekannte Regel")
 
-    guild = get_guild_or_raise(guild_id)
     active_rules = await _get_nexus_rules(guild)
     rule = active_rules.get(rule_key)
 
@@ -67,13 +67,13 @@ async def toggle_rule(guild_id: int, payload: dict) -> dict:
     return {"rule_key": rule_key}
 
 @register_action("automod", "set-keywords")
-async def set_keywords(guild_id: int, payload: dict) -> dict:
+async def set_keywords(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     keywords = payload.get("keywords")
     if not isinstance(keywords, list):
         raise ValueError("keywords muss eine Liste sein")
     keywords = [str(k).strip().lower() for k in keywords if str(k).strip()][:1000]
 
-    guild = get_guild_or_raise(guild_id)
     active_rules = await _get_nexus_rules(guild)
     rule = active_rules.get("keywords")
 
@@ -98,13 +98,15 @@ async def set_keywords(guild_id: int, payload: dict) -> dict:
     return {"keywords": keywords}
 
 @register_action("automod", "toggle-shield")
-async def toggle_shield(guild_id: int, payload: dict) -> dict:
+async def toggle_shield(ctx: DashCtx) -> dict:
+    guild_id = ctx.guild_id
     current = bool(await db_automod.get_antinuke(guild_id))
     new_status = await db_automod.set_antinuke(guild_id, not current)
     return {"shield_enabled": bool(new_status)}
 
 @register_action("automod", "create-honeypot")
-async def create_honeypot(guild_id: int, payload: dict) -> dict:
+async def create_honeypot(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     name = (payload.get("name") or "").strip()
     warn_text = (payload.get("warn_text") or "").strip()
     if not name or not warn_text:
@@ -112,7 +114,6 @@ async def create_honeypot(guild_id: int, payload: dict) -> dict:
     if len(warn_text) > 1000:
         raise ValueError("Warntext zu lang (max. 1000 Zeichen)")
 
-    guild = get_guild_or_raise(guild_id)
     settings = await db_settings.get_guild(guild_id)
     if settings and settings.get("honeypot_channel_id"):
         raise ValueError("Es existiert bereits ein Honeypot — zuerst löschen")
@@ -146,8 +147,8 @@ async def create_honeypot(guild_id: int, payload: dict) -> dict:
     return {"channel_id": str(channel.id), "channel_name": channel.name}
 
 @register_action("automod", "delete-honeypot")
-async def delete_honeypot(guild_id: int, payload: dict) -> dict:
-    guild = get_guild_or_raise(guild_id)
+async def delete_honeypot(ctx: DashCtx) -> dict:
+    guild, guild_id = ctx.guild, ctx.guild_id
     settings = await db_settings.get_guild(guild_id)
     channel_id = settings.get("honeypot_channel_id") if settings else None
     if not channel_id:
@@ -165,7 +166,8 @@ async def delete_honeypot(guild_id: int, payload: dict) -> dict:
     return {"deleted": True}
 
 @register_action("automod", "set-honeypot-timeout")
-async def set_honeypot_timeout(guild_id: int, payload: dict) -> dict:
+async def set_honeypot_timeout(ctx: DashCtx) -> dict:
+    guild_id, payload = ctx.guild_id, ctx.payload
     try:
         days = int(payload.get("days"))
     except (TypeError, ValueError):
