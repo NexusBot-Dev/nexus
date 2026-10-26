@@ -25,7 +25,7 @@ async def toggle_modules(guild_id: int, payload: dict) -> dict:
         if guild is not None:
             settings = await db_settings.get_guild(guild_id)
             if settings and settings.get("honeypot_channel_id"):
-                from cogs.automod import cleanup_honeypot
+                from cogs.honeypot import cleanup_honeypot
                 await cleanup_honeypot(guild, settings["honeypot_channel_id"])
 
     row = await db_settings.get_guild(guild_id)
