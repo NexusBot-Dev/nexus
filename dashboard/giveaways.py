@@ -5,17 +5,11 @@ from zoneinfo import ZoneInfo
 from cogs.giveaways import MAX_WINNERS, post_giveaway
 from cogs.utils import get_lang
 from database import db_giveaways, db_settings
-from .registry import register_action, get_bot
+from .registry import register_action, get_bot, get_guild_or_raise
 
 MAX_PRIZE_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 2000
 HISTORY_LIMIT = 20
-
-def _get_guild(guild_id: int) -> discord.Guild:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
-    return guild
 
 def _to_int(value, error: str) -> int:
     try:
@@ -43,7 +37,7 @@ def _serialize(guild: discord.Guild, g: dict) -> dict:
 
 @register_action("giveaways", "list")
 async def list_giveaways(guild_id: int, payload: dict) -> dict:
-    guild = _get_guild(guild_id)
+    guild = get_guild_or_raise(guild_id)
     active, history = await asyncio.gather(
         db_giveaways.get_giveaways_overview(guild_id, running=True),
         db_giveaways.get_giveaways_overview(guild_id, running=False, limit=HISTORY_LIMIT),
@@ -61,7 +55,7 @@ async def list_giveaways(guild_id: int, payload: dict) -> dict:
 @register_action("giveaways", "create")
 async def create_giveaway(guild_id: int, payload: dict) -> dict:
     bot = get_bot()
-    guild = _get_guild(guild_id)
+    guild = get_guild_or_raise(guild_id)
 
     prize = str(payload.get("prize") or "").strip()
     if not prize or len(prize) > MAX_PRIZE_LENGTH:

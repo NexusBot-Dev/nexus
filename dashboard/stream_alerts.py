@@ -1,30 +1,33 @@
-import discord
-from .registry import register_action, get_bot
+import asyncio
+import aiomysql
+from .registry import register_action, get_guild_or_raise, parse_id
 from database import db_stream_alerts, db_limits
 from systems.premium import is_premium
 from systems.platform_registry import PLATFORM_HANDLERS
 
-def _guild_or_raise(guild_id: int) -> discord.Guild:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
-    return guild
+PLATFORMS = ("twitch", "youtube", "kick")
+PING_ROLE_SCOPES = ("all", *PLATFORMS)
 
 @register_action("stream_alerts", "list")
 async def list_alerts(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
-    subs = await db_stream_alerts.get_subscriptions_for_guild(guild_id)
-    premium = await is_premium(guild_id)
+    guild = get_guild_or_raise(guild_id)
+    # Alles parallel: vorher liefen hier bis zu 12 Abfragen nacheinander
+    subs, premium, stored_ping_roles, *limit_values = await asyncio.gather(
+        db_stream_alerts.get_subscriptions_for_guild(guild_id),
+        is_premium(guild_id),
+        db_stream_alerts.get_ping_roles(guild_id),
+        *(
+            db_limits.get_limit(guild_id, f"stream_alerts_{platform}", tier)
+            for platform in PLATFORMS
+            for tier in (False, True)
+        ),
+    )
 
-    grouped: dict[str, list] = {"twitch": [], "youtube": [], "kick": []}
+    grouped: dict[str, list] = {platform: [] for platform in PLATFORMS}
     limits = {}
-    for platform in grouped:
-        feature_key = f"stream_alerts_{platform}"
-        limit = await db_limits.get_limit(guild_id, feature_key, premium)
-        limits[platform] = {
-            "free": await db_limits.get_limit(guild_id, feature_key, False),
-            "premium": await db_limits.get_limit(guild_id, feature_key, True),
-        }
+    for i, platform in enumerate(PLATFORMS):
+        limits[platform] = {"free": limit_values[2 * i], "premium": limit_values[2 * i + 1]}
+        limit = limits[platform]["premium" if premium else "free"]
         entries = [s for s in subs if s["platform"] == platform]
         entries.sort(key=lambda s: s["created_at"])
         for i, s in enumerate(entries):
@@ -40,10 +43,12 @@ async def list_alerts(guild_id: int, payload: dict) -> dict:
                 "active": i < limit,
             })
 
-    ping_roles = {}
-    for platform in ("all", "twitch", "youtube", "kick"):
-        role_id = await db_stream_alerts.get_ping_role(guild_id, platform) if platform != "all" else None
-        ping_roles[platform] = str(role_id) if role_id else None
+    # Explizit gesetzte Rollen je Scope — "all" wurde vorher nie zurückgegeben,
+    # und Plattformen zeigten fälschlich die "all"-Rolle als eigene an
+    ping_roles = {
+        scope: str(stored_ping_roles[scope]) if stored_ping_roles.get(scope) else None
+        for scope in PING_ROLE_SCOPES
+    }
 
     return {
         "subscriptions": grouped,
@@ -67,7 +72,7 @@ async def add_alert(guild_id: int, payload: dict) -> dict:
     if message and len(message) > 200:
         raise ValueError("Nachricht zu lang (max. 200 Zeichen)")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     if guild.get_channel(int(channel_id)) is None:
         raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
 
@@ -130,7 +135,7 @@ async def edit_alert(guild_id: int, payload: dict) -> dict:
 
     channel_id_int = None
     if channel_id and str(channel_id).isdigit():
-        guild = _guild_or_raise(guild_id)
+        guild = get_guild_or_raise(guild_id)
         if guild.get_channel(int(channel_id)) is None:
             raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
         channel_id_int = int(channel_id)
@@ -177,6 +182,8 @@ async def set_ping_role(guild_id: int, payload: dict) -> dict:
     platform = payload.get("platform", "all")
     role_id = payload.get("role_id")
 
+    if platform not in PING_ROLE_SCOPES:
+        raise ValueError("Unbekannte Plattform")
     if platform != "all":
         premium = await is_premium(guild_id)
         if not premium:
@@ -185,7 +192,7 @@ async def set_ping_role(guild_id: int, payload: dict) -> dict:
     if role_id:
         if not str(role_id).isdigit():
             raise ValueError("Ungültige role_id")
-        guild = _guild_or_raise(guild_id)
+        guild = get_guild_or_raise(guild_id)
         role = guild.get_role(int(role_id))
         if role is None:
             raise ValueError("Rolle existiert nicht auf diesem Server")
@@ -216,17 +223,19 @@ async def create_link(guild_id: int, payload: dict) -> dict:
 
     if not sub_a_id or not sub_b_id:
         raise ValueError("Beide Kanäle werden benötigt")
-    if int(sub_a_id) == int(sub_b_id):
+    sub_a_id = parse_id(sub_a_id, "Ungültige Kanal-ID")
+    sub_b_id = parse_id(sub_b_id, "Ungültige Kanal-ID")
+    if sub_a_id == sub_b_id:
         raise ValueError("Ein Kanal kann nicht mit sich selbst verknüpft werden")
 
     subs = await db_stream_alerts.get_subscriptions_for_guild(guild_id)
     sub_ids = {s["id"] for s in subs}
-    if int(sub_a_id) not in sub_ids or int(sub_b_id) not in sub_ids:
+    if sub_a_id not in sub_ids or sub_b_id not in sub_ids:
         raise ValueError("Kanal gehört nicht zu diesem Server")
 
     try:
-        link_id = await db_stream_alerts.create_link(guild_id, int(sub_a_id), int(sub_b_id))
-    except Exception:
+        link_id = await db_stream_alerts.create_link(guild_id, sub_a_id, sub_b_id)
+    except aiomysql.IntegrityError:
         raise ValueError("Diese Verknüpfung existiert bereits")
 
     return {"id": link_id}

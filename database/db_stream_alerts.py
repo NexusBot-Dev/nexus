@@ -234,6 +234,16 @@ async def get_ping_role(guild_id: int, platform: str) -> int | None:
                     return row["role_id"]
             return None
 
+async def get_ping_roles(guild_id: int) -> dict[str, int]:
+    """Alle explizit gesetzten Ping-Rollen (platform -> role_id), ohne 'all'-Fallback."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT platform, role_id FROM guild_ping_roles WHERE guild_id = %s",
+                (guild_id,),
+            )
+            return {platform: role_id for platform, role_id in await cur.fetchall()}
+
 async def set_ping_role(guild_id: int, platform: str, role_id: int):
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:

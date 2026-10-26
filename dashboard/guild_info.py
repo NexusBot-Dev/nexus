@@ -1,12 +1,9 @@
-from .registry import register_action, get_bot
+from .registry import register_action, get_bot, get_guild_or_raise
 from systems.hierarchy import check_bot_hierarchy
 
 @register_action("guild", "channels")
 async def get_channels(guild_id: int, payload: dict) -> dict:
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     return {
         "channels": [
@@ -18,9 +15,7 @@ async def get_channels(guild_id: int, payload: dict) -> dict:
 @register_action("guild", "info")
 async def get_guild_info(guild_id: int, payload: dict) -> dict:
     bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     hierarchy_ok = check_bot_hierarchy(guild)
 
@@ -38,10 +33,7 @@ async def get_guild_info(guild_id: int, payload: dict) -> dict:
 
 @register_action("guild", "roles")
 async def get_roles(guild_id: int, payload: dict) -> dict:
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     return {
         "roles": [
@@ -53,9 +45,7 @@ async def get_roles(guild_id: int, payload: dict) -> dict:
 
 @register_action("guild", "emojis")
 async def get_emojis(guild_id: int, payload: dict) -> dict:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     return {
         "emojis": [

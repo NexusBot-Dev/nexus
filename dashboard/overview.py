@@ -1,7 +1,7 @@
 import asyncio
 from datetime import timezone
 
-from .registry import register_action, get_bot
+from .registry import register_action, get_guild_or_raise
 from .guild_info import get_guild_info
 from .moderation import ensure_members_cached
 from database import db_tickets, db_ticket_categories, db_stream_alerts, db_levels
@@ -25,10 +25,7 @@ async def get_guild_overview(guild_id: int, payload: dict) -> dict:
     """Alles für die Übersichtsseite in einem Aufruf: die normalen Guild-Infos
     (Name, Icon, Mitgliederzahl, Online-Status, ...), die Kennzahlen für die
     Kacheln, die neuesten offenen Tickets und die Top-Level."""
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     info = await get_guild_info(guild_id, payload)  # nur Cache-Zugriffe, parallelisieren bringt nichts
 

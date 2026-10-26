@@ -1,16 +1,10 @@
 import asyncio
 import discord
-from .registry import register_action, get_bot
+from .registry import register_action, get_guild_or_raise
 from systems.hierarchy import can_act_on_member, Issue
 from .discord_auth_check import get_acting_member
 
 _chunk_locks: dict[int, asyncio.Lock] = {}
-
-def _guild_or_raise(guild_id: int) -> discord.Guild:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
-    return guild
 
 async def ensure_members_cached(guild: discord.Guild) -> None:
     """Der Bot lädt beim Start keine Mitgliederlisten (chunk_guilds_at_startup=False).
@@ -30,7 +24,7 @@ async def ensure_members_cached(guild: discord.Guild) -> None:
 
 @register_action("moderation", "list-bans")
 async def list_bans(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     bans = []
     async for entry in guild.bans(limit=200):
         bans.append({
@@ -43,7 +37,7 @@ async def list_bans(guild_id: int, payload: dict) -> dict:
 
 @register_action("moderation", "list-timeouts")
 async def list_timeouts(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     await ensure_members_cached(guild)
     timeouts = []
     for member in guild.members:
@@ -62,7 +56,7 @@ async def unban(guild_id: int, payload: dict) -> dict:
     if not user_id or not str(user_id).isdigit():
         raise ValueError("Gültige user_id wird benötigt")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     actor = await get_acting_member(guild, payload)
 
     # Unban kennt keine Rollen-Hierarchie (der User ist nicht mehr Member) —
@@ -86,7 +80,7 @@ async def remove_timeout(guild_id: int, payload: dict) -> dict:
     if not user_id or not str(user_id).isdigit():
         raise ValueError("Gültige user_id wird benötigt")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     actor = await get_acting_member(guild, payload)
 
     member = guild.get_member(int(user_id))

@@ -1,5 +1,6 @@
+import asyncio
 import discord
-from .registry import register_action, get_bot
+from .registry import register_action, get_guild_or_raise
 from database import db_levels
 from systems.hierarchy import can_use_channel, can_grant_role, format_issue
 from cogs.utils import get_lang
@@ -19,9 +20,7 @@ def _exclude_target(ch) -> dict:
 
 @register_action("leveling", "get-excluded")
 async def get_excluded(guild_id: int, payload: dict) -> dict:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     excluded = await db_levels.get_excluded_channels(guild_id)
     targets = [_exclude_target(c) for c in (*guild.categories, *guild.text_channels, *guild.forums)]
@@ -43,9 +42,7 @@ async def set_excluded(guild_id: int, payload: dict) -> dict:
     if len(ids) > MAX_EXCLUDED:
         raise ValueError(f"Maximal {MAX_EXCLUDED} Einträge möglich")
 
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
     for cid in ids:
         if not isinstance(guild.get_channel(cid), _EXCLUDABLE):
             raise ValueError("Channel existiert nicht (mehr) oder kann nicht ausgeschlossen werden")
@@ -55,10 +52,7 @@ async def set_excluded(guild_id: int, payload: dict) -> dict:
 
 @register_action("leveling", "list-roles")
 async def list_roles(guild_id: int, payload: dict) -> dict:
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     rows = await db_levels.get_all_level_roles(guild_id)
     roles = []
@@ -77,15 +71,12 @@ async def set_role(guild_id: int, payload: dict) -> dict:
     level = payload.get("level")
     role_id = payload.get("role_id")
 
-    if not isinstance(level, int) or not (1 <= level <= 1000):
+    if not isinstance(level, int) or isinstance(level, bool) or not (1 <= level <= 1000):
         raise ValueError("Ungültiges Level (1-1000)")
     if not role_id or not str(role_id).isdigit():
         raise ValueError("Gültige role_id wird benötigt")
 
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     role = guild.get_role(int(role_id))
     if role is None:
@@ -108,20 +99,23 @@ async def remove_role(guild_id: int, payload: dict) -> dict:
 
 @register_action("leveling", "leaderboard")
 async def leaderboard(guild_id: int, payload: dict) -> dict:
-    bot = get_bot()
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     rows = await db_levels.get_leaderboard(guild_id, limit=10)
+
+    async def resolve(user_id: int) -> discord.Member | None:
+        member = guild.get_member(user_id)
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return None
+
+    # Nicht gecachte Mitglieder parallel nachladen statt bis zu 10 API-Calls nacheinander
+    members = await asyncio.gather(*(resolve(row["user_id"]) for row in rows))
     entries = []
-    for row in rows:
-        member = guild.get_member(row["user_id"])
-        if member is None:
-            try:
-                member = await guild.fetch_member(row["user_id"])
-            except discord.NotFound:
-                member = None
+    for row, member in zip(rows, members):
         entries.append({
             "user_id": str(row["user_id"]),
             "username": member.display_name if member else f"Unbekannt ({row['user_id']})",
@@ -157,9 +151,7 @@ async def set_levelup_channel(guild_id: int, payload: dict) -> dict:
     if not str(channel_id).isdigit():
         raise ValueError("Gültiger Channel wird benötigt")
 
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    guild = get_guild_or_raise(guild_id)
 
     channel = guild.get_channel(int(channel_id))
     if not isinstance(channel, discord.TextChannel):
@@ -175,7 +167,7 @@ async def set_xp_settings(guild_id: int, payload: dict) -> dict:
     xp_min = payload.get("xp_min")
     xp_max = payload.get("xp_max")
 
-    if not isinstance(xp_min, int) or not isinstance(xp_max, int):
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (xp_min, xp_max)):
         raise ValueError("xp_min und xp_max müssen Ganzzahlen sein")
     if not (1 <= xp_min <= 1000) or not (1 <= xp_max <= 1000):
         raise ValueError("Werte müssen zwischen 1 und 1000 liegen")

@@ -1,5 +1,6 @@
+import asyncio
 import discord
-from .registry import register_action, get_bot
+from .registry import register_action, get_guild_or_raise, parse_id
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
 from cogs.reaction_roles import _update_dropdown_message
@@ -7,12 +8,6 @@ from cogs.utils import get_lang
 from systems.hierarchy import can_grant_role, can_set_up_self_roles, format_issue
 from .discord_auth_check import get_acting_member
 from .health import plain_mentions
-
-def _guild_or_raise(guild_id: int) -> discord.Guild:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
-    return guild
 
 @register_action("reaction_roles", "list-groups")
 async def list_groups(guild_id: int, payload: dict) -> dict:
@@ -29,16 +24,22 @@ async def create_group(guild_id: int, payload: dict) -> dict:
 
 @register_action("reaction_roles", "list-messages")
 async def list_messages(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
-    premium = await is_premium(guild_id)
-    msg_refs = await db_reaction_roles.get_all_reaction_role_messages(guild_id)
+    guild = get_guild_or_raise(guild_id)
+    # Alle Einträge der Guild in einer Abfrage statt einer pro Nachricht
+    premium, msg_refs, all_entries = await asyncio.gather(
+        is_premium(guild_id),
+        db_reaction_roles.get_all_reaction_role_messages(guild_id),
+        db_reaction_roles.get_reaction_roles_for_guild(guild_id),
+    )
+    entries_by_message: dict[int, list[dict]] = {}
+    for e in all_entries:
+        entries_by_message.setdefault(e["message_id"], []).append(e)
 
     messages = []
     for ref in msg_refs:
         channel = guild.get_channel(ref["channel_id"])
-        entries_raw = await db_reaction_roles.get_reaction_roles(guild_id, ref["message_id"])
         entries = []
-        for e in entries_raw:
+        for e in entries_by_message.get(ref["message_id"], []):
             role = guild.get_role(e["role_id"])
             entries.append({
                 "id": e["id"],
@@ -62,13 +63,11 @@ async def list_messages(guild_id: int, payload: dict) -> dict:
 
 @register_action("reaction_roles", "create-message")
 async def create_message(guild_id: int, payload: dict) -> dict:
-    channel_id = payload.get("channel_id")
+    channel_id = parse_id(payload.get("channel_id"), "Gültiger Channel wird benötigt")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
     display_mode = payload.get("display_mode", "reaction")
 
-    if not channel_id or not str(channel_id).isdigit():
-        raise ValueError("Gültiger Channel wird benötigt")
     if not title or not description:
         raise ValueError("Titel und Beschreibung werden benötigt")
     if display_mode not in ("reaction", "dropdown"):
@@ -78,13 +77,13 @@ async def create_message(guild_id: int, payload: dict) -> dict:
     if display_mode == "dropdown" and not premium:
         raise ValueError("Dropdown-Modus ist ein Premium-Feature")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     # Vor dem Posten prüfen — sonst bliebe eine Nachricht zurück, an die der User keine Rolle hängen darf
     actor = await get_acting_member(guild, payload)
     if not (check := can_set_up_self_roles(guild, actor)):
         raise ValueError(format_issue(check, await get_lang(guild_id)))
 
-    channel = guild.get_channel(int(channel_id))
+    channel = guild.get_channel(channel_id)
     if channel is None:
         raise ValueError("Channel existiert nicht (mehr)")
 
@@ -116,33 +115,37 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
         raise ValueError("channel_id, message_id, role_id und emoji werden benötigt")
     if mode not in ("toggle", "unique"):
         raise ValueError("Ungültiger Modus")
+    channel_id = parse_id(channel_id, "Ungültige channel_id")
+    message_id = parse_id(message_id, "Ungültige message_id")
+    role_id = parse_id(role_id, "Ungültige role_id")
+    group_id = parse_id(group_id, "Ungültige group_id") if group_id else None
 
-    guild = _guild_or_raise(guild_id)
-    role = guild.get_role(int(role_id))
+    guild = get_guild_or_raise(guild_id)
+    role = guild.get_role(role_id)
     if role is None:
         raise ValueError("Rolle existiert nicht auf diesem Server")
     actor = await get_acting_member(guild, payload)
     if not (check := can_grant_role(guild, role, actor)):
         raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
 
-    channel = guild.get_channel(int(channel_id))
+    channel = guild.get_channel(channel_id)
     if channel is None:
         raise ValueError("Channel existiert nicht (mehr)")
     try:
-        message = await channel.fetch_message(int(message_id))
+        message = await channel.fetch_message(message_id)
     except discord.NotFound:
         raise ValueError("Nachricht existiert nicht (mehr)")
 
-    msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
+    msg_ref = await db_reaction_roles.get_message_ref(guild_id, message_id)
     if msg_ref is None:
         raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
 
-    existing_emoji = await db_reaction_roles.get_reaction_role(guild_id, int(message_id), emoji)
+    existing_emoji = await db_reaction_roles.get_reaction_role(guild_id, message_id, emoji)
     if existing_emoji is not None:
         raise ValueError("Dieses Emoji ist auf dieser Nachricht bereits vergeben")
 
-    all_current = await db_reaction_roles.get_reaction_roles(guild_id, int(message_id))
-    if any(e["role_id"] == int(role_id) for e in all_current):
+    all_current = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
+    if any(e["role_id"] == role_id for e in all_current):
         raise ValueError("Diese Rolle ist auf dieser Nachricht bereits vergeben")
 
     premium = await is_premium(guild_id)
@@ -152,9 +155,7 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     if mode == "unique" and not premium:
         raise ValueError("Unique-Modus ist ein Premium-Feature")
 
-    display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
-
-    group_id_int = int(group_id) if group_id else None
+    display_mode = msg_ref["display_mode"]
 
     if display_mode == "reaction":
         try:
@@ -163,15 +164,14 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
             raise ValueError("Emoji konnte nicht zur Nachricht hinzugefügt werden — ungültiges Emoji?")
 
     new_id = await db_reaction_roles.add_reaction_role(
-        guild_id=guild_id, channel_id=int(channel_id), message_id=int(message_id),
-        role_id=int(role_id), emoji=emoji, mode=mode, group_id=group_id_int,
+        guild_id=guild_id, channel_id=channel_id, message_id=message_id,
+        role_id=role_id, emoji=emoji, mode=mode, group_id=group_id,
     )
 
     if display_mode == "dropdown":
-        lang = {}
-        await _update_dropdown_message(message, guild_id, int(message_id), lang)
+        await _update_dropdown_message(message, guild_id, message_id, await get_lang(guild_id))
 
-    return {"entry_id": new_id, "role_id": role_id, "role_name": role.name, "emoji": emoji, "mode": mode}
+    return {"entry_id": new_id, "role_id": str(role_id), "role_name": role.name, "emoji": emoji, "mode": mode}
 
 @register_action("reaction_roles", "delete-entry")
 async def delete_entry(guild_id: int, payload: dict) -> dict:
@@ -182,22 +182,24 @@ async def delete_entry(guild_id: int, payload: dict) -> dict:
 
     if not all([entry_id, channel_id, message_id, emoji]):
         raise ValueError("entry_id, channel_id, message_id und emoji werden benötigt")
+    entry_id = parse_id(entry_id, "Ungültige entry_id")
+    channel_id = parse_id(channel_id, "Ungültige channel_id")
+    message_id = parse_id(message_id, "Ungültige message_id")
 
-    deleted = await db_reaction_roles.delete_reaction_role(int(entry_id), guild_id)
+    deleted = await db_reaction_roles.delete_reaction_role(entry_id, guild_id)
     if not deleted:
         raise ValueError("Eintrag wurde nicht gefunden")
 
-    guild = _guild_or_raise(guild_id)
-    channel = guild.get_channel(int(channel_id))
+    guild = get_guild_or_raise(guild_id)
+    channel = guild.get_channel(channel_id)
     if channel is not None:
         try:
-            msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
+            msg_ref = await db_reaction_roles.get_message_ref(guild_id, message_id)
             if msg_ref is not None:
-                message = await channel.fetch_message(int(message_id))
+                message = await channel.fetch_message(message_id)
                 display_mode = msg_ref["display_mode"]
                 if display_mode == "dropdown":
-                    lang = {}
-                    await _update_dropdown_message(message, guild_id, int(message_id), lang)
+                    await _update_dropdown_message(message, guild_id, message_id, await get_lang(guild_id))
                 else:
                     await message.clear_reaction(emoji)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
@@ -211,17 +213,19 @@ async def delete_message_entries(guild_id: int, payload: dict) -> dict:
     message_id = payload.get("message_id")
     if not channel_id or not message_id:
         raise ValueError("channel_id und message_id werden benötigt")
+    channel_id = parse_id(channel_id, "Ungültige channel_id")
+    message_id = parse_id(message_id, "Ungültige message_id")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
 
-    msg_ref = await db_reaction_roles.get_message_ref(guild_id, int(message_id))
+    msg_ref = await db_reaction_roles.get_message_ref(guild_id, message_id)
     if msg_ref is None:
         raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
 
-    channel = guild.get_channel(int(channel_id))
+    channel = guild.get_channel(channel_id)
     if channel is not None:
         try:
-            message = await channel.fetch_message(int(message_id))
+            message = await channel.fetch_message(message_id)
             display_mode = msg_ref["display_mode"]
             if display_mode == "dropdown":
                 await message.edit(view=None)
@@ -230,10 +234,8 @@ async def delete_message_entries(guild_id: int, payload: dict) -> dict:
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
-    entries = await db_reaction_roles.get_reaction_roles(guild_id, int(message_id))
-    for e in entries:
-        await db_reaction_roles.delete_reaction_role(e["id"], guild_id)
+    await db_reaction_roles.delete_reaction_roles_for_message(guild_id, message_id)
 
-    await db_reaction_roles.delete_message_ref(guild_id, int(message_id))
+    await db_reaction_roles.delete_message_ref(guild_id, message_id)
 
-    return {"message_id": message_id}
+    return {"message_id": str(message_id)}  # Snowflakes als String, JS-Numbers sind dafür zu ungenau

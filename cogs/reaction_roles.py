@@ -574,6 +574,8 @@ async def _update_dropdown_message(msg: discord.Message, guild_id: int, message_
     """Baut/aktualisiert den 'Select your roles'-Button unter einer Dropdown-Modus-Nachricht."""
     roles = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
     if not roles:
+        # Keine Rollen mehr -> Button entfernen, sonst öffnet er ein leeres Menü
+        await msg.edit(view=None)
         return
 
     view = discord.ui.View(timeout=None)

@@ -65,6 +65,26 @@ async def get_reaction_roles(guild_id: int, message_id: int) -> list[dict]:
             )
             return await cur.fetchall()
 
+async def get_reaction_roles_for_guild(guild_id: int) -> list[dict]:
+    """Alle Reaktionsrollen einer Guild in einer Abfrage (statt einer pro Nachricht)."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM reaction_roles WHERE guild_id = %s ORDER BY id ASC",
+                (guild_id,),
+            )
+            return await cur.fetchall()
+
+async def delete_reaction_roles_for_message(guild_id: int, message_id: int) -> int:
+    """Löscht alle Reaktionsrollen einer Nachricht auf einmal."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM reaction_roles WHERE guild_id = %s AND message_id = %s",
+                (guild_id, message_id),
+            )
+            return cur.rowcount
+
 async def get_reaction_role(guild_id: int, message_id: int, emoji: str) -> dict | None:
     """Gibt eine einzelne Reaktionsrolle zurück."""
     async with db.pool.acquire() as conn:

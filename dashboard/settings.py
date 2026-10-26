@@ -53,6 +53,10 @@ async def update_settings(bot, guild_id: int, fields: dict) -> dict:
     updates: dict = {}
     warnings: list[str] = []
 
+    # Farbe vor allen Schreibzugriffen prüfen — sonst wären die übrigen Felder bei
+    # einer ungültigen Farbe schon gespeichert, obwohl der Request mit 400 endet
+    color_int: int | None = _parse_color(fields["color"]) if fields.get("color") else None
+
     if "locale" in fields:
         locale = fields["locale"]
         if locale not in ALLOWED_LOCALES:
@@ -90,7 +94,6 @@ async def update_settings(bot, guild_id: int, fields: dict) -> dict:
     if updates:
         await db_settings.update_guild(guild_id, **updates)
 
-    color_int: int | None = _parse_color(fields["color"]) if fields.get("color") else None
     if color_int is not None:
         color_set = await db_settings.set_color(guild_id, color_int)
         if not color_set:

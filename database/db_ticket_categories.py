@@ -105,6 +105,22 @@ async def get_category_roles(category_id: int) -> list[int]:
             rows = await cur.fetchall()
             return [row[0] for row in rows]
 
+async def get_category_roles_for_guild(guild_id: int) -> dict[int, list[int]]:
+    """category_id -> role_ids für alle Kategorien einer Guild in einer Abfrage."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """SELECT tcr.category_id, tcr.role_id
+                   FROM ticket_category_roles tcr
+                   JOIN ticket_categories tc ON tc.id = tcr.category_id
+                   WHERE tc.guild_id = %s""",
+                (guild_id,),
+            )
+            result: dict[int, list[int]] = {}
+            for category_id, role_id in await cur.fetchall():
+                result.setdefault(category_id, []).append(role_id)
+            return result
+
 async def set_category_roles(category_id: int, role_ids: list[int]):
     """Ersetzt die komplette Rollen-Zuordnung einer Kategorie durch die übergebene Liste.
     Einfacher und robuster als einzelne add/remove-Calls, da RoleSelect im UI

@@ -1,5 +1,5 @@
 import discord
-from .registry import register_action, get_bot
+from .registry import register_action, get_guild_or_raise
 from database import db_settings, db_automod, db_honeypot
 from cogs.automod import (
        _get_nexus_rules, _get_existing_rule_by_type, _build_actions,
@@ -9,15 +9,9 @@ from cogs.honeypot import _slugify_channel_name
 from cogs.utils import get_lang
 from systems.hierarchy import can_apply_overwrites, format_issue
 
-def _guild_or_raise(guild_id: int) -> discord.Guild:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
-    return guild
-
 @register_action("automod", "status")
 async def status(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     active_rules = await _get_nexus_rules(guild)
     settings = await db_settings.get_guild(guild_id)
     shield_enabled = bool(await db_automod.get_antinuke(guild_id))
@@ -42,7 +36,7 @@ async def toggle_rule(guild_id: int, payload: dict) -> dict:
     if rule_key not in AUTOMOD_RULES:
         raise ValueError("Unbekannte Regel")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     active_rules = await _get_nexus_rules(guild)
     rule = active_rules.get(rule_key)
 
@@ -79,7 +73,7 @@ async def set_keywords(guild_id: int, payload: dict) -> dict:
         raise ValueError("keywords muss eine Liste sein")
     keywords = [str(k).strip().lower() for k in keywords if str(k).strip()][:1000]
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     active_rules = await _get_nexus_rules(guild)
     rule = active_rules.get("keywords")
 
@@ -118,7 +112,7 @@ async def create_honeypot(guild_id: int, payload: dict) -> dict:
     if len(warn_text) > 1000:
         raise ValueError("Warntext zu lang (max. 1000 Zeichen)")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     settings = await db_settings.get_guild(guild_id)
     if settings and settings.get("honeypot_channel_id"):
         raise ValueError("Es existiert bereits ein Honeypot — zuerst löschen")
@@ -153,7 +147,7 @@ async def create_honeypot(guild_id: int, payload: dict) -> dict:
 
 @register_action("automod", "delete-honeypot")
 async def delete_honeypot(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     settings = await db_settings.get_guild(guild_id)
     channel_id = settings.get("honeypot_channel_id") if settings else None
     if not channel_id:

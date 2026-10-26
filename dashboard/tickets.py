@@ -1,6 +1,7 @@
+import asyncio
 import discord
 import logging
-from .registry import register_action, get_bot
+from .registry import register_action, get_guild_or_raise, parse_id
 from database import db_settings, db_ticket_categories, db_tickets, db_limits
 from systems.premium import is_premium
 from cogs.tickets import _build_panel_embed, _build_panel_view
@@ -9,21 +10,20 @@ from cogs.utils import get_lang
 
 log = logging.getLogger(__name__)
 
-def _guild_or_raise(guild_id: int) -> discord.Guild:
-    guild = get_bot().get_guild(guild_id)
-    if guild is None:
-        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
-    return guild
-
 @register_action("tickets", "list-categories")
 async def list_categories(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
-    categories = await db_ticket_categories.get_categories(guild_id)
-    premium = await is_premium(guild_id)
+    guild = get_guild_or_raise(guild_id)
+    categories, roles_by_category, premium, limit_free, limit_premium = await asyncio.gather(
+        db_ticket_categories.get_categories(guild_id),
+        db_ticket_categories.get_category_roles_for_guild(guild_id),
+        is_premium(guild_id),
+        db_limits.get_limit(guild_id, "ticket_categories", False),
+        db_limits.get_limit(guild_id, "ticket_categories", True),
+    )
 
     result = []
     for cat in categories:
-        role_ids = await db_ticket_categories.get_category_roles(cat["id"])
+        role_ids = roles_by_category.get(cat["id"], [])
         role_names = []
         for rid in role_ids:
             role = guild.get_role(rid)
@@ -35,7 +35,7 @@ async def list_categories(guild_id: int, payload: dict) -> dict:
             "roles": role_names,
         })
 
-    return {"categories": result, "limit_free": await db_limits.get_limit(guild_id, "ticket_categories", False), "limit_premium": await db_limits.get_limit(guild_id, "ticket_categories", True), "premium_active": premium}
+    return {"categories": result, "limit_free": limit_free, "limit_premium": limit_premium, "premium_active": premium}
 
 @register_action("tickets", "create-category")
 async def create_category(guild_id: int, payload: dict) -> dict:
@@ -44,8 +44,10 @@ async def create_category(guild_id: int, payload: dict) -> dict:
 
     if not name or len(name) > 100:
         raise ValueError("Name ist erforderlich (max. 100 Zeichen)")
+    if not isinstance(role_ids, list):
+        raise ValueError("role_ids muss eine Liste sein")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     current_count = await db_ticket_categories.get_category_count(guild_id)
     premium = await is_premium(guild_id)
     limit = await db_limits.get_limit(guild_id, "ticket_categories", premium)
@@ -92,13 +94,13 @@ async def create_category(guild_id: int, payload: dict) -> dict:
 
 @register_action("tickets", "rename-category")
 async def rename_category(guild_id: int, payload: dict) -> dict:
-    category_id = payload.get("category_id")
+    category_id = parse_id(payload.get("category_id"), "category_id und ein gültiger Name werden benötigt")
     new_name = (payload.get("name") or "").strip()
-    if not category_id or not new_name or len(new_name) > 100:
+    if not new_name or len(new_name) > 100:
         raise ValueError("category_id und ein gültiger Name werden benötigt")
 
-    guild = _guild_or_raise(guild_id)
-    category = await db_ticket_categories.get_category(int(category_id), guild_id)
+    guild = get_guild_or_raise(guild_id)
+    category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
         raise ValueError("Kategorie wurde nicht gefunden")
 
@@ -112,18 +114,18 @@ async def rename_category(guild_id: int, payload: dict) -> dict:
             log.exception("Dashboard: Kategorie umbenennen auf %s fehlgeschlagen", guild_id)   # beim Löschen entsprechend
             raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
-    await db_ticket_categories.rename_category(int(category_id), guild_id, new_name)
+    await db_ticket_categories.rename_category(category_id, guild_id, new_name)
     return {"id": category_id, "name": new_name}
 
 @register_action("tickets", "set-category-roles")
 async def set_category_roles(guild_id: int, payload: dict) -> dict:
-    category_id = payload.get("category_id")
+    category_id = parse_id(payload.get("category_id"), "category_id wird benötigt")
     role_ids = payload.get("role_ids") or []
-    if not category_id:
-        raise ValueError("category_id wird benötigt")
+    if not isinstance(role_ids, list):
+        raise ValueError("role_ids muss eine Liste sein")
 
-    guild = _guild_or_raise(guild_id)
-    category = await db_ticket_categories.get_category(int(category_id), guild_id)
+    guild = get_guild_or_raise(guild_id)
+    category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
         raise ValueError("Kategorie wurde nicht gefunden")
 
@@ -137,23 +139,21 @@ async def set_category_roles(guild_id: int, payload: dict) -> dict:
             valid_role_ids.append(int(rid))
             role_names.append({"id": str(rid), "name": role.name})
 
-    await db_ticket_categories.set_category_roles(int(category_id), valid_role_ids)
+    await db_ticket_categories.set_category_roles(category_id, valid_role_ids)
     return {"id": category_id, "roles": role_names}
 
 @register_action("tickets", "delete-category")
 async def delete_category(guild_id: int, payload: dict) -> dict:
-    category_id = payload.get("category_id")
-    if not category_id:
-        raise ValueError("category_id wird benötigt")
+    category_id = parse_id(payload.get("category_id"), "category_id wird benötigt")
 
-    has_open = await db_tickets.has_open_tickets_for_category(int(category_id))
-    if has_open:
-        raise ValueError("Kategorie hat noch offene Tickets — zuerst schließen")
-
-    guild = _guild_or_raise(guild_id)
-    category = await db_ticket_categories.get_category(int(category_id), guild_id)
+    guild = get_guild_or_raise(guild_id)
+    category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
         raise ValueError("Kategorie wurde nicht gefunden")
+
+    # Erst nach der Guild-Prüfung — sonst ließe sich über fremde IDs abfragen, ob dort Tickets offen sind
+    if await db_tickets.has_open_tickets_for_category(category_id):
+        raise ValueError("Kategorie hat noch offene Tickets — zuerst schließen")
 
     discord_category = guild.get_channel(category["category_channel_id"])
     if discord_category is not None:
@@ -165,14 +165,17 @@ async def delete_category(guild_id: int, payload: dict) -> dict:
             log.exception("Dashboard: Kategorie löschen auf %s fehlgeschlagen", guild_id)
             raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
-    await db_ticket_categories.delete_category(int(category_id), guild_id)
+    await db_ticket_categories.delete_category(category_id, guild_id)
     return {"id": category_id}
 
 @register_action("tickets", "list-open")
 async def list_open(guild_id: int, payload: dict) -> dict:
-    guild = _guild_or_raise(guild_id)
-    tickets = await db_tickets.get_open_tickets_for_guild(guild_id)
-    categories = {c["id"]: c["name"] for c in await db_ticket_categories.get_categories(guild_id)}
+    guild = get_guild_or_raise(guild_id)
+    tickets, category_rows = await asyncio.gather(
+        db_tickets.get_open_tickets_for_guild(guild_id),
+        db_ticket_categories.get_categories(guild_id),
+    )
+    categories = {c["id"]: c["name"] for c in category_rows}
 
     result = []
     for t in tickets:
@@ -198,7 +201,7 @@ async def post_panel(guild_id: int, payload: dict) -> dict:
     if not title or not description:
         raise ValueError("Titel und Beschreibung werden benötigt")
 
-    guild = _guild_or_raise(guild_id)
+    guild = get_guild_or_raise(guild_id)
     channel = guild.get_channel(int(channel_id))
     if channel is None:
         raise ValueError("Channel existiert nicht (mehr)")
