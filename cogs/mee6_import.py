@@ -8,6 +8,7 @@ from config import NEXUS_FOOTER
 from database import db_levels, db_settings
 from emojis import NexusEmojis
 from systems.ui import NexusView
+from systems.hierarchy import can_grant_role, format_issue
 from systems.mee6_import import (
     MAX_PLAYERS,
     Mee6NotFound,
@@ -180,6 +181,8 @@ class Mee6Import(commands.Cog):
             return lang.get("mee6_issue_nexus", "role is above Nexus")
         if invoker.id != guild.owner_id and role >= invoker.top_role:
             return lang.get("mee6_issue_user", "role is above your own highest role")
+        if not (check := can_grant_role(guild, role, invoker)):
+            return format_issue(check, lang).removeprefix("❌ ")
         if level in existing:
             return lang.get("mee6_issue_exists", "this level already has a role")
         return None

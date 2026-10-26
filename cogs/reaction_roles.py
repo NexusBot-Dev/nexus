@@ -9,7 +9,7 @@ from systems.premium import is_premium
 from cogs.utils import get_lang, module_required
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.hierarchy import can_manage_role, can_use_channel, format_issue
+from systems.hierarchy import can_grant_role, can_manage_role, can_set_up_self_roles, can_use_channel, format_issue
 from systems.ui import NexusView, NexusModal
 
 log = logging.getLogger(__name__)
@@ -230,6 +230,10 @@ class RoleSelectView(NexusView):
                 ),
                 ephemeral=True
             )
+            return
+
+        if not (check := can_grant_role(interaction.guild, role, interaction.user)):
+            await interaction.response.send_message(format_issue(check, self.lang), ephemeral=True)
             return
 
         await self.show(
@@ -732,6 +736,11 @@ class ReactionRoles(commands.Cog):
         channel: discord.TextChannel,
     ):
         lang  = await get_lang(interaction.guild_id)
+        # default_permissions lässt sich pro Server überschreiben — vor dem Erstellen selbst prüfen
+        if not (check := can_set_up_self_roles(interaction.guild, interaction.user)):
+            await interaction.response.send_message(format_issue(check, lang), ephemeral=True)
+            return
+
         color = await db_settings.get_color(interaction.guild_id)
         premium = await is_premium(interaction.guild_id)
 

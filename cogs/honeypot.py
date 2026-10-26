@@ -163,6 +163,13 @@ class Honeypot(commands.Cog):
             return
 
         member = message.author
+        if not isinstance(member, discord.Member):
+            # Webhook-/System-Nachrichten: kein Member, den man bestrafen könnte — nur wegräumen
+            try:
+                await message.delete()
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
+            return
         if member.guild_permissions.manage_guild or member.guild_permissions.administrator:
             return
 

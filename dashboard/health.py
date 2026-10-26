@@ -12,7 +12,7 @@ _ROLE_MENTION = re.compile(r"<@&(\d+)>")
 _CHANNEL_MENTION = re.compile(r"<#(\d+)>")
 
 
-def _plain_mentions(guild: discord.Guild, text: str) -> str:
+def plain_mentions(guild: discord.Guild, text: str) -> str:
     """Discord-Mentions (<@&id>, <#id>) sind im Browser nur Rohtext —
     fürs Dashboard in lesbare Namen umwandeln."""
     def role(m):
@@ -44,7 +44,7 @@ async def get_health_issues(guild_id: int, payload: dict) -> dict:
 
     return {
         "issues": [
-            {"section": i.section, "severity": i.severity, "text": _plain_mentions(guild, i.text)}
+            {"section": i.section, "severity": i.severity, "text": plain_mentions(guild, i.text)}
             for i in issues
         ],
     }

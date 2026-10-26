@@ -2,6 +2,8 @@ from .database import init_pool, close_pool, pool # noqa: F401
 from . import db_settings # noqa: F401
 from . import db_warnings # noqa: F401
 from . import db_levels # noqa: F401
+from . import db_activity # noqa: F401
+from . import db_activity_shop # noqa: F401
 from . import db_reaction_roles # noqa: F401
 from . import db_embeds # noqa: F401
 from . import db_stream_alerts # noqa: F401

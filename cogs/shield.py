@@ -18,6 +18,7 @@ _shield_initiated_bans: set[tuple[int, int]] = set()
 _quarantined_users = set()
 _restore_cache = defaultdict(list)
 _restore_flagged: dict[tuple[int, int], float] = {}   # (guild, user) -> monotonic-Zeitpunkt der letzten Vorwarnung
+_restore_actors: dict[tuple[int, int], tuple[int, float]] = {}  # (guild, gelöschtes Ziel) -> (Verursacher, monotonic)
 
 RESTORE_WINDOW = 15
 RESTORE_STAGGER_SECONDS = 0.35
@@ -36,6 +37,13 @@ SHIELD_ACTION_WEIGHTS = {
     discord.AuditLogAction.ban:                0.75,
     discord.AuditLogAction.role_update:        0.3,
     discord.AuditLogAction.member_role_update: 0.2,
+}
+
+# Audit-Log-Aktionen, deren Ziel im Restore-Cache landet — für die Zuordnung zum Verursacher
+_RESTORE_ACTIONS = {
+    discord.AuditLogAction.channel_delete,
+    discord.AuditLogAction.role_delete,
+    discord.AuditLogAction.ban,
 }
 
 DANGEROUS_PERMS = {
@@ -461,16 +469,32 @@ async def _restore_deleted_channels(guild: discord.Guild, deleted_data: list[dic
 
     return restored_count
 
-def _take_restore_entries(guild_id: int, include_bans: bool) -> list[dict]:
-    """Entnimmt Einträge aus dem Restore-Cache. Ohne include_bans bleiben Ban-Einträge im Cache
-    (Vorwarnstufe: Bans werden nie zurückgenommen, das könnte legitime Moderation sein)."""
+def _restore_target_id(entry: dict) -> int:
+    data = entry["data"]
+    return data.get("id") or data.get("old_id") or data["user_id"]
+
+def _caused_by(guild_id: int, entry: dict, actor_id: int) -> bool:
+    """Stammt der Eintrag vom Akteur? Ohne bekannten Verursacher (Audit-Log-Eintrag noch nicht da)
+    zählt er dazu — der fehlt praktisch nur bei Aktionen der letzten Sekunde, also beim laufenden Angriff."""
+    known = _restore_actors.get((guild_id, _restore_target_id(entry)))
+    return known is None or known[0] == actor_id
+
+def _take_restore_entries(guild_id: int, include_bans: bool, actor_id: int) -> list[dict]:
+    """Entnimmt die Einträge des Akteurs aus dem Restore-Cache. Aktionen anderer (z.B. ein Mod, der
+    gleichzeitig einen Spammer bannt) bleiben unangetastet. Ohne include_bans bleiben auch Ban-Einträge
+    im Cache (Vorwarnstufe: Bans werden nie zurückgenommen, das könnte legitime Moderation sein)."""
     entries = _restore_cache.get(guild_id, [])
-    if include_bans:
-        _restore_cache.pop(guild_id, None)
-        return entries
-    taken = [e for e in entries if e["type"] != "ban"]
+    taken = [
+        e for e in entries
+        if (include_bans or e["type"] != "ban") and _caused_by(guild_id, e, actor_id)
+    ]
     if taken:
-        _restore_cache[guild_id] = [e for e in entries if e["type"] == "ban"]
+        taken_ids = {id(e) for e in taken}
+        rest = [e for e in entries if id(e) not in taken_ids]
+        if rest:
+            _restore_cache[guild_id] = rest
+        else:
+            _restore_cache.pop(guild_id, None)
     return taken
 
 # ─── Cog ─────────────────────────────────────────────────────────────────────
@@ -517,6 +541,9 @@ class Shield(commands.Cog):
             for key in [k for k, t in _restore_flagged.items() if mono - t >= ESCALATION_WINDOW_SECONDS]:
                 del _restore_flagged[key]
                 removed_flags += 1
+
+            for key in [k for k, (_, t) in _restore_actors.items() if mono - t >= RESTORE_WINDOW]:
+                del _restore_actors[key]
 
             if removed_tracker_entries or removed_restore_entries or removed_flags:
                 log.info(
@@ -577,6 +604,11 @@ class Shield(commands.Cog):
 
         if not user or user.id == self.bot.user.id:
             return
+
+        # Verursacher merken, bevor irgendetwas aussortiert wird — auch Aktionen des Owners oder
+        # legitimer Mods, damit ein Restore wegen eines anderen Akteurs sie nicht zurücknimmt
+        if entry.action in _RESTORE_ACTIONS and entry.target is not None:
+            _restore_actors[(guild.id, entry.target.id)] = (user.id, time.monotonic())
 
         # Der Serverbesitzer ist nicht bestrafbar → gar nicht erst bewerten
         if user.id == guild.owner_id:
@@ -648,7 +680,7 @@ class Shield(commands.Cog):
 
     async def _react_warn(self, guild: discord.Guild, user: discord.Member | discord.User, total_score: float) -> None:
         """Stufe 1: Rollen/Channels wiederherstellen, Bans nicht zurücknehmen, niemanden bestrafen."""
-        entries = _take_restore_entries(guild.id, include_bans=False)
+        entries = _take_restore_entries(guild.id, include_bans=False, actor_id=user.id)
         restore_results = None
         if entries:
             restore_results = await _restore_from_cache(guild, entries)
@@ -732,7 +764,7 @@ class Shield(commands.Cog):
                     )) is not None
 
         # Cache sofort leeren, damit keine doppelten Restores bei schnellen Folgeevents laufen
-        cached_entries = _take_restore_entries(guild.id, include_bans=True)
+        cached_entries = _take_restore_entries(guild.id, include_bans=True, actor_id=user.id)
         restore_results = None
         if cached_entries:
             restore_results = await _restore_from_cache(guild, cached_entries)

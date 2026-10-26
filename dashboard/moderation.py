@@ -2,6 +2,7 @@ import asyncio
 import discord
 from .registry import register_action, get_bot
 from systems.hierarchy import can_act_on_member, Issue
+from .discord_auth_check import get_acting_member
 
 _chunk_locks: dict[int, asyncio.Lock] = {}
 
@@ -26,23 +27,6 @@ async def ensure_members_cached(guild: discord.Guild) -> None:
             await asyncio.wait_for(guild.chunk(), timeout=10)
         except asyncio.TimeoutError:
             pass
-
-async def _get_acting_member(guild: discord.Guild, payload: dict) -> discord.Member:
-    """Holt den im Dashboard eingeloggten User als Member dieser Guild.
-    Die Auth-Middleware hat acting_user_id bereits auf Guild-Zugriff geprüft,
-    aber für Rechte-/Hierarchie-Checks brauchen wir das volle Member-Objekt."""
-    raw_user_id = payload.get("acting_user_id")
-    if not raw_user_id or not str(raw_user_id).isdigit():
-        raise ValueError("acting_user_id wird benötigt")
-
-    acting_user_id = int(raw_user_id)
-    member = guild.get_member(acting_user_id)
-    if member is None:
-        try:
-            member = await guild.fetch_member(acting_user_id)
-        except discord.NotFound:
-            raise ValueError("Du bist kein Mitglied dieses Servers (mehr)")
-    return member
 
 @register_action("moderation", "list-bans")
 async def list_bans(guild_id: int, payload: dict) -> dict:
@@ -79,7 +63,7 @@ async def unban(guild_id: int, payload: dict) -> dict:
         raise ValueError("Gültige user_id wird benötigt")
 
     guild = _guild_or_raise(guild_id)
-    actor = await _get_acting_member(guild, payload)
+    actor = await get_acting_member(guild, payload)
 
     # Unban kennt keine Rollen-Hierarchie (der User ist nicht mehr Member) —
     # hier reicht die reine Discord-Berechtigung des Dashboard-Nutzers.
@@ -103,7 +87,7 @@ async def remove_timeout(guild_id: int, payload: dict) -> dict:
         raise ValueError("Gültige user_id wird benötigt")
 
     guild = _guild_or_raise(guild_id)
-    actor = await _get_acting_member(guild, payload)
+    actor = await get_acting_member(guild, payload)
 
     member = guild.get_member(int(user_id))
     if member is None:

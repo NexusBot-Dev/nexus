@@ -15,6 +15,8 @@ class Issue(str, Enum):
     TARGET_ADMIN       = "target_admin"        # z.B. Timeout gegen Admins (Discord blockt das)
     ROLE_MANAGED       = "role_managed"        # Bot-/Integrations-/Booster-Rolle
     ROLE_DEFAULT       = "role_default"        # @everyone
+    ROLE_DANGEROUS     = "role_dangerous"      # Rolle mit Mod-/Admin-Rechten, nur für Admins freigegeben
+    ACTOR_MISSING_PERMS = "actor_missing_perms" # dem ausführenden User fehlt eine Permission
     NO_CHANNEL_ACCESS  = "no_channel_access"   # Channel nicht sichtbar
 
 @dataclass(frozen=True)
@@ -37,6 +39,10 @@ DANGEROUS_PERMS: frozenset[str] = frozenset({
     "administrator", "manage_guild", "manage_roles", "manage_channels",
     "manage_webhooks", "ban_members", "kick_members",
 })
+
+# Rechte, die eine selbst vergebbare Rolle (Level-Reward, Reaction Role) nur tragen darf,
+# wenn ein Admin sie einrichtet.
+SELF_ASSIGN_BLOCKED_PERMS: frozenset[str] = DANGEROUS_PERMS | {"moderate_members", "mention_everyone"}
 
 # ─── Basis-Bausteine ───────────────────────────────────────────────────────────
 
@@ -122,6 +128,40 @@ def can_manage_role(
 
     return OK
 
+def can_set_up_self_roles(guild: discord.Guild, actor: discord.Member) -> PermCheck:
+    """Darf `actor` überhaupt selbst vergebbare Rollen einrichten (Level-Rewards, Reaction Roles)?
+    Owner/Admin immer, sonst nur mit 'Rollen verwalten' — wie bei Discord selbst.
+    Vorab prüfen, bevor etwas angelegt wird (z.B. die Reaction-Role-Nachricht)."""
+    if actor.id == guild.owner_id or actor.guild_permissions.administrator:
+        return OK
+    if not actor.guild_permissions.manage_roles:
+        return PermCheck(Issue.ACTOR_MISSING_PERMS, missing=("manage_roles",))
+    return OK
+
+def can_grant_role(
+    guild: discord.Guild,
+    role: discord.Role,
+    actor: discord.Member,
+) -> PermCheck:
+    """Darf `actor` diese Rolle als selbst vergebbare Rolle einrichten (Level-Rewards, Reaction Roles)?
+    Strenger als can_manage_role: Der User braucht selbst 'Rollen verwalten', und Rollen mit
+    Mod-/Admin-Rechten bleiben Admins vorbehalten — eine Rolle unter der eigenen kann trotzdem
+    Rechte tragen, die der User selbst nicht hat."""
+    # Zuerst die Rechte des Users: sonst meldet z.B. die Hierarchie-Prüfung einen Folgefehler
+    if not (check := can_set_up_self_roles(guild, actor)):
+        return check
+
+    if not (check := can_manage_role(guild, role, actor=actor)):
+        return check
+
+    if actor.id == guild.owner_id or actor.guild_permissions.administrator:
+        return OK
+
+    if risky := tuple(p for p in sorted(SELF_ASSIGN_BLOCKED_PERMS) if getattr(role.permissions, p)):
+        return PermCheck(Issue.ROLE_DANGEROUS, subject=role.mention, missing=risky)
+
+    return OK
+
 # ─── Channels ──────────────────────────────────────────────────────────────────
 
 def can_use_channel(channel: discord.abc.GuildChannel, *perms: str) -> PermCheck:
@@ -196,6 +236,8 @@ _FALLBACKS: dict[Issue, str] = {
     Issue.TARGET_ADMIN:      "❌ Discord doesn't allow timing out members with Administrator ({subject}).",
     Issue.ROLE_MANAGED:      "❌ {subject} is managed by an integration and can't be assigned.",
     Issue.ROLE_DEFAULT:      "❌ @everyone can't be assigned.",
+    Issue.ROLE_DANGEROUS:    "❌ {subject} has moderation/admin permissions ({perms}). Only administrators can make it self-assignable.",
+    Issue.ACTOR_MISSING_PERMS: "❌ You're missing the following permissions: {perms}",
     Issue.NO_CHANNEL_ACCESS: "❌ I can't see {subject}. Please give Nexus access to that channel.",
 }
 

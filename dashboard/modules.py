@@ -9,15 +9,18 @@ async def toggle_modules(guild_id: int, payload: dict) -> dict:
     if not isinstance(changes, dict) or not changes:
         raise ValueError("Keine Änderungen übergeben")
 
-    for key in changes:
+    for key, enabled in changes.items():
         if key not in ALLOWED_MODULES:
             raise ValueError(f"Unbekanntes Modul: {key}")
+        # Strikt: bool("false") wäre True und würde das Modul einschalten
+        if not isinstance(enabled, bool):
+            raise ValueError(f"Ungültiger Wert für {key} (true/false erwartet)")
 
     if changes.get("moderation") is False:
         raise ValueError("Moderation ist ein Kern-Modul und kann nicht deaktiviert werden")
 
     for key, enabled in changes.items():
-        await db_settings.set_module(guild_id, key, bool(enabled))
+        await db_settings.set_module(guild_id, key, enabled)
 
     if changes.get("automod") is False:
         bot = get_bot()

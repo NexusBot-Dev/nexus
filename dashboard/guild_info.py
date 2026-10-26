@@ -22,7 +22,7 @@ async def get_guild_info(guild_id: int, payload: dict) -> dict:
     if guild is None:
         raise ValueError("Bot ist nicht (mehr) auf diesem Server")
 
-    hierarchy_ok = hierarchy_ok = check_bot_hierarchy(guild)
+    hierarchy_ok = check_bot_hierarchy(guild)
 
     return {
         "name": guild.name,

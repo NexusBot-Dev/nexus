@@ -1,7 +1,10 @@
 import discord
 from .registry import register_action, get_bot
 from database import db_levels
-from systems.hierarchy import can_use_channel
+from systems.hierarchy import can_use_channel, can_grant_role, format_issue
+from cogs.utils import get_lang
+from .discord_auth_check import get_acting_member
+from .health import plain_mentions
 
 MAX_EXCLUDED = 25
 _EXCLUDABLE = (discord.TextChannel, discord.ForumChannel, discord.CategoryChannel)
@@ -87,8 +90,10 @@ async def set_role(guild_id: int, payload: dict) -> dict:
     role = guild.get_role(int(role_id))
     if role is None:
         raise ValueError("Rolle existiert nicht auf diesem Server")
-    if role.managed or role.is_default():
-        raise ValueError("Diese Rolle kann nicht zugewiesen werden")
+
+    actor = await get_acting_member(guild, payload)
+    if not (check := can_grant_role(guild, role, actor)):
+        raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
 
     await db_levels.set_level_role(guild_id, level, int(role_id))
     return {"level": level, "role_id": role_id, "role_name": role.name, "role_color": f"#{role.color.value:06x}" if role.color.value else "#94a3b8"}

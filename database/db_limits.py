@@ -2,9 +2,9 @@ import time
 import aiomysql
 import database.database as db
 
-_limits_cache: dict[str, tuple[int, int]] = {}
+_limits_cache: dict[str, tuple[int, int]] = {}   # feature_key -> (free_limit, premium_limit)
 _cache_loaded_at: float = 0
-CACHE_DURATION = 86400
+CACHE_DURATION = 86400  # 24h
 
 async def _refresh_cache():
     global _cache_loaded_at

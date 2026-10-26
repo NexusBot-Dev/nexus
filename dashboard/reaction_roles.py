@@ -3,28 +3,16 @@ from .registry import register_action, get_bot
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
 from cogs.reaction_roles import _update_dropdown_message
+from cogs.utils import get_lang
+from systems.hierarchy import can_grant_role, can_set_up_self_roles, format_issue
+from .discord_auth_check import get_acting_member
+from .health import plain_mentions
 
 def _guild_or_raise(guild_id: int) -> discord.Guild:
     guild = get_bot().get_guild(guild_id)
     if guild is None:
         raise ValueError("Bot ist nicht (mehr) auf diesem Server")
     return guild
-
-async def _check_role_valid(guild: discord.Guild, role: discord.Role, acting_user_id: str | None):
-    if role.managed:
-        raise ValueError("Diese Rolle wird von einer Integration verwaltet und kann nicht genutzt werden")
-    if role >= guild.me.top_role:
-        raise ValueError("Diese Rolle steht über der Bot-Rolle — Hierarchie anpassen")
-
-    if acting_user_id and acting_user_id.isdigit() and guild.owner_id != int(acting_user_id):
-        member = guild.get_member(int(acting_user_id))
-        if member is None:
-            try:
-                member = await guild.fetch_member(int(acting_user_id))
-            except discord.NotFound:
-                member = None
-        if member and role >= member.top_role:
-            raise ValueError("Diese Rolle steht über deiner eigenen höchsten Rolle")
 
 @register_action("reaction_roles", "list-groups")
 async def list_groups(guild_id: int, payload: dict) -> dict:
@@ -91,6 +79,11 @@ async def create_message(guild_id: int, payload: dict) -> dict:
         raise ValueError("Dropdown-Modus ist ein Premium-Feature")
 
     guild = _guild_or_raise(guild_id)
+    # Vor dem Posten prüfen — sonst bliebe eine Nachricht zurück, an die der User keine Rolle hängen darf
+    actor = await get_acting_member(guild, payload)
+    if not (check := can_set_up_self_roles(guild, actor)):
+        raise ValueError(format_issue(check, await get_lang(guild_id)))
+
     channel = guild.get_channel(int(channel_id))
     if channel is None:
         raise ValueError("Channel existiert nicht (mehr)")
@@ -118,7 +111,6 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     emoji = (payload.get("emoji") or "").strip()
     mode = payload.get("mode", "toggle")
     group_id = payload.get("group_id")
-    acting_user_id = payload.get("acting_user_id")
 
     if not all([channel_id, message_id, role_id, emoji]):
         raise ValueError("channel_id, message_id, role_id und emoji werden benötigt")
@@ -129,7 +121,9 @@ async def add_entry(guild_id: int, payload: dict) -> dict:
     role = guild.get_role(int(role_id))
     if role is None:
         raise ValueError("Rolle existiert nicht auf diesem Server")
-    await _check_role_valid(guild, role, acting_user_id)
+    actor = await get_acting_member(guild, payload)
+    if not (check := can_grant_role(guild, role, actor)):
+        raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
 
     channel = guild.get_channel(int(channel_id))
     if channel is None:

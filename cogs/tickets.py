@@ -617,6 +617,15 @@ class TicketProblemModal(NexusModal):
         log.info("Ticket #%s (%s) für %s in Kategorie '%s' auf %s erstellt.",
                   ticket_number, ticket_channel.id, interaction.user, self.category_name, guild.name)
 
+def _ticket_matches(ticket: dict | None, interaction: discord.Interaction) -> bool:
+    """Die Ticket-ID kommt aus der custom_id — sicherstellen, dass das Ticket wirklich
+    zu diesem Server und diesem Channel gehört, bevor darauf gehandelt wird."""
+    return (
+        ticket is not None
+        and ticket["guild_id"] == interaction.guild_id
+        and ticket["channel_id"] == interaction.channel_id
+    )
+
 # ─── Support-Berechtigung ─────────────────────────────────────────────────────
 
 async def _is_support_for_category(member: discord.Member, category_id: int) -> bool:
@@ -1068,7 +1077,7 @@ class Tickets(commands.Cog):
             ticket_id = int(custom_id.removeprefix("nexus_ticket_close_request_"))
             ticket    = await db_tickets.get_ticket(ticket_id)
 
-            if ticket is None or ticket["status"] != "open":
+            if not _ticket_matches(ticket, interaction) or ticket["status"] != "open":
                 await interaction.response.send_message(
                     lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
                     ephemeral=True,
@@ -1104,7 +1113,7 @@ class Tickets(commands.Cog):
             ticket_id = int(custom_id.removeprefix("nexus_ticket_confirm_"))
             ticket    = await db_tickets.get_ticket(ticket_id)
 
-            if ticket is None or ticket["status"] != "pending_closure":
+            if not _ticket_matches(ticket, interaction) or ticket["status"] != "pending_closure":
                 await interaction.response.send_message(
                     lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
                     ephemeral=True,
@@ -1126,7 +1135,7 @@ class Tickets(commands.Cog):
             ticket_id = int(custom_id.removeprefix("nexus_ticket_decline_"))
             ticket    = await db_tickets.get_ticket(ticket_id)
 
-            if ticket is None or ticket["status"] != "pending_closure":
+            if not _ticket_matches(ticket, interaction) or ticket["status"] != "pending_closure":
                 await interaction.response.send_message(
                     lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
                     ephemeral=True,

@@ -69,7 +69,7 @@ async def get_guild_issues(guild: discord.Guild, settings: dict, lang: dict) -> 
         ("rules_channel_id",      lang.get("settings_rules", "📜 Rules Channel"),     ("send_messages", "embed_links")),
         ("ticket_log_channel_id", lang.get("diag_ticket_log", "🎫 Ticket log"),       ("send_messages", "embed_links", "attach_files")),
     ]
-    if settings.get("goodbye_enabled", True):
+    if settings.get("goodbye_enabled", False):
         channel_checks.append((
             "goodbye_channel_id", lang.get("diag_goodbye_channel", "👋 Goodbye channel"),
             ("send_messages", "embed_links"),

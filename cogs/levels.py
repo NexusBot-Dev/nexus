@@ -11,7 +11,7 @@ from cogs.utils import post_logging, get_lang, module_required
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.ui import NexusView, NexusModal, send_ephemeral
-from systems.hierarchy import can_use_channel, format_issue
+from systems.hierarchy import can_use_channel, can_grant_role, format_issue
 
 log = logging.getLogger(__name__)
 
@@ -542,6 +542,10 @@ class AddLevelRoleModal(NexusModal):
                     ),
                     ephemeral=True
                 )
+                return
+
+            if not (check := can_grant_role(select_interaction.guild, role, select_interaction.user)):
+                await select_interaction.response.send_message(format_issue(check, self.lang), ephemeral=True)
                 return
 
             await db_levels.set_level_role(self.guild_id, level, role.id)

@@ -16,6 +16,8 @@ CHANNEL_FIELDS = (
     "ticket_log_channel_id",
 )
 
+BOOL_FIELDS = ("announcements_enabled", "goodbye_enabled")
+
 ENABLE_NEEDS_CHANNEL = (
     ("goodbye_enabled",       "goodbye_channel_id",      "Bitte zuerst einen Goodbye-Channel wählen"),
     ("announcements_enabled", "announcement_channel_id", "Bitte zuerst einen Announcement-Channel wählen"),
@@ -48,10 +50,6 @@ async def update_settings(bot, guild_id: int, fields: dict) -> dict:
     if guild is None:
         raise ValueError("Bot ist nicht (mehr) auf diesem Server")
 
-    color_int = None
-    if fields.get("color"):
-        color_int = _parse_color(fields["color"])
-
     updates: dict = {}
     warnings: list[str] = []
 
@@ -73,11 +71,12 @@ async def update_settings(bot, guild_id: int, fields: dict) -> dict:
         if key in fields:
             updates[key] = _parse_channel_id(guild, fields[key])
 
-    if "announcements_enabled" in fields:
-        updates["announcements_enabled"] = bool(fields["announcements_enabled"])
-
-    if "goodbye_enabled" in fields:
-        updates["goodbye_enabled"] = bool(fields["goodbye_enabled"])
+    for key in BOOL_FIELDS:
+        if key in fields:
+            # Strikt: bool("false") wäre True und würde die Funktion einschalten
+            if not isinstance(fields[key], bool):
+                raise ValueError(f"Ungültiger Wert für {key} (true/false erwartet)")
+            updates[key] = fields[key]
 
     if any(flag in updates or channel in updates for flag, channel, _ in ENABLE_NEEDS_CHANNEL):
         stored = await db_settings.get_guild(guild_id) or {}
