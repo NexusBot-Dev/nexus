@@ -556,6 +556,9 @@ MESSAGES: dict[str, str] = {
     "shield_log_restore_no_admin": "⚠️ Nexus has no Administrator. Roles and channels with permissions Nexus doesn't have may not have been restored.",
     "shield_log_restore_roles": "Roles",
     "shield_log_restore_title": "♻️ Restored",
+    "honeypot_log_footer": "Nexus • Honeypot • Catch #{count}",
+    "honeypot_counter": "Nexus • Honeypot • 🍯 {count} caught",
+    "automod_honeypot_caught": "🍯 {count} caught so far",
 
     # ─── Tickets ────────────────────────────────────────────────────────
     "ticket_add_category_modal_title":     "Create Ticket Category",

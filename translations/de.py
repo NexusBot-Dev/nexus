@@ -556,6 +556,9 @@ MESSAGES: dict[str, str] = {
     "shield_log_restore_no_admin": "⚠️ Nexus hat kein Administrator-Recht. Rollen und Channels mit Berechtigungen, die Nexus selbst nicht besitzt, wurden eventuell nicht wiederhergestellt.",
     "shield_log_restore_roles": "Rollen",
     "shield_log_restore_title": "♻️ Wiederhergestellt",
+    "honeypot_log_footer": "Nexus • Honeypot • Fang Nr. {count}",
+    "honeypot_counter": "Nexus • Honeypot • 🍯 {count} gefangen",
+    "automod_honeypot_caught": "🍯 Bisher {count} gefangen",
 
     # ─── Tickets ────────────────────────────────────────────────────────
     "ticket_add_category_modal_title":     "Ticket-Kategorie erstellen",

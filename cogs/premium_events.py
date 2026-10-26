@@ -16,6 +16,7 @@ class PremiumEvents(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Discord feuert manche Events doppelt — kurzes Dedup-Fenster pro ID
         self._entitlement_dedup = TTLCache[int, bool](maxsize=1_000, ttl=60)
         self._subscription_dedup = TTLCache[int, bool](maxsize=1_000, ttl=60)
 
@@ -83,7 +84,9 @@ class PremiumEvents(commands.Cog):
         if ends is not None and ends <= datetime.now(timezone.utc):
             await remove_premium(self.bot, entitlement.guild_id, reason="Discord Store Abo ausgelaufen")
         elif ends is not None:
+            # Künftiges Ende: Datum übernehmen
             await set_premium_from_discord(self.bot, entitlement.guild_id, entitlement, reason="Discord Abo aktualisiert")
+        # ends is None: nichts anfassen. Kündigung/Wiederaufnahme (Datum) kommt über on_subscription_update.
 
     # ─── Subscriptions ──────────────────────────────────────────────────
 

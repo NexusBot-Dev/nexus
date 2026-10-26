@@ -64,12 +64,7 @@ class Welcome(commands.Cog):
                     channel.name, member.guild.name,
                 )
                 return
-            content = member.mention if str(member.id) in description else None
-            await channel.send(
-                content=content,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(users=[member]) if content else None,
-            )
+            await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
             log.info("%s ist %s beigetreten.", member, member.guild.name)
 
         except discord.Forbidden:

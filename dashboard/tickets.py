@@ -1,8 +1,13 @@
 import discord
+import logging
 from .registry import register_action, get_bot
 from database import db_settings, db_ticket_categories, db_tickets, db_limits
 from systems.premium import is_premium
 from cogs.tickets import _build_panel_embed, _build_panel_view
+from systems.hierarchy import can_apply_overwrites, format_issue
+from cogs.utils import get_lang
+
+log = logging.getLogger(__name__)
 
 def _guild_or_raise(guild_id: int) -> discord.Guild:
     guild = get_bot().get_guild(guild_id)
@@ -56,22 +61,26 @@ async def create_category(guild_id: int, payload: dict) -> dict:
             valid_role_ids.append(int(rid))
 
     bot_member = guild.me
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        bot_member: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, embed_links=True,
+            attach_files=True, read_message_history=True, manage_channels=True,
+        ),
+    }
+    check = can_apply_overwrites(guild, overwrites)
+    if not check:
+        raise ValueError(format_issue(check, await get_lang(guild_id)))
+
     try:
         discord_category = await guild.create_category(
-            name=name,
-            overwrites={
-                guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                bot_member: discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, embed_links=True,
-                    attach_files=True, read_message_history=True, manage_channels=True,
-                ),
-            },
-            reason="Nexus Dashboard — Kategorie erstellt",
+            name=name, overwrites=overwrites, reason="Nexus Dashboard — Kategorie erstellt",
         )
     except discord.Forbidden:
         raise ValueError("Fehlende Berechtigung zum Erstellen von Kategorien")
-    except discord.HTTPException as e:
-        raise ValueError(f"Discord-Fehler: {e}")
+    except discord.HTTPException:
+        log.exception("Dashboard: Kategorie erstellen auf %s fehlgeschlagen", guild_id)
+        raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
     category_id = await db_ticket_categories.create_category(
         guild_id=guild_id, name=name, category_channel_id=discord_category.id,
@@ -99,8 +108,9 @@ async def rename_category(guild_id: int, payload: dict) -> dict:
             await discord_category.edit(name=new_name, reason="Nexus Dashboard — umbenannt")
         except discord.Forbidden:
             raise ValueError("Fehlende Berechtigung zum Umbenennen")
-        except discord.HTTPException as e:
-            raise ValueError(f"Discord-Fehler: {e}")
+        except discord.HTTPException:
+            log.exception("Dashboard: Kategorie umbenennen auf %s fehlgeschlagen", guild_id)   # beim Löschen entsprechend
+            raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
     await db_ticket_categories.rename_category(int(category_id), guild_id, new_name)
     return {"id": category_id, "name": new_name}
@@ -151,8 +161,9 @@ async def delete_category(guild_id: int, payload: dict) -> dict:
             await discord_category.delete(reason="Nexus Dashboard — gelöscht")
         except discord.Forbidden:
             raise ValueError("Fehlende Berechtigung zum Löschen")
-        except discord.HTTPException as e:
-            raise ValueError(f"Discord-Fehler: {e}")
+        except discord.HTTPException:
+            log.exception("Dashboard: Kategorie löschen auf %s fehlgeschlagen", guild_id)
+            raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
     await db_ticket_categories.delete_category(int(category_id), guild_id)
     return {"id": category_id}

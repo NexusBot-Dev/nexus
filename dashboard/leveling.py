@@ -3,6 +3,53 @@ from .registry import register_action, get_bot
 from database import db_levels
 from systems.hierarchy import can_use_channel
 
+MAX_EXCLUDED = 25
+_EXCLUDABLE = (discord.TextChannel, discord.ForumChannel, discord.CategoryChannel)
+
+def _exclude_target(ch) -> dict:
+    return {
+        "id": str(ch.id),
+        "name": ch.name,
+        "type": "category" if isinstance(ch, discord.CategoryChannel) else "channel",
+        "category": ch.category.name if getattr(ch, "category", None) else None,
+    }
+
+@register_action("leveling", "get-excluded")
+async def get_excluded(guild_id: int, payload: dict) -> dict:
+    guild = get_bot().get_guild(guild_id)
+    if guild is None:
+        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+
+    excluded = await db_levels.get_excluded_channels(guild_id)
+    targets = [_exclude_target(c) for c in (*guild.categories, *guild.text_channels, *guild.forums)]
+    known = {t["id"] for t in targets}
+    return {
+        # Gelöschte Channels werden ausgeblendet und beim nächsten Speichern entfernt
+        "excluded_ids": [str(cid) for cid in sorted(excluded) if str(cid) in known],
+        "targets": targets,
+        "limit": MAX_EXCLUDED,
+    }
+
+@register_action("leveling", "set-excluded")
+async def set_excluded(guild_id: int, payload: dict) -> dict:
+    raw = payload.get("channel_ids")
+    if not isinstance(raw, list) or not all(str(i).isdigit() for i in raw):
+        raise ValueError("channel_ids muss eine Liste gültiger IDs sein")
+
+    ids = sorted({int(i) for i in raw})
+    if len(ids) > MAX_EXCLUDED:
+        raise ValueError(f"Maximal {MAX_EXCLUDED} Einträge möglich")
+
+    guild = get_bot().get_guild(guild_id)
+    if guild is None:
+        raise ValueError("Bot ist nicht (mehr) auf diesem Server")
+    for cid in ids:
+        if not isinstance(guild.get_channel(cid), _EXCLUDABLE):
+            raise ValueError("Channel existiert nicht (mehr) oder kann nicht ausgeschlossen werden")
+
+    await db_levels.set_excluded_channels(guild_id, ids)
+    return {"excluded_ids": [str(cid) for cid in ids]}
+
 @register_action("leveling", "list-roles")
 async def list_roles(guild_id: int, payload: dict) -> dict:
     bot = get_bot()

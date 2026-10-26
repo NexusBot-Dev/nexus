@@ -30,7 +30,10 @@ class GoodbyeConfigView(NexusView):
     @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[discord.ChannelType.text])
     async def select_goodbye_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         channel = select.values[0]
-        await db_settings.update_guild(interaction.guild_id, goodbye_channel_id=channel.id)
+        # Channel wählen = Opt-in: Goodbye wird gleichzeitig aktiviert.
+        await db_settings.update_guild(interaction.guild_id, goodbye_channel_id=channel.id, goodbye_enabled=True)
+        self.enabled = True
+        self._update_button()
         await interaction.response.edit_message(
             embed=await _goodbye_status_embed(interaction.guild_id, self.lang),
             view=self,
@@ -38,6 +41,16 @@ class GoodbyeConfigView(NexusView):
 
     @discord.ui.button(label="Goodbye: ON", style=discord.ButtonStyle.success)
     async def toggle_goodbye(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Einschalten ergibt ohne Channel keinen Sinn (es gibt keinen Log-Channel-Fallback mehr)
+        if not self.enabled:
+            settings = await db_settings.get_guild(interaction.guild_id) or {}
+            if not settings.get("goodbye_channel_id"):
+                await interaction.response.send_message(
+                    self.lang.get("announcement_need_channel", "❌ Please select a channel first."),
+                    ephemeral=True,
+                )
+                return
+
         self.enabled = not self.enabled
         await db_settings.update_guild(interaction.guild_id, goodbye_enabled=self.enabled)
         self._update_button()
@@ -47,20 +60,20 @@ class GoodbyeConfigView(NexusView):
         )
 
 async def _goodbye_status_embed(guild_id: int, lang: dict[str, str]) -> discord.Embed:
-    settings = await db_settings.get_guild(guild_id)
+    settings = await db_settings.get_guild(guild_id) or {}
     color    = await db_settings.get_color(guild_id)
 
-    channel_id = settings.get("goodbye_channel_id") or settings.get("log_channel_id")
-    ch_display = f"<#{channel_id}>" if channel_id else lang.get("announcement_no_channel", "Nicht festgelegt")
+    channel_id = settings.get("goodbye_channel_id")
+    ch_display = f"<#{channel_id}>" if channel_id else lang.get("announcement_no_channel", "Not set")
     status = (
         f"{NexusEmojis.CHECKMARK} {lang.get('setup_on', 'ON')}"
-        if settings.get("goodbye_enabled", True)
+        if settings.get("goodbye_enabled", False)
         else f"❌ {lang.get('setup_off', 'OFF')}"
     )
 
     embed = discord.Embed(
         title=lang.get("goodbye_title", "👋 Goodbye!"),
-        description=lang.get("goodbye_description", "{user} has left the server.").format(user="@Beispiel-User"),
+        description=lang.get("goodbye_description", "{user} has left the server.").format(user="**Username**"),
         color=color,
     )
     embed.add_field(name=lang.get("settings_goodbye_status", "Status"), value=status, inline=True)
@@ -98,7 +111,7 @@ class Goodbye(commands.Cog):
         settings = await db_settings.get_or_create_guild(interaction.guild_id)
 
         embed = await _goodbye_status_embed(interaction.guild_id, lang)
-        view  = GoodbyeConfigView(lang, settings.get("goodbye_enabled", True))
+        view  = GoodbyeConfigView(lang, settings.get("goodbye_enabled", False))
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 
@@ -114,10 +127,10 @@ class Goodbye(commands.Cog):
             if settings is None:
                 return
 
-            if not settings.get("goodbye_enabled", True):
+            if not settings.get("goodbye_enabled", False):
                 return
 
-            channel_id = settings.get("goodbye_channel_id") or settings.get("log_channel_id")
+            channel_id = settings.get("goodbye_channel_id")
             if not channel_id:
                 return
 
@@ -137,7 +150,9 @@ class Goodbye(commands.Cog):
             color = await db_settings.get_color(member.guild.id)
             embed = discord.Embed(
                 title=lang.get("goodbye_title", "👋 Goodbye!"),
-                description=lang.get("goodbye_description", "{user} has left the server.").format(user=member.mention),
+                description=lang.get("goodbye_description", "{user} has left the server.").format(
+                    user=f"**{member.display_name}**"
+                ),
                 color=color,
             )
             embed.set_thumbnail(url=member.display_avatar.url)

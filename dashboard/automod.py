@@ -1,11 +1,13 @@
 import discord
 from .registry import register_action, get_bot
-from database import db_settings, db_automod
+from database import db_settings, db_automod, db_honeypot
 from cogs.automod import (
        _get_nexus_rules, _get_existing_rule_by_type, _build_actions,
        AUTOMOD_RULES,
    )
 from cogs.honeypot import _slugify_channel_name
+from cogs.utils import get_lang
+from systems.hierarchy import can_apply_overwrites, format_issue
 
 def _guild_or_raise(guild_id: int) -> discord.Guild:
     guild = get_bot().get_guild(guild_id)
@@ -20,6 +22,7 @@ async def status(guild_id: int, payload: dict) -> dict:
     settings = await db_settings.get_guild(guild_id)
     shield_enabled = bool(await db_automod.get_antinuke(guild_id))
     honeypot_channel_id = settings.get("honeypot_channel_id") if settings else None
+    honeypot = await db_honeypot.get_honeypot_settings(guild_id)
 
     keywords_rule = active_rules.get("keywords")
     return {
@@ -29,6 +32,8 @@ async def status(guild_id: int, payload: dict) -> dict:
         "keywords": list(keywords_rule.trigger.keyword_filter) if keywords_rule else [],
         "shield_enabled": shield_enabled,
         "honeypot_channel_id": str(honeypot_channel_id) if honeypot_channel_id else None,
+        "honeypot_timeout_days": honeypot["timeout_days"],
+        "honeypot_catches": honeypot["catches"],
     }
 
 @register_action("automod", "toggle-rule")
@@ -120,8 +125,15 @@ async def create_honeypot(guild_id: int, payload: dict) -> dict:
 
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_messages=True),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, manage_messages=True,
+            embed_links=True, read_message_history=True,
+        ),
     }
+    check = can_apply_overwrites(guild, overwrites)
+    if not check:
+        raise ValueError(format_issue(check, await get_lang(guild_id)))
+
     channel = await guild.create_text_channel(
         name=_slugify_channel_name(name), overwrites=overwrites, reason="Nexus Dashboard — Honeypot erstellt",
     )
@@ -133,9 +145,10 @@ async def create_honeypot(guild_id: int, payload: dict) -> dict:
     color = await db_settings.get_color(guild_id)
     embed = discord.Embed(title="⚠️ Warning", description=warn_text, color=color)
     embed.set_footer(text="Nexus • Honeypot")
-    await channel.send(embed=embed)
+    sent = await channel.send(embed=embed)
 
     await db_settings.update_guild(guild_id, honeypot_channel_id=channel.id)
+    await db_honeypot.update_honeypot_settings(guild_id, message_id=sent.id)
     return {"channel_id": str(channel.id), "channel_name": channel.name}
 
 @register_action("automod", "delete-honeypot")
@@ -154,4 +167,17 @@ async def delete_honeypot(guild_id: int, payload: dict) -> dict:
             pass
 
     await db_settings.update_guild(guild_id, honeypot_channel_id=None)
+    await db_honeypot.update_honeypot_settings(guild_id, message_id=None)   # Fang-Zähler bleibt erhalten
     return {"deleted": True}
+
+@register_action("automod", "set-honeypot-timeout")
+async def set_honeypot_timeout(guild_id: int, payload: dict) -> dict:
+    try:
+        days = int(payload.get("days"))
+    except (TypeError, ValueError):
+        raise ValueError("Ungültige Anzahl Tage")
+    if not 1 <= days <= db_honeypot.MAX_TIMEOUT_DAYS:
+        raise ValueError(f"Die Dauer muss zwischen 1 und {db_honeypot.MAX_TIMEOUT_DAYS} Tagen liegen")
+
+    await db_honeypot.update_honeypot_settings(guild_id, timeout_days=days)
+    return {"timeout_days": days}
