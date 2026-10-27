@@ -9,6 +9,13 @@ def _read_secret(env_var: str, default_path: str) -> str:
         raise RuntimeError(f"Secret-Datei nicht gefunden: {path}")
 
 APPLICATION_ID = 1510643364104765460
+STATUS_CHANNEL_ID: int = 0 # Replace with your actual Channel ID
+
+# Nexus Premium: Discord-Subscription-SKU (Server-Abo, monatlich)
+PREMIUM_SKU_ID: int = 0 # Replace with your actual SKU ID
+
+# Bot Token
+DISCORD_TOKEN = _read_secret("DISCORD_TOKEN_FILE", "/run/secrets/discord_token")
 
 # Support Server-ID
 SUPPORT_GUILD_ID: int = 1516821048421781674
@@ -21,8 +28,8 @@ DASHBOARD_TOKEN: str = _read_secret(
 )
 
 # Nexus Branding
-NEXUS_COLOR: int = 0x00F5D4
-NEXUS_FOOTER: str = "Nexus • trynexus.de"
+NEXUS_COLOR: int = int(os.getenv("NEXUS_COLOR", "0x00F5D4"), 0)
+NEXUS_FOOTER: str = os.getenv("NEXUS_FOOTER", "Nexus • trynexus.de")
 
 # Bot invite URL
 INVITE_URL = f"https://discord.com/oauth2/authorize?client_id={APPLICATION_ID}"
