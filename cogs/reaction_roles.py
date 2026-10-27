@@ -253,9 +253,6 @@ class EmojiInputView(NexusView):
 
     @discord.ui.button(label="😀 Select Emoji", style=discord.ButtonStyle.primary)
     async def emoji_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Ab hier übernimmt die wait_for-Schleife unten; diese View wird so oder so
-        # durch eine neue ersetzt, deshalb hier schon stoppen (verhindert, dass ihr
-        # 300s-Timeout während der bis zu 60s langen Wartezeit dazwischenfunkt).
         self.stop()
         # 1. Update der Setup-Nachricht: Warte auf Reaktion
         await interaction.response.edit_message(
@@ -283,7 +280,6 @@ class EmojiInputView(NexusView):
                 except discord.HTTPException:
                     pass
 
-                # Custom-Emoji von einem Server, auf dem Nexus nicht ist → kann Nexus nicht nutzen
                 if isinstance(reaction.emoji, discord.PartialEmoji) or (
                     isinstance(reaction.emoji, discord.Emoji) and not reaction.emoji.is_usable()
                 ):

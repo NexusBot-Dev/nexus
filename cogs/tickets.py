@@ -698,13 +698,19 @@ async def _finalize_close(
     closed_by_type: str,
     closed_by_user_id: int | None = None,
     close_reason: str | None = None,
-):
+) -> bool:
+    """Schließt das Ticket endgültig. False, wenn es schon geschlossen war.
+
+    Der Status wird ZUERST in der DB gesetzt: Transcript, DM und Log dauern einige
+    Sekunden, und in dieser Zeit darf kein zweiter Close (Doppelklick, Auto-Timeout)
+    und kein offenes "Ablehnen"-Modal mehr greifen."""
+    if not await db_tickets.close_ticket(ticket["id"], closed_by_type, closed_by_user_id, close_reason):
+        return False
+
     channel = guild.get_channel(ticket["channel_id"])
     if channel is None:
-        # Channel existiert schon nicht mehr (z.B. manuell gelöscht) — DB trotzdem
-        # sauber abschließen, kein Transcript möglich, kein Beinbruch.
-        await db_tickets.close_ticket(ticket["id"], closed_by_type, closed_by_user_id, close_reason)
-        return
+        # Channel existiert schon nicht mehr (z.B. manuell gelöscht) — kein Transcript möglich
+        return True
 
     transcript_text = await _generate_transcript_text(channel)
 
@@ -766,8 +772,38 @@ async def _finalize_close(
             except discord.HTTPException as e:
                 log.exception("Konnte Ticket-Transcript nicht in Log-Channel %s posten: %s", log_channel_id, e)
 
-    await db_tickets.close_ticket(ticket["id"], closed_by_type, closed_by_user_id, close_reason)
     log.info("Ticket #%s (%s) auf %s geschlossen (%s).", ticket["ticket_number"], channel.id, guild.name, closed_by_type)
+    return True
+
+async def _reject_stale_decision(
+    interaction: discord.Interaction, ticket: dict | None, lang: dict, *, declining: bool,
+) -> None:
+    """Bestätigen/Ablehnen auf einer Schließ-Anfrage, die nicht mehr gilt: passende
+    Meldung je nach aktuellem Status, und die veralteten Buttons verschwinden."""
+    if ticket is not None and ticket["status"] == "closed":
+        if declining:
+            text = lang.get("ticket_reopen_invalid", "❌ This ticket can no longer be reopened.")
+        else:
+            text = lang.get("ticket_already_closed", "❌ This ticket is already closed.")
+    else:
+        # Ticket wurde inzwischen wieder geöffnet (oder existiert nicht mehr)
+        text = lang.get("ticket_close_request_outdated", "❌ This close request is no longer active.")
+    await interaction.response.send_message(text, ephemeral=True)
+
+    # Nur Buttons im eigenen Ticket-Channel anfassen — bei fremder channel_id ist die
+    # custom_id manipuliert bzw. kopiert, die Nachricht gehört dann nicht hierher
+    if ticket is None or ticket["channel_id"] == interaction.channel_id:
+        await _remove_buttons(interaction.message)
+
+async def _remove_buttons(message: discord.Message | None) -> None:
+    """Bestätigen/Ablehnen-Buttons nach der Entscheidung entfernen — sonst bleiben sie
+    unter alten Schließ-Anfragen klickbar. Best effort."""
+    if message is None:
+        return
+    try:
+        await message.edit(view=None)
+    except discord.HTTPException:
+        pass
 
 # ─── Schließen-Flow — Views & Modals ──────────────────────────────────────────
 
@@ -815,7 +851,15 @@ class DeclineReasonModal(NexusModal):
         await interaction.response.defer()
         lang = self.lang
 
-        await db_tickets.reopen_ticket(self.ticket["id"])
+        # Zwischen Klick und Absenden kann das Ticket per /force_close oder Timeout
+        # geschlossen worden sein — dann darf es hier nicht wieder aufgehen
+        if not await db_tickets.reopen_ticket(self.ticket["id"]):
+            await _remove_buttons(interaction.message)
+            await interaction.followup.send(
+                lang.get("ticket_reopen_invalid", "❌ This ticket can no longer be reopened."), ephemeral=True
+            )
+            return
+        await _remove_buttons(interaction.message)
 
         channel = interaction.channel
         member = await get_member_safe(interaction.guild, self.ticket["user_id"])
@@ -851,12 +895,17 @@ class ForceCloseReasonModal(NexusModal):
         await interaction.response.defer(ephemeral=True)
         lang = self.lang
 
-        await _finalize_close(
+        closed = await _finalize_close(
             interaction.client, interaction.guild, self.ticket, lang,
             closed_by_type="support_forced",
             closed_by_user_id=interaction.user.id,
             close_reason=self.reason_input.value,
         )
+        if not closed:
+            await interaction.followup.send(
+                lang.get("ticket_already_closed", "❌ This ticket is already closed."), ephemeral=True
+            )
+            return
         await interaction.followup.send(
             lang.get("ticket_force_closed_success", "{nexus_checkmark} Ticket has been permanently closed.").format(
                 nexus_checkmark=NexusEmojis.CHECKMARK
@@ -1091,7 +1140,13 @@ class Tickets(commands.Cog):
                 )
                 return
 
-            await db_tickets.request_closure(ticket_id)
+            if not await db_tickets.request_closure(ticket_id):
+                # Ein anderes Teammitglied war schneller
+                await interaction.response.send_message(
+                    lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
+                    ephemeral=True,
+                )
+                return
 
             member = await get_member_safe(interaction.guild, ticket["user_id"])
             if member is not None:
@@ -1114,10 +1169,7 @@ class Tickets(commands.Cog):
             ticket    = await db_tickets.get_ticket(ticket_id)
 
             if not _ticket_matches(ticket, interaction) or ticket["status"] != "pending_closure":
-                await interaction.response.send_message(
-                    lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
-                    ephemeral=True,
-                )
+                await _reject_stale_decision(interaction, ticket, lang, declining=False)
                 return
             if interaction.user.id != ticket["user_id"]:
                 await interaction.response.send_message(
@@ -1127,7 +1179,11 @@ class Tickets(commands.Cog):
                 return
 
             await interaction.response.defer()
-            await _finalize_close(self.bot, interaction.guild, ticket, lang, closed_by_type="user_confirmed")
+            await _remove_buttons(interaction.message)
+            if not await _finalize_close(self.bot, interaction.guild, ticket, lang, closed_by_type="user_confirmed"):
+                await interaction.followup.send(
+                    lang.get("ticket_already_closed", "❌ This ticket is already closed."), ephemeral=True
+                )
             return
 
         # ── User lehnt die Schließung ab ──
@@ -1136,10 +1192,7 @@ class Tickets(commands.Cog):
             ticket    = await db_tickets.get_ticket(ticket_id)
 
             if not _ticket_matches(ticket, interaction) or ticket["status"] != "pending_closure":
-                await interaction.response.send_message(
-                    lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
-                    ephemeral=True,
-                )
+                await _reject_stale_decision(interaction, ticket, lang, declining=True)
                 return
             if interaction.user.id != ticket["user_id"]:
                 await interaction.response.send_message(

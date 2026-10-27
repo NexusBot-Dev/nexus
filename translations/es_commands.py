@@ -128,7 +128,7 @@ COMMANDS: dict[str, str] = {
     "cmd_support_module_config_desc":        "Muestra la configuración de un módulo del servidor",
     "cmd_support_module_config_param_desc":  "¿Qué módulo quieres ver?",
     "cmd_support_grant_premium_desc":        "Regala Premium temporal al servidor",
-    "cmd_support_grant_premium_days_desc":   "Duración en días (1–365)",
+    "cmd_support_grant_premium_days_desc":   "Duración en días (1–14)",
     "cmd_support_grant_premium_reason_desc": "Motivo de la concesión (se registra)",
 
     # ─── Giveaway Commands ──────────────────────────────────────────

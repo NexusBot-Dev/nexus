@@ -85,41 +85,52 @@ async def get_open_tickets_for_guild(guild_id: int) -> list[dict]:
 
 # ─── Status-Übergänge ─────────────────────────────────────────────────────────
 
-async def request_closure(ticket_id: int):
+# Alle Übergänge prüfen den erwarteten Ausgangsstatus im UPDATE selbst und melden per
+# Rückgabewert, ob sie gegriffen haben. Damit können veraltete Buttons/Modals oder
+# gleichzeitige Klicks keinen Status mehr überschreiben (z.B. ein geschlossenes Ticket
+# über einen alten "Ablehnen"-Button wieder öffnen).
+
+async def request_closure(ticket_id: int) -> bool:
     """Support klickt 'Ticket schließen' — Status wechselt zu pending_closure,
-    der Zeitstempel ist die Referenz für den späteren 72h-Timeout-Check."""
+    der Zeitstempel ist die Referenz für den späteren 72h-Timeout-Check.
+    False, wenn das Ticket nicht (mehr) 'open' ist."""
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 """UPDATE tickets
                    SET status = 'pending_closure', closure_requested_at = NOW()
-                   WHERE id = %s""",
+                   WHERE id = %s AND status = 'open'""",
                 (ticket_id,),
             )
+            return cur.rowcount > 0
 
-async def reopen_ticket(ticket_id: int):
+async def reopen_ticket(ticket_id: int) -> bool:
     """User lehnt die Schließung ab — zurück auf 'open', Timeout-Referenz wird gelöscht,
-    damit ein späteres erneutes 'schließen' wieder frisch bei 0h startet."""
+    damit ein späteres erneutes 'schließen' wieder frisch bei 0h startet.
+    False, wenn das Ticket nicht (mehr) auf 'pending_closure' steht — ein geschlossenes
+    Ticket lässt sich so nie wieder öffnen."""
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 """UPDATE tickets
                    SET status = 'open', closure_requested_at = NULL
-                   WHERE id = %s""",
+                   WHERE id = %s AND status = 'pending_closure'""",
                 (ticket_id,),
             )
+            return cur.rowcount > 0
 
 async def close_ticket(
     ticket_id: int,
     closed_by_type: str,
     closed_by_user_id: int | None = None,
     close_reason: str | None = None,
-):
+) -> bool:
     """Finales Schließen — egal ob durch User-Bestätigung, Auto-Timeout oder
     Support-Force-Close. Setzt gleichzeitig die Löschfrist (jetzt + 24h),
     damit der Deletion-Task unabhängig vom Schließ-Grund einheitlich greift.
 
     closed_by_type: 'user_confirmed' | 'auto_timeout' | 'support_forced'
+    False, wenn das Ticket bereits geschlossen ist.
     """
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -131,9 +142,10 @@ async def close_ticket(
                        closed_by_user_id = %s,
                        close_reason = %s,
                        scheduled_deletion_at = NOW() + INTERVAL %s HOUR
-                   WHERE id = %s""",
+                   WHERE id = %s AND status <> 'closed'""",
                 (closed_by_type, closed_by_user_id, close_reason, DELETION_DELAY_HOURS, ticket_id),
             )
+            return cur.rowcount > 0
 
 # ─── Für die beiden tasks.loop (Timeout-Check & Deletion-Check) ──────────────
 

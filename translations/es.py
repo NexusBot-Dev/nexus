@@ -28,6 +28,8 @@ MESSAGES: dict[str, str] = {
     "perm_issue_target_admin":      "❌ Discord no permite aislar (timeout) a miembros con permisos de Administrador ({subject}).",
     "perm_issue_role_managed":      "❌ {subject} está gestionado por una integración y no se puede asignar.",
     "perm_issue_role_default":      "❌ @everyone no se puede asignar.",
+    "perm_issue_role_dangerous":    "❌ {subject} tiene permisos de moderación/administración ({perms}). Solo los administradores pueden hacerlo autoasignable.",
+    "perm_issue_actor_missing_perms": "❌ Te faltan los siguientes permisos: {perms}",
     "perm_issue_no_channel_access": "❌ No puedo ver {subject}. Por favor, dale acceso al canal a Nexus.",
 
     # ─── Diagnose ─────────────────────────────────────────────────────
@@ -617,6 +619,8 @@ MESSAGES: dict[str, str] = {
     "ticket_created_intro_title":          "🎫 Ticket #{number}",
     "ticket_created_success":              "{nexus_checkmark} Tu ticket ha sido creado: {channel}",
     "ticket_close_request_invalid":        "❌ Este ticket no puede cerrarse en este momento.",
+    "ticket_reopen_invalid":               "❌ Este ticket ya no se puede reabrir.",
+    "ticket_close_request_outdated":       "❌ Esta solicitud de cierre ya no está activa.",
     "ticket_pending_closure_title":        "🔒 Cerrando ticket",
     "ticket_pending_closure_desc":         "<@{user_id}>, ¿ha quedado resuelto tu problema? Por favor, confirma o cancela.",
     "ticket_only_creator":                 "❌ Solo el creador de este ticket puede confirmar esto.",
