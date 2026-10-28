@@ -13,7 +13,6 @@ from systems.premium import is_premium
 from systems.ui import NexusView, NexusModal
 
 ALL_TIMEZONES = sorted(list(zoneinfo.available_timezones()))
-COLOR_BETA_GUILDS = {DEV_GUILD_ID}
 
 log = logging.getLogger(__name__)
 
@@ -201,9 +200,6 @@ class SettingsView(NexusView):
         self.change_welcome.label      = str(lang.get("welcome_cnl_label", "👋 Change Welcome-Channel"))
         self.change_boost.label        = str(lang.get("boost_cnl_label", "Change Boost-Channel"))
         self.change_color.label        = str(lang.get("color_btn_label", "🎨 Embed color"))
-
-        if guild_id not in COLOR_BETA_GUILDS:
-            self.remove_item(self.change_color)
 
     @discord.ui.select(
         options=[

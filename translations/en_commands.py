@@ -115,6 +115,8 @@ COMMANDS: dict[str, str] = {
     "cmd_ticket_panel_desc":        "Posts the ticket panel with category buttons",
     "cmd_ticket_panel_channel_desc":"Which channel should the panel be posted in?",
     "cmd_force_close_desc":         "Force-closes a ticket (reason required)",
+    "cmd_ticket_settings_desc": "Set when tickets close automatically and when channels are deleted",
+    "cmd_ticket_panel_channel_desc": "Channel for the panel (only needed for the first panel or to move it)",
 
     # ─── Boost Commands ─────────────────────────────────────────────
     "cmd_boost_message_desc": "Manage boost messages",

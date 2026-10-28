@@ -111,6 +111,7 @@ MODULE_INFO = {
             "edit_category":    "help_cmd_edit_category",
             "ticket_panel":     "help_cmd_ticket_panel",
             "force_close":      "help_cmd_force_close",
+            "ticket_settings":  "help_cmd_ticket_settings",
         }
     },
     "Giveaways": {

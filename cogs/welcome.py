@@ -9,11 +9,17 @@ from config import NEXUS_FOOTER
 
 log = logging.getLogger(__name__)
 
+def _display_name(member: discord.Member) -> str:
+    return discord.utils.escape_markdown(member.display_name)
+
 def render_welcome_template(template: str, member: discord.Member) -> str:
+    """Mentions in Embeds löst Discord nur auf, wenn der Client des Betrachters den User
+    schon kennt — bei frisch beigetretenen Membern fast nie, dann steht dort roh <@id>.
+    Deshalb wird {user} im Embed als fetter Anzeigename gerendert."""
     return (
         template
-        .replace("{user}", member.mention)
-        .replace("{username}", member.display_name)
+        .replace("{user}", f"**{_display_name(member)}**")
+        .replace("{username}", _display_name(member))
         .replace("{server}", member.guild.name)
         .replace("{membercount}", str(member.guild.member_count))
     )
@@ -47,7 +53,7 @@ class Welcome(commands.Cog):
             else:
                 description = lang.get(
                     "welcome_description", "Hey {user}, glad you're here!\nYou are member **#{count}**."
-                ).format(user=member.mention, count=member.guild.member_count)
+                ).format(user=f"**{_display_name(member)}**", count=member.guild.member_count)
 
             embed = discord.Embed(
                 title=lang.get("welcome_title", "👋 Welcome!"),

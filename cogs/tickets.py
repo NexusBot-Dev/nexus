@@ -4,15 +4,41 @@ import io
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from database import db_settings, db_ticket_categories, db_tickets, db_limits, db_support
+from database import db_settings, db_ticket_categories, db_tickets, db_limits, db_support, db_ticket_settings
 from systems.premium import is_premium
 from cogs.utils import get_lang, module_required, get_member_safe
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.hierarchy import can_apply_overwrites, can_use_channel, format_issue
+from systems.ticket_panel import PanelError, publish_panel, refresh_panel, import_panel
 from systems.ui import NexusView, NexusModal, report_interaction_error
 
 log = logging.getLogger(__name__)
+
+# ─── Fristen (Anzeige) ───────────────────────────────────────────────────────
+
+DURATION_FALLBACKS = {1: "1 hour", 12: "12 hours", 24: "24 hours", 48: "48 hours", 72: "72 hours", 168: "7 days"}
+CLOSE_TYPE_FALLBACKS = {
+    "user_confirmed": "Confirmed by the user",
+    "auto_timeout":   "Closed automatically (no response)",
+    "support_forced": "Force-closed by the team",
+}
+
+def _duration(hours: int, lang: dict) -> str:
+    return lang.get(f"ticket_dur_{hours}", DURATION_FALLBACKS.get(hours, f"{hours} h"))
+
+def _panel_error_text(err: PanelError, lang: dict, channel=None) -> str:
+    if err.code == "no_categories":
+        return lang.get("ticket_panel_no_categories", "❌ No ticket category exists yet. Create one first with `/add_category`.")
+    if err.code == "no_channel":
+        return lang.get("ticket_panel_need_channel", "❌ There is no panel yet — please choose a channel.")
+    if err.code == "no_permission":
+        return lang.get("ticket_panel_no_permission", "❌ I can't send messages in {channel}.").format(
+            channel=channel.mention if channel else "—"
+        )
+    if err.code == "not_a_panel":
+        return lang.get("ticket_panel_not_a_panel", "❌ This message isn't a Nexus ticket panel.")
+    return lang.get("error_generic", "Something went wrong. Please try again later.")
 
 async def _set_ticket_write_access(channel: discord.TextChannel, member: discord.Member, can_send: bool) -> bool:
     """Schreibrechte des Ticket-Erstellers setzen. Scheitert still (mit Log), damit der Ticket-Flow nicht abbricht."""
@@ -35,6 +61,24 @@ def _category_slug(name: str) -> str:
     slug = re.sub(r"[\s_]+", "-", slug)                      # Leerzeichen -> Bindestrich
     slug = re.sub(r"-+", "-", slug).strip("-")                # doppelte Bindestriche glätten
     return slug or "ticket"  # Fallback, falls der Name nur aus Emojis bestand
+
+def _assignable_roles(roles) -> list[discord.Role]:
+    """Rollen, die als Ticket-Zugriff gespeichert werden dürfen. @everyone würde das
+    view_channel=False im Ticket überschreiben und alle Tickets öffentlich machen,
+    Bot-/Integrationsrollen ergeben keinen Sinn — gleicher Filter wie im Dashboard."""
+    return [role for role in roles if not role.is_default() and not role.managed]
+
+async def _drop_if_channel_gone(guild: discord.Guild, ticket: dict | None) -> dict | None:
+    """Offenes Ticket, dessen Channel nicht mehr existiert: Eintrag entfernen, None zurückgeben."""
+    if ticket is None or guild.get_channel(ticket["channel_id"]) is not None:
+        return ticket
+    await db_support.revoke_access(ticket["channel_id"])
+    await db_tickets.delete_ticket_record(ticket["id"])
+    log.info("Ticket #%s auf %s: Channel existiert nicht mehr, Eintrag entfernt.", ticket["ticket_number"], guild.name)
+    return None
+
+def _category_gone_text(lang: dict) -> str:
+    return lang.get("ticket_category_not_found", "❌ This category was not found.")
 
 # ─── /add_category — Schritt 1: Modal für den Namen ──────────────────────────
 
@@ -94,6 +138,7 @@ class AddCategoryModal(NexusModal):
             name=name,
             category_channel_id=discord_category.id,
         )
+        await refresh_panel(interaction.guild)
 
         embed = discord.Embed(
             title=self.lang.get("ticket_category_created_title", "{nexus_checkmark} Category created!").format(
@@ -152,11 +197,12 @@ class RoleSelectView(NexusView):
         max_values=25,
     )
     async def select_roles(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        role_ids = [role.id for role in select.values]
+        roles    = _assignable_roles(select.values)
+        role_ids = [role.id for role in roles]
         await db_ticket_categories.set_category_roles(self.category_id, role_ids)
 
         if role_ids:
-            mentions = ", ".join(role.mention for role in select.values)
+            mentions = ", ".join(role.mention for role in roles)
             content = self.lang.get(
                 "ticket_roles_saved", "{nexus_checkmark} These roles now have access: {roles}"
             ).format(nexus_checkmark=NexusEmojis.CHECKMARK, roles=mentions)
@@ -220,6 +266,10 @@ class CategoryEditView(NexusView):
         wird nach jeder Änderung aufgerufen, damit die View offen bleiben kann
         und der Admin mehrere Dinge in einem Zug bearbeiten kann."""
         category = await db_ticket_categories.get_category(self.category_id, interaction.guild_id)
+        if category is None:
+            self.stop()
+            await interaction.edit_original_response(content=_category_gone_text(self.lang), embed=None, view=None)
+            return
         role_ids = await db_ticket_categories.get_category_roles(self.category_id)
         color    = await db_settings.get_color(interaction.guild_id)
         await interaction.edit_original_response(
@@ -230,6 +280,9 @@ class CategoryEditView(NexusView):
     @discord.ui.button(label="Rename", style=discord.ButtonStyle.secondary)
     async def rename_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         category = await db_ticket_categories.get_category(self.category_id, interaction.guild_id)
+        if category is None:
+            await interaction.response.send_message(_category_gone_text(self.lang), ephemeral=True)
+            return
         await interaction.response.send_modal(RenameCategoryModal(self.category_id, category["name"], self.lang, self))
 
     @discord.ui.button(label="Edit Roles", style=discord.ButtonStyle.secondary)
@@ -284,6 +337,9 @@ class RenameCategoryModal(NexusModal):
         new_name = self.name_input.value.strip()
 
         category = await db_ticket_categories.get_category(self.category_id, interaction.guild_id)
+        if category is None:
+            await interaction.followup.send(_category_gone_text(self.lang), ephemeral=True)
+            return
         discord_category = interaction.guild.get_channel(category["category_channel_id"])
 
         if discord_category is None:
@@ -307,6 +363,7 @@ class RenameCategoryModal(NexusModal):
             return
 
         await db_ticket_categories.rename_category(self.category_id, interaction.guild_id, new_name)
+        await refresh_panel(interaction.guild)
         await self.parent_view._update_view(interaction)
 
 class EditRoleSelectView(NexusView):
@@ -327,7 +384,11 @@ class EditRoleSelectView(NexusView):
         max_values=25,
     )
     async def select_roles(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        role_ids = [role.id for role in select.values]
+        if await db_ticket_categories.get_category(self.category_id, interaction.guild_id) is None:
+            self.stop()
+            await interaction.response.edit_message(content=_category_gone_text(self.lang), embed=None, view=None)
+            return
+        role_ids = [role.id for role in _assignable_roles(select.values)]
         await db_ticket_categories.set_category_roles(self.category_id, role_ids)
         self.stop()  # sonst überschreibt unser eigener Timeout später den zurückgekehrten Hub
         await interaction.response.defer()
@@ -361,7 +422,12 @@ class DeleteCategoryConfirmView(NexusView):
             return
 
         category = await db_ticket_categories.get_category(self.category_id, interaction.guild_id)
-        discord_category = interaction.guild.get_channel(category["category_channel_id"]) if category else None
+        if category is None:
+            # Inzwischen woanders gelöscht (z.B. Dashboard) — nicht fälschlich "gelöscht" melden
+            self.stop()
+            await interaction.edit_original_response(content=_category_gone_text(self.lang), embed=None, view=None)
+            return
+        discord_category = interaction.guild.get_channel(category["category_channel_id"])
 
         if discord_category is not None:
             try:
@@ -387,6 +453,8 @@ class DeleteCategoryConfirmView(NexusView):
             )
             return
 
+        await refresh_panel(interaction.guild)
+
         self.stop()
         await interaction.edit_original_response(
             content=self.lang.get("ticket_delete_success", "{nexus_checkmark} Category has been deleted.").format(
@@ -400,6 +468,9 @@ class DeleteCategoryConfirmView(NexusView):
     @discord.ui.button(style=discord.ButtonStyle.secondary)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         category = await db_ticket_categories.get_category(self.category_id, interaction.guild_id)
+        if category is None:
+            await interaction.response.send_message(_category_gone_text(self.lang), ephemeral=True)
+            return
         role_ids = await db_ticket_categories.get_category_roles(self.category_id)
         color    = await db_settings.get_color(interaction.guild_id)
         await self.show(
@@ -409,37 +480,17 @@ class DeleteCategoryConfirmView(NexusView):
             embed=_category_overview_embed(category, role_ids, self.lang, color),
         )
 
-# ─── Ticket-Panel — das Embed mit den Kategorie-Buttons für User ────────────
-
-def _build_panel_embed(title: str, description: str, color: int) -> discord.Embed:
-    embed = discord.Embed(title=title, description=description, color=color)
-    embed.set_footer(text=NEXUS_FOOTER)
-    return embed
-
-def _build_panel_view(categories: list[dict]) -> discord.ui.View:
-    """Baut die Button-Reihe für ein Panel. Jeder Button trägt die category_id
-    fest codiert in der custom_id — dadurch funktioniert der Klick-Handler
-    (siehe on_interaction im Cog) auch nach einem Bot-Neustart, ganz ohne dass
-    diese View-Instanz selbst noch im Speicher leben muss (gleiches Prinzip
-    wie die rr_-Dropdowns in reaction_roles.py)."""
-    view = discord.ui.View(timeout=None)
-    for cat in categories:
-        view.add_item(discord.ui.Button(
-            label=cat["name"][:80],  # Discord-Button-Label-Limit
-            style=discord.ButtonStyle.primary,
-            custom_id=f"nexus_ticket_open_{cat['id']}",
-        ))
-    return view
+# ─── Ticket-Panel — Text speichern, bestehendes Panel bearbeiten ─────────────
 
 class TicketPanelModal(NexusModal):
-    def __init__(self, lang: dict, channel: discord.TextChannel, categories: list[dict]):
+    def __init__(self, lang: dict, channel: discord.TextChannel | None, title_default: str | None, desc_default: str | None):
         super().__init__(lang, title=lang.get("ticket_panel_modal_title", "Create Ticket Panel"))
-        self.channel    = channel
-        self.categories = categories
+        self.channel = channel
 
         self.title_input = discord.ui.TextInput(
             label=lang.get("ticket_panel_title_label", "Title"),
             placeholder=lang.get("ticket_panel_title_default", "🎫 Support"),
+            default=title_default,
             max_length=256,
             required=True,
         )
@@ -447,6 +498,7 @@ class TicketPanelModal(NexusModal):
             label=lang.get("ticket_panel_desc_label", "Description"),
             style=discord.TextStyle.paragraph,
             placeholder=lang.get("ticket_panel_desc_default", "Select a category below to create a ticket."),
+            default=desc_default,
             max_length=1000,
             required=True,
         )
@@ -454,27 +506,73 @@ class TicketPanelModal(NexusModal):
         self.add_item(self.desc_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        color = await db_settings.get_color(interaction.guild_id)
-        embed = _build_panel_embed(self.title_input.value, self.desc_input.value, color)
-        view  = _build_panel_view(self.categories)
-
+        await interaction.response.defer(ephemeral=True)
         try:
-            await self.channel.send(embed=embed, view=view)
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                self.lang.get("ticket_panel_no_permission", "❌ I can't send messages in {channel}.").format(
-                    channel=self.channel.mention
-                ),
-                ephemeral=True,
+            message, edited = await publish_panel(
+                interaction.guild, self.title_input.value, self.desc_input.value, self.channel,
             )
+        except PanelError as e:
+            await interaction.followup.send(_panel_error_text(e, self.lang, self.channel), ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            self.lang.get("ticket_panel_posted", "{nexus_checkmark} Panel has been posted in {channel}.").format(
-                nexus_checkmark=NexusEmojis.CHECKMARK, channel=self.channel.mention
-            ),
+        if edited:
+            text = self.lang.get("ticket_panel_updated", "{nexus_checkmark} Panel updated in {channel}.")
+        else:
+            text = self.lang.get("ticket_panel_posted", "{nexus_checkmark} Panel has been posted in {channel}.")
+        await interaction.followup.send(
+            text.format(nexus_checkmark=NexusEmojis.CHECKMARK, channel=message.channel.mention),
             ephemeral=True,
         )
+
+# ─── /ticket_settings — die zwei Fristen ─────────────────────────────────────
+
+def _ticket_settings_embed(settings: dict, lang: dict, color: int) -> discord.Embed:
+    embed = discord.Embed(title=lang.get("ticket_settings_title", "⚙️ Ticket settings"), color=color)
+    embed.add_field(
+        name=lang.get("ticket_settings_closure_field", "⏳ Auto-close without response"),
+        value=_duration(settings["closure_timeout_hours"], lang),
+        inline=True,
+    )
+    embed.add_field(
+        name=lang.get("ticket_settings_deletion_field", "🗑️ Delete channel after closing"),
+        value=_duration(settings["deletion_delay_hours"], lang),
+        inline=True,
+    )
+    embed.set_footer(text=NEXUS_FOOTER)
+    return embed
+
+class TicketSettingsView(NexusView):
+    def __init__(self, lang: dict, settings: dict):
+        super().__init__(lang, timeout=180)
+        self.closure_select.placeholder  = lang.get("ticket_settings_closure_placeholder", "Auto-close after …")
+        self.deletion_select.placeholder = lang.get("ticket_settings_deletion_placeholder", "Delete channel after …")
+        self._sync(settings)
+
+    def _sync(self, settings: dict):
+        self.closure_select.options = [
+            discord.SelectOption(label=_duration(h, self.lang), value=str(h), emoji="⏳",
+                                 default=h == settings["closure_timeout_hours"])
+            for h in db_ticket_settings.CLOSURE_OPTIONS
+        ]
+        self.deletion_select.options = [
+            discord.SelectOption(label=_duration(h, self.lang), value=str(h), emoji="🗑️",
+                                 default=h == settings["deletion_delay_hours"])
+            for h in db_ticket_settings.DELETION_OPTIONS
+        ]
+
+    async def _save(self, interaction: discord.Interaction, **fields):
+        settings = await db_ticket_settings.update_ticket_settings(interaction.guild_id, **fields)
+        self._sync(settings)
+        color = await db_settings.get_color(interaction.guild_id)
+        await interaction.response.edit_message(embed=_ticket_settings_embed(settings, self.lang, color), view=self)
+
+    @discord.ui.select(cls=discord.ui.Select, min_values=1, max_values=1, row=0)
+    async def closure_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await self._save(interaction, closure_timeout_hours=int(select.values[0]))
+
+    @discord.ui.select(cls=discord.ui.Select, min_values=1, max_values=1, row=1)
+    async def deletion_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await self._save(interaction, deletion_delay_hours=int(select.values[0]))
 
 # ─── Ticket-Erstellung — Problem-Modal + Channel-Erstellung ──────────────────
 
@@ -495,6 +593,20 @@ class TicketProblemModal(NexusModal):
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        key = (interaction.guild_id, interaction.user.id, self.category_id)
+        if key in _creating_tickets:
+            await interaction.followup.send(
+                self.lang.get("ticket_creation_in_progress", "❌ Your ticket is already being created."),
+                ephemeral=True,
+            )
+            return
+        _creating_tickets.add(key)
+        try:
+            await self._create_ticket(interaction)
+        finally:
+            _creating_tickets.discard(key)
+
+    async def _create_ticket(self, interaction: discord.Interaction):
         lang  = self.lang
         guild = interaction.guild
 
@@ -506,6 +618,7 @@ class TicketProblemModal(NexusModal):
             return
 
         existing = await db_tickets.get_open_ticket(guild.id, interaction.user.id, self.category_id)
+        existing = await _drop_if_channel_gone(interaction.guild, existing)
         if existing is not None:
             await interaction.followup.send(
                 lang.get(
@@ -550,7 +663,8 @@ class TicketProblemModal(NexusModal):
         }
         for role_id in role_ids:
             role = guild.get_role(role_id)
-            if role:
+            # @everyone nie überschreiben — auch nicht für Altdaten aus der DB
+            if role and not role.is_default():
                 overwrites[role] = discord.PermissionOverwrite(
                     view_channel=True,
                     send_messages=True,
@@ -559,9 +673,6 @@ class TicketProblemModal(NexusModal):
                     read_message_history=True,
                 )
 
-        ticket_number = await db_ticket_categories.get_next_ticket_number(self.category_id)
-        channel_name  = f"{_category_slug(self.category_name)}-{ticket_number:04d}"
-
         # Ohne Admin: gegen die Kategorie prüfen, dort gelten Nexus' effektive Rechte
         check = can_apply_overwrites(discord_category, overwrites)
         if not check:
@@ -569,6 +680,8 @@ class TicketProblemModal(NexusModal):
             await interaction.followup.send(format_issue(check, lang), ephemeral=True)
             return
 
+        ticket_number = await db_ticket_categories.get_next_ticket_number(self.category_id)
+        channel_name  = f"{_category_slug(self.category_name)}-{ticket_number:04d}"
         try:
             ticket_channel = await guild.create_text_channel(
                 name=channel_name,
@@ -583,13 +696,17 @@ class TicketProblemModal(NexusModal):
             )
             return
 
-        ticket_id = await db_tickets.create_ticket(
-            guild_id=guild.id,
-            channel_id=ticket_channel.id,
-            user_id=interaction.user.id,
-            category_id=self.category_id,
-            ticket_number=ticket_number,
-        )
+        try:
+            ticket_id = await db_tickets.create_ticket(
+                guild_id=guild.id, channel_id=ticket_channel.id, user_id=interaction.user.id,
+                category_id=self.category_id, ticket_number=ticket_number,
+            )
+        except Exception:
+            try:
+                await ticket_channel.delete(reason="Nexus Ticketsystem — Anlegen fehlgeschlagen")
+            except discord.HTTPException:
+                pass
+            raise
 
         intro_embed = discord.Embed(
             title=lang.get("ticket_created_intro_title", "🎫 Ticket #{number}").format(number=ticket_number),
@@ -601,12 +718,16 @@ class TicketProblemModal(NexusModal):
         intro_embed.set_footer(text=self.category_name)
 
         role_mentions = " ".join(f"<@&{rid}>" for rid in role_ids)
-        await ticket_channel.send(
-            content=f"{interaction.user.mention} {role_mentions}".strip(),
-            embed=intro_embed,
-            view=_build_close_request_view(ticket_id, lang),
-            allowed_mentions=discord.AllowedMentions(users=True, roles=True),
-        )
+        try:
+            await ticket_channel.send(
+                content=f"{interaction.user.mention} {role_mentions}".strip(),
+                embed=intro_embed,
+                view=_build_close_request_view(ticket_id, lang),
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+            )
+        except discord.HTTPException as e:
+            # Ticket steht trotzdem — ohne Close-Button bleibt /force_close als Weg zum Schließen
+            log.warning("Intro-Nachricht in Ticket-Channel %s nicht gepostet: %s", ticket_channel.id, e)
 
         await interaction.followup.send(
             lang.get("ticket_created_success", "{nexus_checkmark} Your ticket has been created: {channel}").format(
@@ -616,6 +737,10 @@ class TicketProblemModal(NexusModal):
         )
         log.info("Ticket #%s (%s) für %s in Kategorie '%s' auf %s erstellt.",
                   ticket_number, ticket_channel.id, interaction.user, self.category_name, guild.name)
+
+# (guild_id, user_id, category_id), für die gerade ein Ticket angelegt wird — zwei
+# gleichzeitig offene Modals (z.B. Handy + PC) dürfen nicht zwei Tickets erzeugen
+_creating_tickets: set[tuple[int, int, int]] = set()
 
 def _ticket_matches(ticket: dict | None, interaction: discord.Interaction) -> bool:
     """Die Ticket-ID kommt aus der custom_id — sicherstellen, dass das Ticket wirklich
@@ -704,7 +829,11 @@ async def _finalize_close(
     Der Status wird ZUERST in der DB gesetzt: Transcript, DM und Log dauern einige
     Sekunden, und in dieser Zeit darf kein zweiter Close (Doppelklick, Auto-Timeout)
     und kein offenes "Ablehnen"-Modal mehr greifen."""
-    if not await db_tickets.close_ticket(ticket["id"], closed_by_type, closed_by_user_id, close_reason):
+    ticket_settings = await db_ticket_settings.get_ticket_settings(guild.id)
+    deletion_hours = ticket_settings["deletion_delay_hours"]
+    if not await db_tickets.close_ticket(
+        ticket["id"], closed_by_type, closed_by_user_id, close_reason, deletion_hours=deletion_hours,
+    ):
         return False
 
     channel = guild.get_channel(ticket["channel_id"])
@@ -712,15 +841,19 @@ async def _finalize_close(
         # Channel existiert schon nicht mehr (z.B. manuell gelöscht) — kein Transcript möglich
         return True
 
+    # Erst sperren, dann Transcript — sonst fehlt, was der User in der Zwischenzeit schreibt
+    member = await get_member_safe(guild, ticket["user_id"])
+    if member is not None:
+        await _set_ticket_write_access(channel, member, False)   # auch beim Force-Close aus "open"
+
     transcript_text = await _generate_transcript_text(channel)
 
     closing_embed = discord.Embed(
         title=lang.get("ticket_closed_title", "🔒 Ticket closed"),
         description=lang.get(
             "ticket_closed_desc",
-            "This channel will be automatically deleted in **24 hours**." \
-            "You can find the transcript attached."
-        ),
+            "This channel will be automatically deleted in **{duration}**. You can find the transcript attached.",
+        ).format(duration=_duration(deletion_hours, lang)),
         color=discord.Color.dark_grey(),
     )
     if closed_by_type == "support_forced" and close_reason:
@@ -736,7 +869,6 @@ async def _finalize_close(
         log.exception("Konnte Schluss-Nachricht in Ticket-Channel %s nicht posten: %s", channel.id, e)
 
     # DM an den User — best effort, analog dm_user() in utils.py
-    member = await get_member_safe(guild, ticket["user_id"])
     if member is not None:
         try:
             await member.send(
@@ -745,6 +877,8 @@ async def _finalize_close(
             )
         except discord.Forbidden:
             log.info("Konnte %s keine Transcript-DM schicken (DMs deaktiviert).", member)
+        except discord.HTTPException as e:
+            log.warning("Transcript-DM an %s fehlgeschlagen: %s", member, e)
 
     # Log-Channel für Support/Admins — eigener ticket_log_channel_id mit Fallback auf log_channel_id
     settings = await db_settings.get_guild(guild.id)
@@ -757,7 +891,10 @@ async def _finalize_close(
                 color=discord.Color.dark_grey(),
             )
             log_embed.add_field(name=lang.get("log_user", "User"), value=f"<@{ticket['user_id']}>", inline=True)
-            log_embed.add_field(name=lang.get("ticket_log_closed_type", "Closed by"), value=closed_by_type, inline=True)
+            closed_by = lang.get(f"ticket_close_type_{closed_by_type}", CLOSE_TYPE_FALLBACKS.get(closed_by_type, closed_by_type))
+            if closed_by_user_id:
+                closed_by += f"\n<@{closed_by_user_id}>"
+            log_embed.add_field(name=lang.get("ticket_log_closed_type", "Closed by"), value=closed_by, inline=True)
             if close_reason:
                 log_embed.add_field(name=lang.get("ticket_closed_reason_field", "Reason"), value=close_reason, inline=False)
             try:
@@ -921,11 +1058,28 @@ class Tickets(commands.Cog):
         self.check_overdue_closures.start()
         self.check_due_deletions.start()
 
+        # Kontextmenü (Rechtsklick auf Nachricht → Apps): altes Panel übernehmen.
+        # Kontextmenüs lassen sich nicht per Decorator in einem Cog definieren, daher hier.
+        self.panel_menu = app_commands.ContextMenu(name="Use as ticket panel", callback=self.use_as_ticket_panel)
+        self.bot.tree.add_command(self.panel_menu)
+
     async def cog_unload(self):
         self.check_overdue_closures.cancel()
         self.check_due_deletions.cancel()
+        self.bot.tree.remove_command(self.panel_menu.name, type=self.panel_menu.type)
 
-    # ─── 72h-Timeout: pending_closure ohne Reaktion automatisch schließen ────
+    # ─── Listener ─────────────────────────────────────────────────────────────
+    @commands.Cog.listener()
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel):
+        ticket = await db_tickets.get_ticket_by_channel(channel.id)
+        if ticket is None or ticket["status"] == "closed":
+            return
+        await db_support.revoke_access(channel.id)
+        await db_tickets.delete_ticket_record(ticket["id"])
+        log.info("Ticket #%s (%s) auf %s: Channel manuell gelöscht, Eintrag entfernt.",
+                 ticket["ticket_number"], channel.id, channel.guild.name)
+
+    # ─── Timeout: pending_closure ohne Reaktion automatisch schließen ─────────
     @tasks.loop(hours=1)
     async def check_overdue_closures(self):
         try:
@@ -948,7 +1102,7 @@ class Tickets(commands.Cog):
     async def before_check_overdue_closures(self):
         await self.bot.wait_until_ready()
 
-    # ─── 24h-Löschung: geschlossene Ticket-Channels aufräumen ────────────────
+    # ─── Löschung: geschlossene Ticket-Channels nach Ablauf der Frist aufräumen ──
     @tasks.loop(hours=1)
     async def check_due_deletions(self):
         try:
@@ -963,14 +1117,14 @@ class Tickets(commands.Cog):
                 channel = guild.get_channel(ticket["channel_id"])
                 if channel is not None:
                     try:
-                        await channel.delete(reason="Nexus Ticketsystem — 24h-Frist nach Schließung abgelaufen")
+                        await channel.delete(reason="Nexus Ticketsystem — Frist nach Schließung abgelaufen")
                     except discord.HTTPException as e:
                         log.exception("Konnte Ticket-Channel %s nicht löschen: %s", ticket["channel_id"], e)
                         continue  # Zeile bleibt stehen, nächster Loop-Durchlauf versucht es erneut
 
                 await db_support.revoke_access(ticket["channel_id"])
                 await db_tickets.delete_ticket_record(ticket["id"])
-                log.info("Ticket #%s (%s) auf %s nach 24h-Frist gelöscht.", ticket["ticket_number"], ticket["channel_id"], guild.name)
+                log.info("Ticket #%s (%s) auf %s nach Ablauf der Frist gelöscht.", ticket["ticket_number"], ticket["channel_id"], guild.name)
         except Exception:
             log.exception("Fehler im check_due_deletions-Loop.")
 
@@ -1045,7 +1199,7 @@ class Tickets(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     @module_required("tickets")
     @app_commands.describe(channel=app_commands.locale_str("cmd_ticket_panel_channel_desc"))
-    async def ticket_panel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    async def ticket_panel(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None):
         lang = await get_lang(interaction.guild_id)
         categories = await db_ticket_categories.get_categories(interaction.guild_id)
 
@@ -1059,7 +1213,52 @@ class Tickets(commands.Cog):
             )
             return
 
-        await interaction.response.send_modal(TicketPanelModal(lang, channel, categories))
+        settings = await db_ticket_settings.get_ticket_settings(interaction.guild_id)
+        if channel is None and not settings.get("panel_message_id"):
+            await interaction.response.send_message(
+                lang.get("ticket_panel_need_channel", "❌ There is no panel yet — please choose a channel."),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_modal(
+            TicketPanelModal(lang, channel, settings.get("panel_title"), settings.get("panel_description"))
+        )
+
+    @app_commands.command(name="ticket_settings", description=app_commands.locale_str("cmd_ticket_settings_desc"))
+    @app_commands.default_permissions(manage_guild=True)
+    @module_required("tickets")
+    async def ticket_settings(self, interaction: discord.Interaction):
+        lang     = await get_lang(interaction.guild_id)
+        settings = await db_ticket_settings.get_ticket_settings(interaction.guild_id)
+        color    = await db_settings.get_color(interaction.guild_id)
+
+        view = TicketSettingsView(lang, settings)
+        await interaction.response.send_message(
+            embed=_ticket_settings_embed(settings, lang, color), view=view, ephemeral=True,
+        )
+        view.bind(interaction)
+
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    @module_required("tickets")
+    async def use_as_ticket_panel(self, interaction: discord.Interaction, message: discord.Message):
+        await interaction.response.defer(ephemeral=True)
+        lang = await get_lang(interaction.guild_id)
+        try:
+            await import_panel(interaction.guild, message, self.bot.user.id)
+        except PanelError as e:
+            await interaction.followup.send(_panel_error_text(e, lang), ephemeral=True)
+            return
+        await interaction.followup.send(
+            lang.get(
+                "ticket_panel_imported",
+                "{nexus_checkmark} Panel adopted. Text and buttons are now managed by Nexus — "
+                "edit it anytime with `/ticket_panel`.",
+            ).format(nexus_checkmark=NexusEmojis.CHECKMARK),
+            ephemeral=True,
+        )
+        log.info("Ticket-Panel %s auf %s übernommen von %s.", message.id, interaction.guild.name, interaction.user)
 
     @app_commands.command(name="force_close", description=app_commands.locale_str("cmd_force_close_desc"))
     @app_commands.default_permissions(moderate_members=True)
@@ -1076,6 +1275,12 @@ class Tickets(commands.Cog):
         if ticket["status"] == "closed":
             await interaction.response.send_message(
                 lang.get("ticket_already_closed", "❌ This ticket is already closed."), ephemeral=True
+            )
+            return
+        # default_permissions lässt sich pro Server umstellen — Support-Rolle trotzdem selbst prüfen
+        if not await _is_support_for_category(interaction.user, ticket["category_id"]):
+            await interaction.response.send_message(
+                lang.get("no_permission", "You don't have permission to use this command."), ephemeral=True
             )
             return
 
@@ -1100,6 +1305,16 @@ class Tickets(commands.Cog):
         if custom_id.startswith("nexus_ticket_open_"):
             category_id = int(custom_id.removeprefix("nexus_ticket_open_"))
 
+            # Alte Panels dürfen bei deaktiviertem Modul keine neuen Tickets mehr öffnen.
+            # Schließen bestehender Tickets bleibt bewusst möglich.
+            guild_settings = await db_settings.get_guild(interaction.guild_id)
+            if not (guild_settings and guild_settings.get("modules", {}).get("tickets", False)):
+                await interaction.response.send_message(
+                    lang.get("ticket_module_disabled", "❌ The ticket system is currently disabled on this server."),
+                    ephemeral=True,
+                )
+                return
+
             category_data = await db_ticket_categories.get_category(category_id, interaction.guild_id)
             if category_data is None:
                 await interaction.response.send_message(
@@ -1108,6 +1323,7 @@ class Tickets(commands.Cog):
                 return
 
             existing = await db_tickets.get_open_ticket(interaction.guild_id, interaction.user.id, category_id)
+            existing = await _drop_if_channel_gone(interaction.guild, existing)
             if existing is not None:
                 await interaction.response.send_message(
                     lang.get(
@@ -1152,12 +1368,19 @@ class Tickets(commands.Cog):
             if member is not None:
                 await _set_ticket_write_access(interaction.channel, member, False)
 
+            ticket_settings = await db_ticket_settings.get_ticket_settings(interaction.guild_id)
+            description = lang.get(
+                "ticket_pending_closure_desc",
+                "<@{user_id}>, is your issue resolved? Please confirm or decline.",
+            ).format(user_id=ticket["user_id"])
+            description += "\n\n" + lang.get(
+                "ticket_pending_closure_auto",
+                "Without a response, this ticket closes automatically after **{duration}**.",
+            ).format(duration=_duration(ticket_settings["closure_timeout_hours"], lang))
+
             embed = discord.Embed(
                 title=lang.get("ticket_pending_closure_title", "🔒 Ticket is being closed"),
-                description=lang.get(
-                    "ticket_pending_closure_desc",
-                    "<@{user_id}>, is your issue resolved? Please confirm or decline.",
-                ).format(user_id=ticket["user_id"]),
+                description=description,
                 color=discord.Color.orange(),
             )
             await interaction.response.send_message(embed=embed, view=_build_confirm_decline_view(ticket_id, lang))

@@ -48,6 +48,7 @@ MODULE_COMMANDS = {
         "edit_category",
         "ticket_panel",
         "force_close",
+        "ticket_settings",
     ],
     "giveaways": [
        "giveaways"

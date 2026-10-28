@@ -77,18 +77,19 @@ async def delete_category(category_id: int, guild_id: int) -> bool:
 
 async def get_next_ticket_number(category_id: int) -> int:
     """Erhöht den Counter atomar direkt in der DB und gibt die neue Nummer zurück.
-    Race-Condition-sicher bei gleichzeitigen Klicks — siehe Erklärung im Chat:
-    die Rechnung (+1) läuft innerhalb der DB, nicht in Python."""
+    Race-Condition-sicher bei gleichzeitigen Klicks: LAST_INSERT_ID(expr) merkt sich den
+    neuen Wert pro Verbindung. Ein separates SELECT auf ticket_counter könnte dagegen
+    schon die Erhöhung eines parallelen Klicks sehen (autocommit) — doppelte Nummern."""
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "UPDATE ticket_categories SET ticket_counter = ticket_counter + 1 WHERE id = %s",
+                "UPDATE ticket_categories SET ticket_counter = LAST_INSERT_ID(ticket_counter + 1) WHERE id = %s",
                 (category_id,),
             )
-            await cur.execute(
-                "SELECT ticket_counter FROM ticket_categories WHERE id = %s",
-                (category_id,),
-            )
+            if cur.rowcount == 0:
+                # Sonst lieferte LAST_INSERT_ID() einen alten Wert dieser (gepoolten) Verbindung
+                raise LookupError(f"Ticket-Kategorie {category_id} existiert nicht")
+            await cur.execute("SELECT LAST_INSERT_ID()")
             row = await cur.fetchone()
             return row[0]
 

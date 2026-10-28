@@ -1,6 +1,7 @@
 import aiomysql
 import database.database as db
 
+# Fallbacks, falls für eine Guild (noch) keine Zeile in ticket_settings existiert
 CLOSURE_TIMEOUT_HOURS  = 72
 DELETION_DELAY_HOURS   = 24
 
@@ -92,7 +93,7 @@ async def get_open_tickets_for_guild(guild_id: int) -> list[dict]:
 
 async def request_closure(ticket_id: int) -> bool:
     """Support klickt 'Ticket schließen' — Status wechselt zu pending_closure,
-    der Zeitstempel ist die Referenz für den späteren 72h-Timeout-Check.
+    der Zeitstempel ist die Referenz für den späteren Timeout-Check.
     False, wenn das Ticket nicht (mehr) 'open' ist."""
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -124,10 +125,11 @@ async def close_ticket(
     closed_by_type: str,
     closed_by_user_id: int | None = None,
     close_reason: str | None = None,
+    deletion_hours: int = DELETION_DELAY_HOURS,
 ) -> bool:
     """Finales Schließen — egal ob durch User-Bestätigung, Auto-Timeout oder
-    Support-Force-Close. Setzt gleichzeitig die Löschfrist (jetzt + 24h),
-    damit der Deletion-Task unabhängig vom Schließ-Grund einheitlich greift.
+    Support-Force-Close. Setzt gleichzeitig die Löschfrist (jetzt + deletion_hours,
+    pro Server einstellbar), damit der Deletion-Task unabhängig vom Schließ-Grund greift.
 
     closed_by_type: 'user_confirmed' | 'auto_timeout' | 'support_forced'
     False, wenn das Ticket bereits geschlossen ist.
@@ -143,27 +145,28 @@ async def close_ticket(
                        close_reason = %s,
                        scheduled_deletion_at = NOW() + INTERVAL %s HOUR
                    WHERE id = %s AND status <> 'closed'""",
-                (closed_by_type, closed_by_user_id, close_reason, DELETION_DELAY_HOURS, ticket_id),
+                (closed_by_type, closed_by_user_id, close_reason, int(deletion_hours), ticket_id),
             )
             return cur.rowcount > 0
 
 # ─── Für die beiden tasks.loop (Timeout-Check & Deletion-Check) ──────────────
 
 async def get_overdue_pending_closures() -> list[dict]:
-    """Alle Tickets, die seit über 72h auf eine User-Reaktion warten —
-    Basis für den automatischen Timeout-Close. Analog zu check_scheduled in embeds.py."""
+    """Alle Tickets, die länger als die Frist ihres Servers auf eine User-Reaktion warten —
+    Basis für den automatischen Timeout-Close. Ohne Zeile in ticket_settings gilt der Fallback."""
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                """SELECT * FROM tickets
-                   WHERE status = 'pending_closure'
-                   AND closure_requested_at <= NOW() - INTERVAL %s HOUR""",
+                """SELECT t.* FROM tickets t
+                   LEFT JOIN ticket_settings ts ON ts.guild_id = t.guild_id
+                   WHERE t.status = 'pending_closure'
+                   AND t.closure_requested_at <= NOW() - INTERVAL COALESCE(ts.closure_timeout_hours, %s) HOUR""",
                 (CLOSURE_TIMEOUT_HOURS,),
             )
             return await cur.fetchall()
 
 async def get_due_for_deletion() -> list[dict]:
-    """Alle geschlossenen Tickets, deren 24h-Frist abgelaufen ist —
+    """Alle geschlossenen Tickets, deren Löschfrist abgelaufen ist —
     Basis für die automatische Channel-Löschung."""
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -180,7 +183,7 @@ async def delete_ticket_record(ticket_id: int):
     """Entfernt die DB-Zeile, NACHDEM der zugehörige Discord-Channel bereits
     gelöscht wurde. Der Channel selbst enthält keine für uns relevanten Inhalte
     mehr (Transcript liegt bereits separat im Log-Channel/DM) — die Zeile hier
-    hier zu behalten würde nur die Tabelle unnötig aufblähen, ohne Mehrwert."""
+    zu behalten würde nur die Tabelle unnötig aufblähen, ohne Mehrwert."""
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(

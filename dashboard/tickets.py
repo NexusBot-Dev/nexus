@@ -1,14 +1,24 @@
 import asyncio
+import re
 import discord
 import logging
 from .registry import register_action, parse_id, DashCtx
-from database import db_settings, db_ticket_categories, db_tickets, db_limits
+from database import db_ticket_categories, db_tickets, db_limits, db_ticket_settings
 from systems.premium import is_premium
-from cogs.tickets import _build_panel_embed, _build_panel_view
 from systems.hierarchy import can_apply_overwrites, format_issue
+from systems.ticket_panel import PanelError, publish_panel, refresh_panel, import_panel
 from cogs.utils import get_lang
 
 log = logging.getLogger(__name__)
+
+_PANEL_ERRORS = {
+    "no_categories": "Es existiert noch keine Ticket-Kategorie",
+    "no_channel":    "Es gibt noch kein Panel — bitte einen Channel wählen",
+    "no_permission": "Fehlende Berechtigung zum Posten in diesem Channel",
+    "not_a_panel":   "Diese Nachricht ist kein Nexus-Ticket-Panel",
+}
+
+_MESSAGE_LINK = re.compile(r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)")
 
 @register_action("tickets", "list-categories")
 async def list_categories(ctx: DashCtx) -> dict:
@@ -90,6 +100,7 @@ async def create_category(ctx: DashCtx) -> dict:
     if valid_role_ids:
         await db_ticket_categories.set_category_roles(category_id, valid_role_ids)
 
+    await refresh_panel(guild)
     return {"id": category_id, "name": name}
 
 @register_action("tickets", "rename-category")
@@ -111,10 +122,11 @@ async def rename_category(ctx: DashCtx) -> dict:
         except discord.Forbidden:
             raise ValueError("Fehlende Berechtigung zum Umbenennen")
         except discord.HTTPException:
-            log.exception("Dashboard: Kategorie umbenennen auf %s fehlgeschlagen", guild_id)   # beim Löschen entsprechend
+            log.exception("Dashboard: Kategorie umbenennen auf %s fehlgeschlagen", guild_id)
             raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
     await db_ticket_categories.rename_category(category_id, guild_id, new_name)
+    await refresh_panel(guild)
     return {"id": category_id, "name": new_name}
 
 @register_action("tickets", "set-category-roles")
@@ -166,6 +178,7 @@ async def delete_category(ctx: DashCtx) -> dict:
             raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
 
     await db_ticket_categories.delete_category(category_id, guild_id)
+    await refresh_panel(guild)
     return {"id": category_id}
 
 @register_action("tickets", "list-open")
@@ -190,33 +203,93 @@ async def list_open(ctx: DashCtx) -> dict:
         })
     return {"tickets": result}
 
+# ─── Panel & Fristen ─────────────────────────────────────────────────────────
+
+@register_action("tickets", "get-settings")
+async def get_settings(ctx: DashCtx) -> dict:
+    """Gespeichertes Panel (zum Vorausfüllen) und die zwei Fristen samt erlaubter Werte."""
+    s = await db_ticket_settings.get_ticket_settings(ctx.guild_id)
+    return {
+        "panel_channel_id": str(s["panel_channel_id"]) if s.get("panel_channel_id") else None,
+        "panel_message_id": str(s["panel_message_id"]) if s.get("panel_message_id") else None,
+        "panel_title": s.get("panel_title"),
+        "panel_description": s.get("panel_description"),
+        "closure_timeout_hours": s["closure_timeout_hours"],
+        "deletion_delay_hours": s["deletion_delay_hours"],
+        "closure_options": list(db_ticket_settings.CLOSURE_OPTIONS),
+        "deletion_options": list(db_ticket_settings.DELETION_OPTIONS),
+    }
+
+@register_action("tickets", "set-timeouts")
+async def set_timeouts(ctx: DashCtx) -> dict:
+    payload = ctx.payload
+    fields = {}
+    for key in ("closure_timeout_hours", "deletion_delay_hours"):
+        if payload.get(key) is not None:
+            try:
+                fields[key] = int(payload[key])
+            except (TypeError, ValueError):
+                raise ValueError(f"Ungültiger Wert für {key}")
+    if not fields:
+        raise ValueError("Keine Änderung angegeben")
+    s = await db_ticket_settings.update_ticket_settings(ctx.guild_id, **fields)   # prüft die erlaubten Werte
+    return {"closure_timeout_hours": s["closure_timeout_hours"], "deletion_delay_hours": s["deletion_delay_hours"]}
+
 @register_action("tickets", "post-panel")
 async def post_panel(ctx: DashCtx) -> dict:
-    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
+    """Panel speichern: bearbeitet das bestehende, postet sonst neu (altes wird gelöscht).
+    channel_id ist optional, sobald es ein Panel gibt."""
+    guild, payload = ctx.guild, ctx.payload
     channel_id = payload.get("channel_id")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
 
-    if not channel_id or not str(channel_id).isdigit():
-        raise ValueError("Gültiger Channel wird benötigt")
     if not title or not description:
         raise ValueError("Titel und Beschreibung werden benötigt")
+    if len(title) > 256 or len(description) > 1000:
+        raise ValueError("Titel max. 256, Beschreibung max. 1000 Zeichen")
 
-    channel = guild.get_channel(int(channel_id))
-    if channel is None:
-        raise ValueError("Channel existiert nicht (mehr)")
-
-    categories = await db_ticket_categories.get_categories(guild_id)
-    if not categories:
-        raise ValueError("Es existiert noch keine Ticket-Kategorie")
-
-    color = await db_settings.get_color(guild_id)
-    embed = _build_panel_embed(title, description, color)
-    view = _build_panel_view(categories)
+    channel = None
+    if channel_id:
+        if not str(channel_id).isdigit():
+            raise ValueError("Ungültiger Channel")
+        channel = guild.get_channel(int(channel_id))
+        if channel is None:
+            raise ValueError("Channel existiert nicht (mehr)")
 
     try:
-        await channel.send(embed=embed, view=view)
-    except discord.Forbidden:
-        raise ValueError("Fehlende Berechtigung zum Posten in diesem Channel")
+        message, edited = await publish_panel(guild, title, description, channel)
+    except PanelError as e:
+        raise ValueError(_PANEL_ERRORS.get(e.code, "Panel konnte nicht gespeichert werden"))
 
-    return {"channel_id": channel_id}
+    return {"channel_id": str(message.channel.id), "message_id": str(message.id), "edited": edited}
+
+@register_action("tickets", "import-panel")
+async def import_panel_from_link(ctx: DashCtx) -> dict:
+    """Ein altes Panel per Nachrichtenlink übernehmen (Rechtsklick → Nachrichtenlink kopieren)."""
+    guild = ctx.guild
+    match = _MESSAGE_LINK.search(str(ctx.payload.get("link") or ""))
+    if match is None:
+        raise ValueError("Bitte einen gültigen Discord-Nachrichtenlink einfügen")
+    link_guild_id, channel_id, message_id = (int(x) for x in match.groups())
+    if link_guild_id != guild.id:
+        raise ValueError("Der Link gehört zu einem anderen Server")
+
+    channel = guild.get_channel_or_thread(channel_id)
+    if channel is None:
+        raise ValueError("Channel existiert nicht (mehr)")
+    try:
+        message = await channel.fetch_message(message_id)
+    except discord.NotFound:
+        raise ValueError("Nachricht wurde nicht gefunden")
+    except discord.Forbidden:
+        raise ValueError("Nexus kann diese Nachricht nicht lesen (fehlende Rechte im Channel)")
+
+    try:
+        await import_panel(guild, message, guild.me.id)
+    except PanelError as e:
+        raise ValueError(_PANEL_ERRORS.get(e.code, "Panel konnte nicht übernommen werden"))
+
+    s = await db_ticket_settings.get_ticket_settings(guild.id)
+    return {"channel_id": str(channel_id), "message_id": str(message_id),
+            "title": s.get("panel_title"), "description": s.get("panel_description")}

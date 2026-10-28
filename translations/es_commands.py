@@ -115,6 +115,8 @@ COMMANDS: dict[str, str] = {
     "cmd_ticket_panel_desc":        "Publica el panel de tickets con botones",
     "cmd_ticket_panel_channel_desc":"¿En qué canal publicar el panel?",
     "cmd_force_close_desc":         "Cierra un ticket permanentemente (requiere motivo)",
+    "cmd_ticket_settings_desc": "Definir cuándo se cierran los tickets y cuándo se borran los canales",
+    "cmd_ticket_panel_channel_desc": "Canal del panel (solo para el primer panel o para moverlo)",
 
     # ─── Boost Commands ─────────────────────────────────────────────
     "cmd_boost_message_desc":   "Gestionar mensajes de boost",
