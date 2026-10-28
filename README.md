@@ -25,7 +25,7 @@ Python · discord.py · MariaDB (aiomysql) · Docker
 | `translations/` | German, English, Spanish, Portuguese |
 
 ## Contributing
-Bug reports and pull requests are welcome — see [Contributing.md](Contributing.md).
+Small fixes and translations are welcome - see [Contributing.md](Contributing.md).
 
 ## Security
 Please **do not** report security issues publicly. Contact us privately via the support server instead.
