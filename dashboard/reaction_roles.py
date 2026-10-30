@@ -3,7 +3,7 @@ import discord
 from .registry import register_action, parse_id, DashCtx
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
-from cogs.reaction_roles import _update_dropdown_message
+from cogs.reaction_roles import _entry_cap, _update_dropdown_message, repost_panel, save_panel_text
 from cogs.utils import get_lang
 from systems.hierarchy import can_grant_role, can_set_up_self_roles, format_issue
 from .health import plain_mentions
@@ -26,9 +26,10 @@ async def create_group(ctx: DashCtx) -> dict:
 async def list_messages(ctx: DashCtx) -> dict:
     guild, guild_id = ctx.guild, ctx.guild_id
     # Alle Einträge der Guild in einer Abfrage statt einer pro Nachricht
+    # Auch Nachrichten ohne Rollen (frisch angelegt oder alle entfernt) — sonst wären sie nicht mehr bearbeitbar
     premium, msg_refs, all_entries = await asyncio.gather(
         is_premium(guild_id),
-        db_reaction_roles.get_all_reaction_role_messages(guild_id),
+        db_reaction_roles.get_all_panels(guild_id),
         db_reaction_roles.get_reaction_roles_for_guild(guild_id),
     )
     entries_by_message: dict[int, list[dict]] = {}
@@ -56,6 +57,7 @@ async def list_messages(ctx: DashCtx) -> dict:
             "title": ref["title"],
             "description": ref["description"],
             "display_mode": ref.get("display_mode", "reaction"),
+            "max_entries": _entry_cap(ref.get("display_mode", "reaction")),
             "entries": entries,
         })
 
@@ -145,6 +147,9 @@ async def add_entry(ctx: DashCtx) -> dict:
     all_current = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
     if any(e["role_id"] == role_id for e in all_current):
         raise ValueError("Diese Rolle ist auf dieser Nachricht bereits vergeben")
+    cap = _entry_cap(msg_ref["display_mode"])
+    if len(all_current) >= cap:
+        raise ValueError(f"Diese Nachricht hat bereits das Maximum von {cap} Rollen")
 
     premium = await is_premium(guild_id)
     is_custom_emoji = emoji.startswith("<") and emoji.endswith(">")
@@ -170,6 +175,106 @@ async def add_entry(ctx: DashCtx) -> dict:
         await _update_dropdown_message(message, guild_id, message_id, await get_lang(guild_id))
 
     return {"entry_id": new_id, "role_id": str(role_id), "role_name": role.name, "emoji": emoji, "mode": mode}
+
+@register_action("reaction_roles", "update-message")
+async def update_message(ctx: DashCtx) -> dict:
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
+    message_id = parse_id(payload.get("message_id"), "Ungültige message_id")
+    title = (payload.get("title") or "").strip()
+    description = (payload.get("description") or "").strip()
+
+    if not title or not description:
+        raise ValueError("Titel und Beschreibung werden benötigt")
+    if len(title) > 256:
+        raise ValueError("Titel zu lang (max. 256 Zeichen)")
+    if len(description) > 4000:
+        raise ValueError("Beschreibung zu lang (max. 4000 Zeichen)")
+
+    if not (check := can_set_up_self_roles(guild, ctx.actor)):
+        raise ValueError(format_issue(check, await get_lang(guild_id)))
+
+    status = await save_panel_text(guild, message_id, title, description)
+    if status == "gone":
+        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+
+    # Text ist in jedem Fall gespeichert — status sagt dem Dashboard, ob Discord nachgezogen wurde:
+    # "updated", "saved_only" (Nachricht nicht erreichbar), "not_own" (fremde Nachricht), "failed"
+    return {
+        "message_id": str(message_id),
+        "title": title,
+        "description": description,
+        "message_updated": status == "updated",
+        "status": status,
+    }
+
+@register_action("reaction_roles", "update-entry")
+async def update_entry(ctx: DashCtx) -> dict:
+    """Tauscht die Rolle eines Eintrags aus — Emoji, Modus und Gruppe bleiben."""
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
+    entry_id = parse_id(payload.get("entry_id"), "Ungültige entry_id")
+    message_id = parse_id(payload.get("message_id"), "Ungültige message_id")
+    role_id = parse_id(payload.get("role_id"), "Ungültige role_id")
+
+    role = guild.get_role(role_id)
+    if role is None:
+        raise ValueError("Rolle existiert nicht auf diesem Server")
+    if not (check := can_grant_role(guild, role, ctx.actor)):
+        raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
+
+    entries = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
+    entry = next((e for e in entries if e["id"] == entry_id), None)
+    if entry is None:
+        raise ValueError("Eintrag wurde nicht gefunden")
+
+    # Gleiche Rolle: nichts zu tun (UPDATE würde 0 Zeilen melden und wie ein Fehler aussehen)
+    if role_id != entry["role_id"]:
+        if any(e["role_id"] == role_id for e in entries):
+            raise ValueError("Diese Rolle ist auf dieser Nachricht bereits vergeben")
+        await db_reaction_roles.update_reaction_role_role(entry_id, guild_id, role_id)
+
+    return {
+        "entry_id": entry_id,
+        "role_id": str(role_id),
+        "role_name": role.name,
+        "emoji": entry["emoji"],
+        "mode": entry["mode"],
+    }
+
+@register_action("reaction_roles", "repost-message")
+async def repost_message(ctx: DashCtx) -> dict:
+    """Postet eine Nachricht neu, deren Discord-Nachricht oder Channel gelöscht wurde — alle Rollen ziehen mit um."""
+    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
+    message_id = parse_id(payload.get("message_id"), "Ungültige message_id")
+    channel_id = parse_id(payload.get("channel_id"), "Gültiger Channel wird benötigt")
+
+    lang = await get_lang(guild_id)
+    if not (check := can_set_up_self_roles(guild, ctx.actor)):
+        raise ValueError(format_issue(check, lang))
+
+    channel = guild.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        raise ValueError("Channel existiert nicht (mehr)")
+
+    result = await repost_panel(guild, message_id, channel, lang)
+    if result.status == "gone":
+        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+    if result.status == "still_there":
+        raise ValueError(
+            "Die Nachricht existiert noch oder Nexus kann ihren Channel nicht lesen — "
+            "Neu-Posten ist nur für gelöschte Nachrichten möglich"
+        )
+    if result.status == "no_perms":
+        raise ValueError(plain_mentions(guild, format_issue(result.check, lang)))
+    if result.status == "send_failed":
+        raise ValueError("Discord hat das Senden abgelehnt — bitte später erneut versuchen")
+
+    return {
+        "old_message_id": str(message_id),
+        "message_id": str(result.message.id),
+        "channel_id": str(channel.id),
+        "channel_name": channel.name,
+        "failed": result.failed,  # Emojis (bzw. der Dropdown-Button), die nicht wiederhergestellt werden konnten
+    }
 
 @register_action("reaction_roles", "delete-entry")
 async def delete_entry(ctx: DashCtx) -> dict:

@@ -117,6 +117,26 @@ async def delete_reaction_role(role_id: int, guild_id: int) -> bool:
             )
             return cur.rowcount > 0
 
+async def update_reaction_role_role(entry_id: int, guild_id: int, role_id: int) -> bool:
+    """Tauscht die Rolle eines bestehenden Eintrags aus — Emoji, Modus und Gruppe bleiben."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE reaction_roles SET role_id = %s WHERE id = %s AND guild_id = %s",
+                (role_id, entry_id, guild_id),
+            )
+            return cur.rowcount > 0
+
+async def get_message_refs(guild_id: int) -> list[dict]:
+    """Alle Metadaten-Einträge einer Guild — auch Panels, an denen (noch) keine Rolle hängt."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM reaction_role_messages WHERE guild_id = %s",
+                (guild_id,),
+            )
+            return await cur.fetchall()
+
 async def create_message_ref(
     guild_id: int,
     channel_id: int,
@@ -209,6 +229,16 @@ async def get_all_reaction_role_messages(guild_id: int) -> list[dict]:
                 (guild_id,)
             )
             return await cur.fetchall()
+
+async def get_all_panels(guild_id: int) -> list[dict]:
+    """
+    Alle Reaction-Role-Panels einer Guild: die mit Rollen (auch ohne Metadaten-Eintrag) und
+    die ohne Rollen (frisch angelegt oder alle entfernt) — für Listen, Autocomplete und Dashboard.
+    """
+    panels = list(await get_all_reaction_role_messages(guild_id))
+    known = {p["message_id"] for p in panels}
+    panels += [ref for ref in await get_message_refs(guild_id) if ref["message_id"] not in known]
+    return panels
 
 async def delete_user(guild_id: int, user_id: int):
     """DSGVO — keine User-spezifischen Daten in Reaktionsrollen."""

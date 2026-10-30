@@ -59,6 +59,7 @@ MODULE_INFO = {
         "commands": {
             "reactionrole_create": "help_cmd_reactionrole_create",
             "reactionrole_list":   "help_cmd_reactionrole_list",
+            "reactionrole_edit":   "help_cmd_reactionrole_edit",
             "reactionrole_delete": "help_cmd_reactionrole_delete",
         }
     },

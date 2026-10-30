@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import discord
+from dataclasses import dataclass, field
 from discord import app_commands
 from discord.ext import commands
 from database import db_settings, db_reaction_roles
@@ -9,7 +10,7 @@ from systems.premium import is_premium
 from cogs.utils import get_lang, module_required
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.hierarchy import can_grant_role, can_manage_role, can_set_up_self_roles, can_use_channel, format_issue
+from systems.hierarchy import PermCheck, can_grant_role, can_manage_role, can_set_up_self_roles, can_use_channel, format_issue
 from systems.ui import NexusView, NexusModal
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,58 @@ def parse_emoji_for_select(emoji_str: str) -> tuple[str, discord.PartialEmoji]:
         # Standard Unicode Emoji
         partial = discord.PartialEmoji(name=emoji_str)
         return emoji_str, partial
+
+def _role_issue(interaction: discord.Interaction, role: discord.Role, lang: dict) -> str | None:
+    """
+    Fehlermeldung, falls `role` nicht als Reaktionsrolle taugt — sonst None.
+    Discords RoleSelect lässt sich nicht vorfiltern: @everyone, Bot-/Integrationsrollen und
+    Rollen über Nexus sind dort immer auswählbar, deshalb wird direkt nach der Auswahl geprüft.
+    Gemeinsam genutzt vom Setup (RoleSelectView) und vom Edit-Flow (PanelChangeRoleView).
+    """
+    if role.is_default():
+        return format_issue(can_manage_role(interaction.guild, role), lang)
+
+    if (
+        interaction.user.id != interaction.guild.owner_id
+        and role >= interaction.user.top_role
+    ):
+        return lang.get(
+            "rr_role_hierarchy_user",
+            "⚠️ **Error:** This role is ranked equal to or higher than your own highest role. "
+            "You cannot use it for reaction roles. Please choose a different role.",
+        )
+
+    if role.managed:
+        return lang.get(
+            "rr_role_managed",
+            "❌ **Error:** This role is managed by an integration (e.g., another bot or Server Booster). "
+            "This role cannot be used for reaction roles. Please choose a different role.",
+        )
+
+    if role >= interaction.guild.me.top_role:
+        return lang.get(
+            "rr_role_hierarchy",
+            "⚠️ **Error:** This role is **above** me in the server hierarchy. "
+            "I do not have permission to assign this role to users. Please move my role higher up in your server settings."
+        )
+
+    if not (check := can_grant_role(interaction.guild, role, interaction.user)):
+        return format_issue(check, lang)
+
+    return None
+
+# Discord-Grenzen pro Nachricht: höchstens 20 verschiedene Reaktionen bzw. 25 Optionen im
+# Select-Menü. Ein eigenes Premium-Limit (feature_limits) gibt es für Reaction Roles nicht.
+_MAX_ENTRIES = {"reaction": 20, "dropdown": 25}
+
+def _entry_cap(display_mode: str) -> int:
+    return _MAX_ENTRIES.get(display_mode, _MAX_ENTRIES["reaction"])
+
+def _limit_text(lang: dict, cap: int) -> str:
+    return lang.get(
+        "rr_edit_limit_reached",
+        "❌ This panel already has the maximum of {max} roles. Remove a role first or create a second panel.",
+    ).format(max=cap)
 
 # ─── Setup Flow Views ────────────────────────────────────────────────────────
 
@@ -151,16 +204,24 @@ class ReactionRoleSetupView(NexusView):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.add_role_btn.label = lang.get("rr_btn_add_role", "➕ Add Role")
         self.finish_btn.label   = lang.get("rr_btn_finish",   "Finish")
         self.finish_btn.emoji = discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK)
 
     @discord.ui.button(label="➕ Add Role", style=discord.ButtonStyle.success)
     async def add_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Auch hier begrenzen: nach "Rolle hinzufügen" im Edit-Flow landet der Admin in dieser View
+        msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.panel_message.id)
+        cap = _entry_cap(msg_ref["display_mode"] if msg_ref else "reaction")
+        entries = await db_reaction_roles.get_reaction_roles(interaction.guild_id, self.panel_message.id)
+        if len(entries) >= cap:
+            await interaction.response.send_message(_limit_text(self.lang, cap), ephemeral=True)
+            return
+
         await self.show(
             interaction,
-            RoleSelectView(self.bot, self.owner_id, self.channel, self.message, self.lang),
+            RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang),
             embed=_step_role_embed(self.lang),
         )
 
@@ -176,11 +237,12 @@ class ReactionRoleSetupView(NexusView):
         await interaction.response.edit_message(embed=embed, view=None)
 
 class RoleSelectView(NexusView):
-    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, lang: dict):
+    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, lang: dict, *, from_edit: bool = False):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
+        self.from_edit = from_edit
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.select_role.placeholder = self.lang.get("rr_select_role_placeholder", "🎭 Select a role...")
 
     @discord.ui.select(
@@ -190,64 +252,23 @@ class RoleSelectView(NexusView):
     async def select_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
         role = select.values[0]
 
-        if role.is_default():
-            await interaction.response.send_message(
-                format_issue(can_manage_role(interaction.guild, role), self.lang), ephemeral=True
-            )
-            return
-
-        if (
-            interaction.user.id != interaction.guild.owner_id
-            and role >= interaction.user.top_role
-        ):
-            await interaction.response.send_message(
-                self.lang.get(
-                    "rr_role_hierarchy_user",
-                    "⚠️ **Error:** This role is ranked equal to or higher than your own highest role. "
-                    "You cannot use it for reaction roles. Please choose a different role.",
-                ),
-                ephemeral=True
-            )
-            return
-
-        if role.managed:
-            await interaction.response.send_message(
-                self.lang.get(
-                    "rr_role_managed",
-                    "❌ **Error:** This role is managed by an integration (e.g., another bot or Server Booster). "
-                    "This role cannot be used for reaction roles. Please choose a different role.",
-            ),
-                ephemeral=True
-            )
-            return
-
-        if role >= interaction.guild.me.top_role:
-            await interaction.response.send_message(
-                self.lang.get(
-                    "rr_role_hierarchy",
-                    "⚠️ **Error:** This role is **above** me in the server hierarchy. "
-                    "I do not have permission to assign this role to users. Please move my role higher up in your server settings."
-                ),
-                ephemeral=True
-            )
-            return
-
-        if not (check := can_grant_role(interaction.guild, role, interaction.user)):
-            await interaction.response.send_message(format_issue(check, self.lang), ephemeral=True)
+        if issue := _role_issue(interaction, role, self.lang):
+            await interaction.response.send_message(issue, ephemeral=True)
             return
 
         await self.show(
             interaction,
-            EmojiInputView(self.bot, self.owner_id, self.channel, self.message, role, self.lang),
+            EmojiInputView(self.bot, self.owner_id, self.channel, self.panel_message, role, self.lang, from_edit=self.from_edit),
             embed=_step_emoji_embed(role, self.lang),
         )
 
 class EmojiInputView(NexusView):
-    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, lang: dict):
+    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, lang: dict, *, from_edit: bool = False):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
+        self.from_edit = from_edit
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.role     = role
         self.emoji_btn.label = lang.get("rr_btn_emoji", "😀 Select Emoji")
 
@@ -268,7 +289,7 @@ class EmojiInputView(NexusView):
         )
 
         def check(reaction, user):
-            return user.id == self.owner_id and reaction.message.id == self.message.id
+            return user.id == self.owner_id and reaction.message.id == self.panel_message.id
 
         while True:
             try:
@@ -276,7 +297,7 @@ class EmojiInputView(NexusView):
                 emoji_str = str(reaction.emoji)
 
                 try:
-                    await self.message.remove_reaction(reaction.emoji, user)
+                    await self.panel_message.remove_reaction(reaction.emoji, user)
                 except discord.HTTPException:
                     pass
 
@@ -294,7 +315,7 @@ class EmojiInputView(NexusView):
 
                 # --- FEHLER-CHECK 1: Wird DIESES EMOJI schon auf der Nachricht genutzt? ---
                 existing_rr = await db_reaction_roles.get_reaction_role(
-                    interaction.guild_id, self.message.id, emoji_str
+                    interaction.guild_id, self.panel_message.id, emoji_str
                 )
                 if existing_rr is not None:
                     # Wir bringen den User zurück zur Rollenauswahl, damit er neu ansetzen kann
@@ -308,13 +329,13 @@ class EmojiInputView(NexusView):
                     )
                     await interaction.edit_original_response(
                         embed=_step_role_embed(self.lang),
-                        view=RoleSelectView(self.bot, self.owner_id, self.channel, self.message, self.lang),
+                        view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
                     )
                     break # Loop beenden, da View gewechselt wurde
 
                 # --- FEHLER-CHECK 2: Wird DIESE ROLLE schon auf dieser Nachricht verwendet? ---
                 all_current_roles = await db_reaction_roles.get_reaction_roles(
-                    interaction.guild_id, self.message.id
+                    interaction.guild_id, self.panel_message.id
                 )
                 role_already_used = any(rr["role_id"] == self.role.id for rr in all_current_roles)
 
@@ -330,7 +351,7 @@ class EmojiInputView(NexusView):
                     )
                     await interaction.edit_original_response(
                         embed=_step_role_embed(self.lang),
-                        view=RoleSelectView(self.bot, self.owner_id, self.channel, self.message, self.lang),
+                        view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
                     )
                     break # Loop beenden!
 
@@ -348,7 +369,7 @@ class EmojiInputView(NexusView):
                         )
                         await interaction.edit_original_response(
                             embed=_step_role_embed(self.lang),
-                            view=RoleSelectView(self.bot, self.owner_id, self.channel, self.message, self.lang),
+                            view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
                         )
                         break
 
@@ -368,14 +389,14 @@ class EmojiInputView(NexusView):
                 premium_status = await is_premium(interaction.guild_id)
                 await interaction.edit_original_response(
                     embed=_step_mode_embed(self.role, emoji_str, self.lang),
-                    view=ModeSelectView(self.bot, self.owner_id, self.channel, self.message, self.role, emoji_str, self.lang, has_premium=premium_status),
+                    view=ModeSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, emoji_str, self.lang, has_premium=premium_status, from_edit=self.from_edit),
                 )
                 break
 
             except asyncio.TimeoutError:
                 await interaction.edit_original_response(
                     embed=_step_emoji_embed(self.role, self.lang),
-                    view=EmojiInputView(self.bot, self.owner_id, self.channel, self.message, self.role, self.lang),
+                    view=EmojiInputView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.lang, from_edit=self.from_edit),
                 )
                 await interaction.followup.send(
                     self.lang.get("rr_timeout", "❌ Time expired. Click the button again.",),
@@ -384,11 +405,12 @@ class EmojiInputView(NexusView):
                 break
 
 class ModeSelectView(NexusView):
-    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, emoji: str, lang: dict, has_premium: bool):
+    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, emoji: str, lang: dict, has_premium: bool, from_edit: bool = False):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
+        self.from_edit = from_edit
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.role     = role
         self.emoji    = emoji
         self.toggle_btn.label = lang.get("rr_btn_toggle", "Toggle")
@@ -419,7 +441,7 @@ class ModeSelectView(NexusView):
         if mode == "unique":
             await self.show(
                 interaction,
-                GroupInputView(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang),
+                GroupInputView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, self.lang, from_edit=self.from_edit),
                 embed=_step_group_embed(self.role, self.emoji, self.lang),
             )
         else:
@@ -432,12 +454,12 @@ class ModeSelectView(NexusView):
         """previous_view: die View, die bei Erfolg gestoppt werden muss — meist self
         (direkter Button-Klick), bei Aufruf über GroupModal/GroupSelectView aber eine
         ANDERE, noch sichtbare View (siehe dort)."""
-        msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.message.id)
+        msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.panel_message.id)
         display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
 
         if display_mode == "reaction":
             try:
-                await self.message.add_reaction(self.emoji)
+                await self.panel_message.add_reaction(self.emoji)
             except discord.HTTPException:
                 await interaction.response.send_message(
                     self.lang.get("rr_emoji_failed", "❌ Emoji could not be added to the message."), ephemeral=True
@@ -447,7 +469,7 @@ class ModeSelectView(NexusView):
         await db_reaction_roles.add_reaction_role(
             guild_id=interaction.guild_id,
             channel_id=self.channel.id,
-            message_id=self.message.id,
+            message_id=self.panel_message.id,
             role_id=self.role.id,
             emoji=self.emoji,
             mode=mode,
@@ -455,7 +477,12 @@ class ModeSelectView(NexusView):
         )
 
         if display_mode == "dropdown":
-            await _update_dropdown_message(self.message, interaction.guild_id, self.message.id, self.lang)
+            await _update_dropdown_message(self.panel_message, interaction.guild_id, self.panel_message.id, self.lang)
+
+        if self.from_edit:
+            # Aus /reactionrole_edit gestartet: zurück in den Hub, der zeigt die neue Rolle direkt in der Liste
+            await _show_hub(interaction, self.bot, self.owner_id, self.panel_message.id, self.lang, previous=previous_view)
+            return
 
         color = await db_settings.get_color(interaction.guild_id)
         embed = discord.Embed(
@@ -470,15 +497,16 @@ class ModeSelectView(NexusView):
             previous_view.stop()
         await interaction.response.edit_message(
             embed=embed,
-            view=ReactionRoleSetupView(self.bot, self.owner_id, self.channel, self.message, self.lang),
+            view=ReactionRoleSetupView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang),
         )
 
 class GroupInputView(NexusView):
-    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, emoji: str, lang: dict):
+    def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, role: discord.Role, emoji: str, lang: dict, *, from_edit: bool = False):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
+        self.from_edit = from_edit
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.role     = role
         self.emoji    = emoji
         self.new_group_btn.label      = lang.get("rr_btn_new_group",      "➕ Create New Group")
@@ -490,7 +518,7 @@ class GroupInputView(NexusView):
         # deshalb sich selbst als parent_view mitgeben, damit das Modal sie
         # bei Erfolg stoppen kann (sonst läuft ihr 300s-Timeout unabhängig weiter).
         await interaction.response.send_modal(
-            GroupModal(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang, parent_view=self)
+            GroupModal(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, self.lang, parent_view=self, from_edit=self.from_edit)
         )
 
     @discord.ui.button(label="📋 Bestehende Gruppe", style=discord.ButtonStyle.secondary)
@@ -504,7 +532,7 @@ class GroupInputView(NexusView):
             return
         await self.show(
             interaction,
-            GroupSelectView(self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, groups, self.lang),
+            GroupSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, groups, self.lang, from_edit=self.from_edit),
             embed=_step_group_select_embed(self.lang),
         )
 
@@ -516,12 +544,13 @@ class GroupModal(NexusModal):
         max_length=100,
     )
 
-    def __init__(self, bot, owner_id: int, channel, message, role, emoji, lang: dict, parent_view: NexusView):
+    def __init__(self, bot, owner_id: int, channel, message, role, emoji, lang: dict, parent_view: NexusView, *, from_edit: bool = False):
         super().__init__(lang, title=lang.get("rr_modal_group_title", "Create Group"))
         self.bot      = bot
+        self.from_edit = from_edit
         self.owner_id = owner_id
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.role     = role
         self.emoji    = emoji
         self.parent_view = parent_view
@@ -535,16 +564,17 @@ class GroupModal(NexusModal):
         )
         premium_status = await is_premium(interaction.guild_id)
         mode_view = ModeSelectView(
-            self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang, has_premium=premium_status
+            self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, self.lang, has_premium=premium_status, from_edit=self.from_edit
         )
         await mode_view._save(interaction, mode="unique", group_id=group_id, previous_view=self.parent_view)
 
 class GroupSelectView(NexusView):
-    def __init__(self, bot, owner_id: int, channel, message, role, emoji, groups: list[dict], lang: dict):
+    def __init__(self, bot, owner_id: int, channel, message, role, emoji, groups: list[dict], lang: dict, *, from_edit: bool = False):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
         self.bot      = bot
+        self.from_edit = from_edit
         self.channel  = channel
-        self.message  = message
+        self.panel_message = message
         self.role     = role
         self.emoji    = emoji
 
@@ -560,7 +590,7 @@ class GroupSelectView(NexusView):
         group_id  = int(interaction.data["values"][0])
         premium_status = await is_premium(interaction.guild_id)
         mode_view = ModeSelectView(
-            self.bot, self.owner_id, self.channel, self.message, self.role, self.emoji, self.lang, has_premium=premium_status
+            self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, self.lang, has_premium=premium_status, from_edit=self.from_edit
         )
         await mode_view._save(interaction, mode="unique", group_id=group_id, previous_view=self)
 
@@ -633,6 +663,651 @@ def _step_group_select_embed(lang: dict) -> discord.Embed:
         description=lang.get("rr_group_select_desc", "Select an existing group from the dropdown."),
         color=NEXUS_COLOR,
     )
+
+# ─── /reactionrole_edit — Übersicht + Hub ────────────────────────────────────
+
+def _panel_gone_text(lang: dict) -> str:
+    return lang.get(
+        "rr_edit_panel_gone",
+        "❌ This reaction role panel no longer exists (deleted in the meantime?).",
+    )
+
+async def _fetch_panel_message(
+    guild: discord.Guild, channel_id: int, message_id: int,
+) -> tuple[discord.TextChannel | None, discord.Message | None, str]:
+    """
+    Holt Channel + Panel-Nachricht und meldet den Zustand:
+      "ok"           — Nachricht erreichbar
+      "channel_gone" — Channel gelöscht (oder kein Text-Channel mehr)
+      "message_gone" — Nachricht manuell gelöscht
+      "no_access"    — Nexus kann den Verlauf nicht lesen. Die Nachricht kann noch existieren,
+                       deshalb wird in diesem Fall bewusst KEIN Neu-Posten angeboten (sonst doppelt).
+    """
+    channel = guild.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        return None, None, "channel_gone"
+    if not can_use_channel(channel, "read_message_history"):
+        return channel, None, "no_access"
+    try:
+        return channel, await channel.fetch_message(message_id), "ok"
+    except discord.NotFound:
+        return channel, None, "message_gone"
+    except discord.Forbidden:
+        return channel, None, "no_access"
+
+# ─── Gemeinsame Edit-Logik (Bot-Hub + Dashboard) ─────────────────────────────
+
+async def save_panel_text(guild: discord.Guild, message_id: int, title: str, description: str) -> str:
+    """
+    Speichert Titel/Beschreibung eines Panels und zieht die Discord-Nachricht per message.edit nach.
+    Erst die DB — so bleibt der neue Text auch erhalten, wenn die Nachricht gerade nicht erreichbar ist.
+    Ergebnis:
+      "updated"    — DB + Nachricht aktualisiert
+      "saved_only" — nur DB, Nachricht nicht erreichbar (der Text wird beim Neu-Posten verwendet)
+      "not_own"    — nur DB, die Nachricht stammt nicht von Nexus (Alt-Panels an fremden Nachrichten)
+      "failed"     — nur DB, Discord hat das Bearbeiten abgelehnt
+      "gone"       — Panel existiert nicht (mehr), nichts gespeichert
+    """
+    msg_ref = await db_reaction_roles.get_message_ref(guild.id, message_id)
+    if msg_ref is not None:
+        channel_id = msg_ref["channel_id"]
+        await db_reaction_roles.update_message_ref(guild.id, message_id, title, description)
+    else:
+        entries = await db_reaction_roles.get_reaction_roles(guild.id, message_id)
+        if not entries:
+            return "gone"
+        # Alt-Panel ohne Metadaten: Eintrag nachträglich anlegen, damit der Text beim Neu-Posten bleibt
+        channel_id = entries[0]["channel_id"]
+        await db_reaction_roles.create_message_ref(guild.id, channel_id, message_id, title, description)
+
+    _, message, _ = await _fetch_panel_message(guild, channel_id, message_id)
+    if message is None:
+        return "saved_only"
+    if message.author.id != guild.me.id:
+        return "not_own"
+
+    # Bestehendes Embed übernehmen, damit Farbe/Footer/Bild erhalten bleiben
+    if message.embeds:
+        embed = message.embeds[0].copy()
+    else:
+        embed = discord.Embed(color=await db_settings.get_color(guild.id))
+    embed.title       = title
+    embed.description = description
+    try:
+        await message.edit(embed=embed)
+    except discord.NotFound:
+        return "saved_only"
+    except discord.HTTPException as e:
+        log.warning("[RR] Konnte Panel %s auf %s nicht bearbeiten: %s", message_id, guild.id, e)
+        return "failed"
+    return "updated"
+
+@dataclass
+class RepostResult:
+    """
+    status:
+      "reposted"    — neu gepostet; failed listet Emojis/Button, die nicht wiederhergestellt wurden
+      "gone"        — Panel existiert nicht (mehr)
+      "still_there" — alte Nachricht ist erreichbar oder nicht prüfbar → bewusst nicht doppelt posten
+      "no_perms"    — Nexus fehlen Rechte im Ziel-Channel (Details in check)
+      "send_failed" — Discord hat das Senden abgelehnt
+    """
+    status: str
+    message: discord.Message | None = None
+    failed: list[str] = field(default_factory=list)
+    check: PermCheck | None = None
+
+async def repost_panel(guild: discord.Guild, message_id: int, channel: discord.TextChannel, lang: dict) -> RepostResult:
+    """Postet ein Panel neu, dessen Nachricht oder Channel gelöscht wurde, und zieht alle Einträge mit um."""
+    msg_ref = await db_reaction_roles.get_message_ref(guild.id, message_id)
+    entries = await db_reaction_roles.get_reaction_roles(guild.id, message_id)
+    if msg_ref is None and not entries:
+        return RepostResult("gone")
+
+    # Nur posten, wenn die alte Nachricht sicher weg ist — bei "no_access" könnte sie noch existieren
+    old_channel_id = msg_ref["channel_id"] if msg_ref else entries[0]["channel_id"]
+    _, _, status = await _fetch_panel_message(guild, old_channel_id, message_id)
+    if status not in ("message_gone", "channel_gone"):
+        return RepostResult("still_there")
+
+    display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
+    needed = ["send_messages", "embed_links", "read_message_history"]
+    if display_mode == "reaction":
+        needed.append("add_reactions")
+    if not (check := can_use_channel(channel, *needed)):
+        return RepostResult("no_perms", check=check)
+
+    title       = (msg_ref or {}).get("title") or lang.get("rr_edit_untitled", "(untitled)")
+    description = (msg_ref or {}).get("description") or ""
+    embed = discord.Embed(
+        title=title,
+        description=description or None,
+        color=await db_settings.get_color(guild.id),
+    )
+    embed.set_footer(text=NEXUS_FOOTER)
+
+    try:
+        new_msg = await channel.send(embed=embed)
+    except discord.HTTPException as e:
+        log.warning("[RR] Konnte Panel %s auf %s nicht neu posten: %s", message_id, guild.id, e)
+        return RepostResult("send_failed")
+
+    # Metadaten + alle Zuordnungen auf die neue Nachricht umziehen
+    await db_reaction_roles.move_message_ref(guild.id, message_id, channel.id, new_msg.id)
+    if msg_ref is None:
+        await db_reaction_roles.create_message_ref(guild.id, channel.id, new_msg.id, title, description)
+    log.info("[RR] Panel %s auf %s neu gepostet als %s in %s.", message_id, guild.id, new_msg.id, channel.id)
+
+    failed = []
+    if display_mode == "dropdown":
+        try:
+            await _update_dropdown_message(new_msg, guild.id, new_msg.id, lang)
+        except discord.HTTPException as e:
+            log.warning("[RR] Dropdown-Button für neu gepostetes Panel %s fehlt: %s", new_msg.id, e)
+            failed.append(lang.get("rr_dropdown_open_button", "🎭 Select your roles"))
+    else:
+        for rr in entries:
+            try:
+                await new_msg.add_reaction(rr["emoji"])
+            except discord.HTTPException:
+                failed.append(rr["emoji"])
+
+    return RepostResult("reposted", message=new_msg, failed=failed)
+
+async def _show_hub(
+    interaction: discord.Interaction,
+    bot,
+    owner_id: int,
+    message_id: int,
+    lang: dict,
+    *,
+    previous: NexusView | None = None,
+):
+    """
+    Zeigt den Hub frisch aus der DB in der bestehenden (ephemeralen) Nachricht an.
+    Anders als CategoryEditView in tickets.py wird hier jedes Mal eine NEUE Instanz gebaut:
+    So läuft der Timeout pro Anzeige neu, und ein zwischenzeitlich abgelaufener Hub kann
+    keine toten Buttons hinterlassen, wenn der Admin aus einer Unter-View zurückkommt.
+    previous: die gerade sichtbare View — wird gestoppt, damit ihr Timeout den Hub nicht überschreibt.
+    """
+    if previous is not None:
+        previous.stop()
+
+    view = PanelEditView(bot, owner_id, message_id, lang)
+    embed = await view.load(interaction.guild)
+    if embed is None:
+        view.stop()
+        kwargs = {"content": _panel_gone_text(lang), "embed": None, "view": None}
+    else:
+        kwargs = {"content": None, "embed": embed, "view": view}
+
+    if interaction.response.is_done():
+        await interaction.edit_original_response(**kwargs)
+    else:
+        await interaction.response.edit_message(**kwargs)
+
+    if embed is not None:
+        view.bind(interaction)
+
+class PanelEditView(NexusView):
+    """Hub für /reactionrole_edit: Text ändern, Rollen hinzufügen/entfernen/tauschen, Neu-Posten."""
+
+    def __init__(self, bot, owner_id: int, message_id: int, lang: dict):
+        super().__init__(lang, owner_id=owner_id, require=None, timeout=300)
+        self.bot        = bot
+        self.message_id = message_id
+        self.msg_ref: dict = {}
+        self.has_ref    = True
+        self.entries: list[dict] = []
+        self.channel: discord.TextChannel | None = None
+        self.panel_message: discord.Message | None = None
+        self.status     = "ok"
+
+        self.text_btn.label   = lang.get("rr_edit_btn_text",   "Edit text")
+        self.add_btn.label    = lang.get("rr_edit_btn_add",    "Add role")
+        self.remove_btn.label = lang.get("rr_edit_btn_remove", "Remove role")
+        self.change_btn.label = lang.get("rr_edit_btn_change", "Change role")
+        self.repost_btn.label = lang.get("rr_edit_btn_repost", "Repost")
+
+    async def load(self, guild: discord.Guild) -> discord.Embed | None:
+        """Lädt Panel + Einträge frisch und setzt die Buttons passend. None = Panel existiert nicht mehr."""
+        msg_ref = await db_reaction_roles.get_message_ref(guild.id, self.message_id)
+        entries = await db_reaction_roles.get_reaction_roles(guild.id, self.message_id)
+        if msg_ref is None and not entries:
+            return None
+
+        if msg_ref is None:
+            # Alt-Panel ohne Metadaten-Eintrag: Channel aus den Zuordnungen, klassischer Reaktions-Modus
+            msg_ref = {
+                "channel_id": entries[0]["channel_id"],
+                "title": None,
+                "description": None,
+                "display_mode": "reaction",
+            }
+            self.has_ref = False
+
+        self.msg_ref = msg_ref
+        self.entries = entries
+        self.channel, self.panel_message, self.status = await _fetch_panel_message(
+            guild, msg_ref["channel_id"], self.message_id
+        )
+
+        # Hinzufügen braucht die Nachricht (Emoji-Reaktion darauf), Neu-Posten nur, wenn sie wirklich weg ist
+        self.add_btn.disabled    = self.status != "ok"
+        self.remove_btn.disabled = not entries
+        self.change_btn.disabled = not entries
+        self.repost_btn.disabled = self.status not in ("message_gone", "channel_gone")
+        if not self.repost_btn.disabled:
+            self.repost_btn.style = discord.ButtonStyle.success
+
+        color = await db_settings.get_color(guild.id)
+        return self._overview_embed(guild, color)
+
+    def current_text(self) -> tuple[str, str]:
+        """Titel/Beschreibung aus der DB — bei Alt-Panels ohne Eintrag aus dem Embed der Nachricht."""
+        title       = self.msg_ref.get("title") or ""
+        description = self.msg_ref.get("description") or ""
+        if not title and self.panel_message and self.panel_message.embeds:
+            source      = self.panel_message.embeds[0]
+            title       = source.title or ""
+            description = description or source.description or ""
+        return title, description
+
+    def _overview_embed(self, guild: discord.Guild, color: int) -> discord.Embed:
+        lang = self.lang
+        title = self.current_text()[0] or lang.get("rr_edit_untitled", "(untitled)")
+        embed = discord.Embed(
+            title=lang.get("rr_edit_title", "{setting} Edit message: {name}").format(
+                setting=NexusEmojis.Modules.SETTINGS, name=_clip(title, 200)
+            ),
+            color=color,
+        )
+
+        lines = []
+        if self.status == "ok":
+            lines.append(lang.get("rr_edit_location", "📍 {channel} • [🔗 Jump to message]({url})").format(
+                channel=self.channel.mention, url=self.panel_message.jump_url
+            ))
+        elif self.status == "message_gone":
+            lines.append(lang.get(
+                "rr_edit_message_gone",
+                "⚠️ The panel message in {channel} was deleted. Click **Repost** to post it again — all roles are kept.",
+            ).format(channel=self.channel.mention))
+        elif self.status == "channel_gone":
+            lines.append(lang.get(
+                "rr_edit_channel_gone",
+                "⚠️ The panel's channel no longer exists. Click **Repost** and pick a new channel — all roles are kept.",
+            ))
+        else:
+            # Kein Lesezugriff: konkret sagen, was fehlt (Forbidden trotz passender Rechte → generischer Text)
+            issue = format_issue(can_use_channel(self.channel, "read_message_history"), lang)
+            lines.append(issue or lang.get(
+                "error_forbidden",
+                "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
+            ))
+
+        mode = self.msg_ref["display_mode"]
+        if mode == "dropdown":
+            mode_label = lang.get("rr_mode_dropdown_label", "Dropdown menu")
+        else:
+            mode_label = lang.get("rr_mode_reaction_label", "Emoji reactions")
+        lines.append(lang.get("rr_edit_display_mode", "🧩 Display: **{mode}**").format(mode=mode_label))
+        embed.description = "\n".join(lines)
+
+        deleted_label = lang.get("rr_edit_role_deleted", "⚠️ deleted role")
+        role_lines = []
+        for rr in self.entries:
+            role_text = f"<@&{rr['role_id']}>" if guild.get_role(rr["role_id"]) else deleted_label
+            role_lines.append(f"{rr['emoji']} → {role_text} ({rr['mode']})")
+        embed.add_field(
+            name=lang.get("rr_edit_roles_field", "🎭 Roles ({count}/{max})").format(
+                count=len(self.entries), max=_entry_cap(mode)
+            ),
+            value=_clip("\n".join(role_lines), 1024) if role_lines else lang.get(
+                "rr_edit_no_roles", "*No roles yet — click **Add role**.*"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=f"Nexus • Reaction Roles • {self.message_id}")
+        return embed
+
+    @discord.ui.button(label="Edit text", emoji="✏️", style=discord.ButtonStyle.secondary, row=0)
+    async def text_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(PanelTextModal(self, self.lang))
+
+    @discord.ui.button(label="Add role", emoji="➕", style=discord.ButtonStyle.success, row=0)
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        display_mode = self.msg_ref["display_mode"]
+        cap = _entry_cap(display_mode)
+        entries = await db_reaction_roles.get_reaction_roles(interaction.guild_id, self.message_id)
+        if len(entries) >= cap:
+            await interaction.response.send_message(_limit_text(self.lang, cap), ephemeral=True)
+            return
+
+        # Reaktions-Modus: Nexus hängt das Emoji am Ende selbst an die Nachricht
+        needed = ["read_message_history"]
+        if display_mode == "reaction":
+            needed.append("add_reactions")
+        if not (check := can_use_channel(self.channel, *needed)):
+            await interaction.response.send_message(format_issue(check, self.lang), ephemeral=True)
+            return
+
+        # Ab hier übernimmt der bestehende Setup-Flow (Rolle → Emoji → Modus) inkl. aller Prüfungen
+        await self.show(
+            interaction,
+            RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=True),
+            embed=_step_role_embed(self.lang),
+        )
+
+    @discord.ui.button(label="Remove role", emoji="➖", style=discord.ButtonStyle.danger, row=0)
+    async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show(
+            interaction,
+            PanelEntrySelectView(self, interaction.guild, action="remove"),
+            embed=discord.Embed(
+                title=self.lang.get("rr_edit_remove_title", "➖ Remove roles"),
+                description=self.lang.get(
+                    "rr_edit_remove_desc",
+                    "Select the roles to remove from this panel. Members keep roles they already have.",
+                ),
+                color=NEXUS_COLOR,
+            ),
+        )
+
+    @discord.ui.button(label="Change role", emoji="🔄", style=discord.ButtonStyle.primary, row=0)
+    async def change_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show(
+            interaction,
+            PanelEntrySelectView(self, interaction.guild, action="change"),
+            embed=discord.Embed(
+                title=self.lang.get("rr_edit_change_title", "🔄 Change role"),
+                description=self.lang.get(
+                    "rr_edit_change_pick_desc",
+                    "Select the entry whose role should be replaced. Emoji and mode stay the same. "
+                    "Members keep the old role — only new reactions grant the new one.",
+                ),
+                color=NEXUS_COLOR,
+            ),
+        )
+
+    @discord.ui.button(label="Repost", emoji="📤", style=discord.ButtonStyle.secondary, row=1)
+    async def repost_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show(
+            interaction,
+            PanelRepostView(self),
+            embed=discord.Embed(
+                title=self.lang.get("rr_edit_repost_title", "📤 Repost"),
+                description=self.lang.get(
+                    "rr_edit_repost_desc",
+                    "Choose the channel where the panel should be posted again. All roles and settings are kept.",
+                ),
+                color=NEXUS_COLOR,
+            ),
+        )
+
+class PanelTextModal(NexusModal):
+    def __init__(self, hub: PanelEditView, lang: dict):
+        super().__init__(lang, title=lang.get("rr_edit_text_modal_title", "Edit text"))
+        self.hub = hub
+        current_title, current_description = hub.current_text()
+
+        self.rr_title = discord.ui.TextInput(
+            label=lang.get("rr_modal_field_title", "Message Title"),
+            default=current_title[:256] or None,
+            max_length=256,
+            required=True,
+        )
+        self.rr_description = discord.ui.TextInput(
+            label=lang.get("rr_modal_field_desc", "Description / Instructions"),
+            style=discord.TextStyle.paragraph,
+            default=current_description[:4000] or None,
+            max_length=4000,
+            required=True,
+        )
+        self.add_item(self.rr_title)
+        self.add_item(self.rr_description)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        hub = self.hub
+
+        # "gone": inzwischen woanders gelöscht (Dashboard, /reactionrole_delete) — _show_hub meldet das selbst
+        status = await save_panel_text(interaction.guild, hub.message_id, self.rr_title.value, self.rr_description.value)
+        if status == "saved_only":
+            warning = self.lang.get(
+                "rr_edit_text_saved_only",
+                "💾 Text saved. The panel message is currently not reachable — the new text will be used when you repost it.",
+            )
+        elif status == "not_own":
+            warning = self.lang.get(
+                "rr_edit_not_own_message",
+                "⚠️ Text saved, but this panel message wasn't posted by me, so I can't edit it.",
+            )
+        elif status == "failed":
+            warning = self.lang.get(
+                "error_forbidden",
+                "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
+            )
+        else:
+            warning = None
+
+        await _show_hub(interaction, hub.bot, hub.owner_id, hub.message_id, self.lang, previous=hub)
+        if warning:
+            await interaction.followup.send(warning, ephemeral=True)
+
+class PanelEntrySelectView(NexusView):
+    """Auswahl von Einträgen des Panels — mehrere zum Entfernen, einer zum Rollentausch."""
+
+    def __init__(self, hub: PanelEditView, guild: discord.Guild, *, action: str):
+        super().__init__(hub.lang, owner_id=hub.owner_id, require=None, timeout=180)
+        self.hub    = hub
+        self.action = action
+        self.back_btn.label = self.lang.get("rr_edit_btn_back", "Back")
+
+        deleted_label = self.lang.get("rr_edit_role_deleted", "⚠️ deleted role")
+        options = []
+        for rr in hub.entries[:25]:
+            role = guild.get_role(rr["role_id"])
+            _, emoji = parse_emoji_for_select(rr["emoji"])
+            options.append(discord.SelectOption(
+                label=_clip(role.name if role else deleted_label),
+                value=str(rr["id"]),
+                emoji=emoji,
+                description=_clip(rr["mode"]),
+            ))
+
+        if action == "remove":
+            placeholder = self.lang.get("rr_edit_select_remove", "Select roles to remove...")
+        else:
+            placeholder = self.lang.get("rr_edit_select_change", "Select the entry to change...")
+        select = discord.ui.Select(
+            placeholder=placeholder,
+            options=options,
+            min_values=1,
+            max_values=len(options) if action == "remove" else 1,
+            row=0,
+        )
+        select.callback = self._select_callback
+        self.add_item(select)
+
+    @discord.ui.button(label="Back", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
+
+    async def _select_callback(self, interaction: discord.Interaction):
+        entry_ids = {int(v) for v in interaction.data["values"]}
+        if self.action == "remove":
+            await self._remove(interaction, entry_ids)
+            return
+
+        entry = next((rr for rr in self.hub.entries if rr["id"] in entry_ids), None)
+        if entry is None:
+            await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
+            return
+        await self.show(
+            interaction,
+            PanelChangeRoleView(self.hub, entry),
+            embed=discord.Embed(
+                title=self.lang.get("rr_edit_change_title", "🔄 Change role"),
+                description=self.lang.get(
+                    "rr_edit_change_desc",
+                    "Current: {emoji} → {role}\n\nSelect the new role for this emoji.",
+                ).format(emoji=entry["emoji"], role=f"<@&{entry['role_id']}>"),
+                color=NEXUS_COLOR,
+            ),
+        )
+
+    async def _remove(self, interaction: discord.Interaction, entry_ids: set[int]):
+        await interaction.response.defer()
+        hub      = self.hub
+        guild_id = interaction.guild_id
+
+        removed = []
+        for rr in hub.entries:
+            if rr["id"] in entry_ids and await db_reaction_roles.delete_reaction_role(rr["id"], guild_id):
+                removed.append(rr)
+
+        reactions_left = False
+        message = hub.panel_message
+        if message is not None and removed:
+            if hub.msg_ref["display_mode"] == "dropdown":
+                try:
+                    await _update_dropdown_message(message, guild_id, hub.message_id, self.lang)
+                except discord.HTTPException as e:
+                    log.warning("[RR] Dropdown von Panel %s auf %s nicht aktualisiert: %s", hub.message_id, guild_id, e)
+            else:
+                for rr in removed:
+                    try:
+                        await message.clear_reaction(rr["emoji"])
+                    except discord.Forbidden:
+                        # Ohne "Nachrichten verwalten" bleiben die Reaktionen der Mitglieder stehen —
+                        # harmlos (keine Zuordnung mehr), aber wenigstens die eigene entfernen
+                        reactions_left = True
+                        try:
+                            await message.remove_reaction(rr["emoji"], interaction.guild.me)
+                        except discord.HTTPException:
+                            pass
+                    except discord.HTTPException:
+                        pass
+
+        await _show_hub(interaction, hub.bot, self.owner_id, hub.message_id, self.lang, previous=self)
+        if reactions_left:
+            await interaction.followup.send(
+                self.lang.get(
+                    "rr_edit_reactions_left",
+                    "⚠️ Roles removed, but I couldn't clear the members' reactions (missing **Manage Messages**). "
+                    "They no longer do anything and can be removed manually.",
+                ),
+                ephemeral=True,
+            )
+
+class PanelChangeRoleView(NexusView):
+    """Tauscht die Rolle eines Eintrags aus — Emoji, Modus und Gruppe bleiben unverändert."""
+
+    def __init__(self, hub: PanelEditView, entry: dict):
+        super().__init__(hub.lang, owner_id=hub.owner_id, require=None, timeout=180)
+        self.hub   = hub
+        self.entry = entry
+        self.select_role.placeholder = self.lang.get("rr_select_role_placeholder", "🎭 Select a role...")
+        self.back_btn.label = self.lang.get("rr_edit_btn_back", "Back")
+
+    @discord.ui.select(cls=discord.ui.RoleSelect, placeholder="🎭 Select a role...", row=0)
+    async def select_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        role     = select.values[0]
+        guild_id = interaction.guild_id
+
+        if issue := _role_issue(interaction, role, self.lang):
+            await interaction.response.send_message(issue, ephemeral=True)
+            return
+
+        entries = await db_reaction_roles.get_reaction_roles(guild_id, self.hub.message_id)
+        current = next((rr for rr in entries if rr["id"] == self.entry["id"]), None)
+        if current is None:
+            # Eintrag inzwischen woanders entfernt — zurück in den Hub, der zeigt den aktuellen Stand
+            await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
+            await interaction.followup.send(
+                self.lang.get("rr_edit_entry_gone", "❌ This entry no longer exists."), ephemeral=True
+            )
+            return
+
+        # Gleiche Rolle gewählt: nichts zu tun (UPDATE würde 0 Zeilen melden und wie ein Fehler aussehen)
+        if role.id == current["role_id"]:
+            await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
+            return
+
+        if any(rr["role_id"] == role.id for rr in entries):
+            await interaction.response.send_message(
+                self.lang.get(
+                    "rr_role_already_set",
+                    "ℹ️ **Already assigned:** The role {mentioned_role} is already linked to an emoji.\n"
+                    "Simply select a different role to continue!",
+                ).format(mentioned_role=role.mention),
+                ephemeral=True,
+            )
+            return
+
+        await db_reaction_roles.update_reaction_role_role(current["id"], guild_id, role.id)
+        log.info("[RR] Panel %s auf %s: %s → Rolle %s getauscht.", self.hub.message_id, guild_id, current["emoji"], role.id)
+        await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
+
+    @discord.ui.button(label="Back", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
+
+class PanelRepostView(NexusView):
+    """Postet ein Panel neu, dessen Nachricht oder Channel gelöscht wurde, und zieht alle Einträge mit um."""
+
+    def __init__(self, hub: PanelEditView):
+        super().__init__(hub.lang, owner_id=hub.owner_id, require=None, timeout=180)
+        self.hub = hub
+        self.select_channel.placeholder = self.lang.get("rr_edit_repost_placeholder", "📍 Select a channel...")
+        self.back_btn.label = self.lang.get("rr_edit_btn_back", "Back")
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+        placeholder="📍 Select a channel...",
+        row=0,
+    )
+    async def select_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        hub     = self.hub
+        guild   = interaction.guild
+        channel = guild.get_channel(select.values[0].id)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message(
+                self.lang.get("error_generic", "❌ Something went wrong. Please try again later."), ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        result = await repost_panel(guild, hub.message_id, channel, self.lang)
+
+        # Bei fehlenden Rechten bleibt die Channel-Auswahl offen, damit ein anderer Channel gewählt werden kann
+        if result.status == "no_perms":
+            await interaction.followup.send(format_issue(result.check, self.lang), ephemeral=True)
+            return
+        if result.status == "send_failed":
+            await interaction.followup.send(
+                self.lang.get("error_forbidden", "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong."),
+                ephemeral=True,
+            )
+            return
+
+        # "gone" / "still_there": der Hub zeigt den aktuellen Stand (Panel weg bzw. Nachricht wieder erreichbar)
+        new_id = result.message.id if result.message else hub.message_id
+        await _show_hub(interaction, hub.bot, self.owner_id, new_id, self.lang, previous=self)
+        if failed := result.failed:
+            await interaction.followup.send(
+                self.lang.get(
+                    "rr_edit_repost_partial",
+                    "⚠️ Panel reposted, but I couldn't restore: {items}. Remove and re-add these roles if needed.",
+                ).format(items=" ".join(failed)),
+                ephemeral=True,
+            )
+
+    @discord.ui.button(label="Back", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
 
 # ─── Cog ─────────────────────────────────────────────────────────────────────
 
@@ -751,7 +1426,7 @@ class ReactionRoles(commands.Cog):
     @module_required("reaction_roles")
     async def reactionrole_list(self, interaction: discord.Interaction):
         lang     = await get_lang(interaction.guild_id)
-        messages = await db_reaction_roles.get_all_reaction_role_messages(interaction.guild_id)
+        messages = await db_reaction_roles.get_all_panels(interaction.guild_id)
 
         if not messages:
             await interaction.response.send_message(
@@ -787,6 +1462,10 @@ class ReactionRoles(commands.Cog):
     ):
         await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
+        # default_permissions lässt sich pro Server überschreiben — vor dem Löschen selbst prüfen (wie create/edit)
+        if not (check := can_set_up_self_roles(interaction.guild, interaction.user)):
+            await interaction.followup.send(format_issue(check, lang), ephemeral=True)
+            return
 
         try:
             msg_id = int(message_id)
@@ -829,15 +1508,66 @@ class ReactionRoles(commands.Cog):
             ), ephemeral=True
         )
 
+    @app_commands.command(name="reactionrole_edit", description=app_commands.locale_str("cmd_rr_edit_desc"))
+    @app_commands.default_permissions(manage_roles=True)
+    @module_required("reaction_roles")
+    @app_commands.describe(message_id=app_commands.locale_str("cmd_rr_edit_param_desc"))
+    async def reactionrole_edit(
+        self,
+        interaction: discord.Interaction,
+        message_id: str,
+    ):
+        lang = await get_lang(interaction.guild_id)
+        # default_permissions lässt sich pro Server überschreiben — vor dem Bearbeiten selbst prüfen
+        if not (check := can_set_up_self_roles(interaction.guild, interaction.user)):
+            await interaction.response.send_message(format_issue(check, lang), ephemeral=True)
+            return
+
+        try:
+            msg_id = int(message_id)
+        except ValueError:
+            await interaction.response.send_message(lang.get("invalid_id", "❌ Invalid ID."), ephemeral=True)
+            return
+
+        msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, msg_id)
+        roles = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
+        if not msg_ref and not roles:
+            await interaction.response.send_message(
+                lang.get("rr_not_found", "❌ This reaction role no longer exists."), ephemeral=True
+            )
+            return
+
+        # Der Hub holt die Discord-Nachricht per API — das kann knapp an die 3-Sekunden-Grenze gehen
+        await interaction.response.defer(ephemeral=True)
+        await _show_hub(interaction, self.bot, interaction.user.id, msg_id, lang)
+
+    @reactionrole_edit.autocomplete("message_id")
+    async def _rr_edit_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        # Auch Panels ohne Rollen anbieten (frisch angelegt oder alle entfernt) — genau die will man bearbeiten
+        messages = await db_reaction_roles.get_all_panels(interaction.guild_id)
+        return await self._panel_choices(interaction, current, messages)
+
     @reactionrole_delete.autocomplete("message_id")
     async def _rr_message_autocomplete(
         self,
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[str]]:
-        lang = await get_lang(interaction.guild_id)
-        messages = await db_reaction_roles.get_all_reaction_role_messages(interaction.guild_id)
+        # Panels ohne Rollen gehören dazu — sonst ließen sie sich nur per Hand-ID löschen
+        messages = await db_reaction_roles.get_all_panels(interaction.guild_id)
+        return await self._panel_choices(interaction, current, messages)
 
+    async def _panel_choices(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+        messages: list[dict],
+    ) -> list[app_commands.Choice[str]]:
+        lang = await get_lang(interaction.guild_id)
         choices = []
 
         msg_template = lang.get("rr_autocomplete_label", "Message in {channel_name} ({msg_id})")

@@ -87,6 +87,8 @@ COMMANDS: dict[str, str] = {
     "cmd_rr_create_desc":       "Creates a reaction role message",
     "cmd_rr_list_desc":         "Displays all reaction role messages",
     "cmd_rr_delete_desc":       "Deletes a reaction role message",
+    "cmd_rr_edit_desc":         "Edits a reaction role message",
+    "cmd_rr_edit_param_desc":   "The reaction role message to edit",
 
     # ─── Stream Alert Commands ────────────────────────────────────────
     "cmd_alert_add_desc":     "Adds a channel to be monitored",
@@ -113,7 +115,6 @@ COMMANDS: dict[str, str] = {
     "cmd_edit_category_desc":       "Edits an existing ticket category",
     "cmd_edit_category_param_desc": "Which category should be edited?",
     "cmd_ticket_panel_desc":        "Posts the ticket panel with category buttons",
-    "cmd_ticket_panel_channel_desc":"Which channel should the panel be posted in?",
     "cmd_force_close_desc":         "Force-closes a ticket (reason required)",
     "cmd_ticket_settings_desc": "Set when tickets close automatically and when channels are deleted",
     "cmd_ticket_panel_channel_desc": "Channel for the panel (only needed for the first panel or to move it)",

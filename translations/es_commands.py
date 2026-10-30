@@ -87,6 +87,8 @@ COMMANDS: dict[str, str] = {
     "cmd_rr_create_desc":       "Crea un mensaje de roles por reacción",
     "cmd_rr_list_desc":         "Muestra todos los mensajes de roles por reacción",
     "cmd_rr_delete_desc":       "Elimina un mensaje de roles por reacción",
+    "cmd_rr_edit_desc":         "Edita un mensaje de roles por reacción",
+    "cmd_rr_edit_param_desc":   "El mensaje de roles por reacción que quieres editar",
 
     # ─── Stream Alert Commands ───────────────────────────────────────
     "cmd_alert_add_desc":       "Añade un canal para monitorizar",
@@ -113,7 +115,6 @@ COMMANDS: dict[str, str] = {
     "cmd_edit_category_desc":       "Edita una categoría de tickets existente",
     "cmd_edit_category_param_desc": "¿Qué categoría deseas editar?",
     "cmd_ticket_panel_desc":        "Publica el panel de tickets con botones",
-    "cmd_ticket_panel_channel_desc":"¿En qué canal publicar el panel?",
     "cmd_force_close_desc":         "Cierra un ticket permanentemente (requiere motivo)",
     "cmd_ticket_settings_desc": "Definir cuándo se cierran los tickets y cuándo se borran los canales",
     "cmd_ticket_panel_channel_desc": "Canal del panel (solo para el primer panel o para moverlo)",

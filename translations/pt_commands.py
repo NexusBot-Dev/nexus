@@ -87,6 +87,8 @@ COMMANDS: dict[str, str] = {
     "cmd_rr_create_desc":       "Cria uma mensagem de cargos por reação",
     "cmd_rr_list_desc":         "Mostra todas as mensagens de cargos por reação",
     "cmd_rr_delete_desc":       "Exclui uma mensagem de cargos por reação",
+    "cmd_rr_edit_desc":         "Edita uma mensagem de cargos por reação",
+    "cmd_rr_edit_param_desc":   "A mensagem de cargos por reação a editar",
 
     # ─── Stream Alert Commands ───────────────────────────────────────
     "cmd_alert_add_desc":       "Adiciona um canal para monitorar",
@@ -113,7 +115,6 @@ COMMANDS: dict[str, str] = {
     "cmd_edit_category_desc":       "Edita uma categoria de tickets existente",
     "cmd_edit_category_param_desc": "Qual categoria deve ser editada?",
     "cmd_ticket_panel_desc":        "Envia o painel de tickets com botões",
-    "cmd_ticket_panel_channel_desc":"Em qual canal enviar o painel?",
     "cmd_force_close_desc":         "Fecha um ticket permanentemente (motivo obrigatório)",
     "cmd_ticket_settings_desc": "Definir quando os tickets fecham e quando os canais são excluídos",
     "cmd_ticket_panel_channel_desc": "Canal do painel (só para o primeiro painel ou para movê-lo)",
