@@ -107,18 +107,18 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = None,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         if err := self._hierarchy_error(
             interaction, member, lang,
             "kick_hierarchy", "You cannot kick users who are ranked equal or higher than you.",
             perms=("kick_members",),
         ):
-            await interaction.response.send_message(err, ephemeral=True)
+            await interaction.followup.send(err, ephemeral=True)
             return
 
         if reason is None:
             reason = lang.get("no_reason", "No reason given")
-        await interaction.response.defer(ephemeral=True)
 
         await dm_user(
             member,
@@ -174,18 +174,17 @@ class Moderation(commands.Cog):
         reason: str = None,
         delete_message_days: app_commands.Range[int, 0, 7] = 0,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         if err := self._hierarchy_error(
             interaction, member, lang,
             "ban_hierarchy", "You cannot ban users who are ranked equal or higher than you.",
             perms=("ban_members",),
         ):
-            await interaction.response.send_message(err, ephemeral=True)
+            await interaction.followup.send(err, ephemeral=True)
             return
         if reason is None:
             reason = lang.get("no_reason", "No reason given")
-
-        await interaction.response.defer(ephemeral=True)
 
         await dm_user(
             member,
@@ -235,16 +234,15 @@ class Moderation(commands.Cog):
         user: str,
         reason: str = None,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
 
         if not user.isdigit():
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("unban_invalid_user", "❌ Please select a user from the suggestions."),
                 ephemeral=True,
             )
             return
-
-        await interaction.response.defer(ephemeral=True)  # fetch_user + unban + DM + Log können >3s dauern
 
         try:
             user_obj = await self.bot.fetch_user(int(user))
@@ -321,23 +319,23 @@ class Moderation(commands.Cog):
         member: discord.Member,
         role: str,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         if err := self._hierarchy_error(
             interaction, member, lang,
             "add_role_hierarchy", "You cannot assign roles to users who are ranked equal or higher than you.",
             perms=("manage_roles",),
         ):
-            await interaction.response.send_message(err, ephemeral=True)
+            await interaction.followup.send(err, ephemeral=True)
             return
         role_obj = interaction.guild.get_role(int(role)) if role.isdigit() else None
         if role_obj is None:
-            await interaction.response.send_message(lang.get("role_not_found", "Role not found."), ephemeral=True)
+            await interaction.followup.send(lang.get("role_not_found", "Role not found."), ephemeral=True)
             return
         if not (role_check := can_manage_role(interaction.guild, role_obj, actor=interaction.user)):
-            await interaction.response.send_message(format_issue(role_check, lang), ephemeral=True)
+            await interaction.followup.send(format_issue(role_check, lang), ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True)  # Rolle vergeben + Log können >3s dauern
         try:
             await member.add_roles(role_obj)
         except discord.Forbidden:
@@ -388,24 +386,24 @@ class Moderation(commands.Cog):
         member: discord.Member,
         role: str,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         if err := self._hierarchy_error(
             interaction, member, lang,
             "remove_role_hierarchy", "You cannot remove roles from users who are ranked equal or higher than you.",
             perms=("manage_roles",),
         ):
-            await interaction.response.send_message(err, ephemeral=True)
+            await interaction.followup.send(err, ephemeral=True)
             return
         role_obj = interaction.guild.get_role(int(role)) if role.isdigit() else None
         if role_obj is None:
-            await interaction.response.send_message(lang.get("role_not_found", "Role not found."), ephemeral=True)
+            await interaction.followup.send(lang.get("role_not_found", "Role not found."), ephemeral=True)
             return
 
         if not (role_check := can_manage_role(interaction.guild, role_obj, actor=interaction.user)):
-            await interaction.response.send_message(format_issue(role_check, lang), ephemeral=True)
+            await interaction.followup.send(format_issue(role_check, lang), ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True)  # Rolle entziehen + Log können >3s dauern
         try:
             await member.remove_roles(role_obj)
         except discord.Forbidden:
@@ -522,8 +520,8 @@ class Moderation(commands.Cog):
         duration: int,
         reason: str = None,
     ):
-        lang = await get_lang(interaction.guild_id)
         await interaction.response.defer(ephemeral=True)
+        lang = await get_lang(interaction.guild_id)
 
         if err := self._hierarchy_error(
             interaction, member, lang,
@@ -740,13 +738,14 @@ class Moderation(commands.Cog):
         interaction: discord.Interaction,
         member: discord.Member,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         warns = await db_warnings.get_warnings(
             guild_id=interaction.guild_id,
             user_id=member.id,
         )
         if not warns:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("warnings_none", "{user} has no warnings.").format(user=member.mention),
                 ephemeral=True,
             )
@@ -767,7 +766,7 @@ class Moderation(commands.Cog):
                 inline=False,
             )
         embed.set_footer(text=lang.get("warn_count", "Overall {amount} warning(s)").format(amount=len(warns)))
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="unwarn", description=app_commands.locale_str("cmd_unwarn_desc"))
     @app_commands.describe(

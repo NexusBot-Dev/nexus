@@ -1,20 +1,23 @@
 """Ticket-Panel: ein Panel pro Server, gespeichert in ticket_settings.
 
 Gemeinsam genutzt von cogs/tickets.py (Slash-Command, Kontextmenü) und dashboard/tickets.py.
-Die Buttons tragen die category_id in der custom_id, das Panel funktioniert also auch nach
-einem Neustart, ohne dass eine View im Speicher liegt.
+Die Buttons tragen die category_id in der custom_id, beim Dropdown steckt sie im gewählten Wert —
+das Panel funktioniert also auch nach einem Neustart, ohne dass eine View im Speicher liegt.
+Darstellung (panel_mode): "buttons" oder "dropdown", gespeichert in ticket_settings.
 """
 import logging
 
 import discord
 
 from config import NEXUS_FOOTER
+from cogs.utils import get_lang
 from database import db_settings, db_ticket_categories, db_ticket_settings
 from systems.hierarchy import can_use_channel
 
 log = logging.getLogger(__name__)
 
 PANEL_BUTTON_PREFIX = "nexus_ticket_open_"
+PANEL_SELECT_ID = "nexus_ticket_select"
 
 
 class PanelError(Exception):
@@ -31,11 +34,22 @@ def build_panel_embed(title: str, description: str, color: int) -> discord.Embed
     return embed
 
 
-def build_panel_view(categories: list[dict]) -> discord.ui.View | None:
-    """Button-Reihe fürs Panel. None, wenn es keine Kategorien gibt (dann ohne Buttons)."""
+def build_panel_view(categories: list[dict], mode: str = "buttons", placeholder: str = "") -> discord.ui.View | None:
+    """Buttons oder ein Dropdown fürs Panel (je max. 25 Kategorien, Discord-Limit).
+    None, wenn es keine Kategorien gibt (dann ohne Bedienelemente)."""
     if not categories:
         return None
     view = discord.ui.View(timeout=None)
+    if mode == "dropdown":
+        view.add_item(discord.ui.Select(
+            custom_id=PANEL_SELECT_ID,
+            placeholder=placeholder[:150] or None,
+            options=[
+                discord.SelectOption(label=cat["name"][:100], value=str(cat["id"]))  # Discord-Limit 100 Zeichen
+                for cat in categories[:25]
+            ],
+        ))
+        return view
     for cat in categories[:25]:
         view.add_item(discord.ui.Button(
             label=cat["name"][:80],  # Discord-Button-Label-Limit
@@ -45,13 +59,20 @@ def build_panel_view(categories: list[dict]) -> discord.ui.View | None:
     return view
 
 
+async def _panel_view(guild: discord.Guild, categories: list[dict], mode: str) -> discord.ui.View | None:
+    lang = await get_lang(guild.id)
+    placeholder = lang.get("ticket_panel_select_placeholder", "Choose a category …")
+    return build_panel_view(categories, mode, placeholder)
+
+
 def is_ticket_panel(message: discord.Message, bot_user_id: int) -> bool:
-    """Nachricht von Nexus mit mindestens einem Ticket-Button."""
+    """Nachricht von Nexus mit mindestens einem Ticket-Button oder dem Ticket-Dropdown."""
     if message.author.id != bot_user_id:
         return False
     for row in message.components:
         for child in getattr(row, "children", []):
-            if (getattr(child, "custom_id", None) or "").startswith(PANEL_BUTTON_PREFIX):
+            custom_id = getattr(child, "custom_id", None) or ""
+            if custom_id.startswith(PANEL_BUTTON_PREFIX) or custom_id == PANEL_SELECT_ID:
                 return True
     return False
 
@@ -78,12 +99,18 @@ async def publish_panel(
     title: str,
     description: str,
     channel: discord.abc.Messageable | None = None,
+    mode: str | None = None,
 ) -> tuple[discord.Message, bool]:
     """Panel speichern und anzeigen. Bearbeitet das bestehende Panel, wenn es im selben Channel
     liegt, sonst wird neu gepostet und das alte gelöscht (ein Panel pro Server).
     channel=None: im Channel des bestehenden Panels bleiben.
+    mode=None: gespeicherte Darstellung (Buttons/Dropdown) beibehalten.
     Rückgabe: (Nachricht, bearbeitet statt neu gepostet)."""
     settings = await db_ticket_settings.get_ticket_settings(guild.id)
+    if mode is None:
+        mode = settings.get("panel_mode") or "buttons"
+    elif mode not in db_ticket_settings.PANEL_MODES:
+        raise ValueError(f"panel_mode muss einer dieser Werte sein: {db_ticket_settings.PANEL_MODES}")
     categories = await db_ticket_categories.get_categories(guild.id)
     if not categories:
         raise PanelError("no_categories")
@@ -95,7 +122,7 @@ async def publish_panel(
         channel = old.channel
 
     embed = build_panel_embed(title, description, await db_settings.get_color(guild.id))
-    view = build_panel_view(categories)
+    view = await _panel_view(guild, categories, mode)
 
     message, edited = None, False
     if old is not None and old.channel.id == channel.id:
@@ -124,6 +151,7 @@ async def publish_panel(
         panel_message_id=message.id,
         panel_title=title,
         panel_description=description,
+        panel_mode=mode,
     )
     return message, edited
 
@@ -142,7 +170,7 @@ async def refresh_panel(guild: discord.Guild) -> None:
                 await db_ticket_settings.update_ticket_settings(guild.id, panel_message_id=None)
             return
         categories = await db_ticket_categories.get_categories(guild.id)
-        await message.edit(view=build_panel_view(categories))
+        await message.edit(view=await _panel_view(guild, categories, settings.get("panel_mode") or "buttons"))
     except Exception:
         log.exception("Ticket-Panel auf %s konnte nicht aktualisiert werden.", guild.id)
 
@@ -174,3 +202,13 @@ async def import_panel(guild: discord.Guild, message: discord.Message, bot_user_
     )
     await refresh_panel(guild)
     return message
+
+
+async def reset_panel_select(message: discord.Message) -> None:
+    """Dropdown nach einer Auswahl zurücksetzen: Discord zeigt sonst weiter die gewählte Kategorie an,
+    und dieselbe Kategorie ließe sich kein zweites Mal wählen (keine Änderung = kein Event).
+    Das Neusetzen derselben Bedienelemente reicht dafür. Best effort."""
+    try:
+        await message.edit(view=discord.ui.View.from_message(message, timeout=None))
+    except discord.HTTPException as e:
+        log.info("Ticket-Dropdown auf Nachricht %s ließ sich nicht zurücksetzen: %s", message.id, e)

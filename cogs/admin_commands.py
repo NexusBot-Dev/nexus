@@ -139,16 +139,17 @@ class AdminCommands(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(tz=app_commands.locale_str("cmd_timezone_param_desc"))
     async def timezone_command(self, interaction: discord.Interaction, tz: str):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         if tz not in ALL_TIMEZONES:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("timezone_invalid", "❌ **Invalid timezone.** Please select a suggestion from the list (e.g., `Europe/Berlin`)."),
                 ephemeral=True
             )
             return
 
         await db_settings.update_timezone(interaction.guild_id, tz)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             lang.get("timezone_success", "{nexus_checkmark} Timezone successfully set to `{timezone}`!").format(
                 nexus_checkmark=NexusEmojis.CHECKMARK,
                 timezone=tz
@@ -174,6 +175,7 @@ class AdminCommands(commands.Cog):
     @app_commands.command(name="support-pin", description=app_commands.locale_str("cmd_support_pin_desc"))
     @app_commands.default_permissions(manage_guild=True)
     async def support_pin(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         pin = await db_support.create_pin(interaction.guild_id)
 
@@ -185,7 +187,7 @@ class AdminCommands(commands.Cog):
             ).format(pin=pin),
             color=NEXUS_COLOR,
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 class SettingsView(NexusView):
     def __init__(self, owner_id: int, lang: dict, guild_id: int):
@@ -211,6 +213,7 @@ class SettingsView(NexusView):
         row=0
     )
     async def select_locale(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         locale = select.values[0]
         await db_settings.set_locale(interaction.guild_id, locale)
 
@@ -221,7 +224,7 @@ class SettingsView(NexusView):
             "pt": "Idioma alterado para **Português**.",
         }.get(locale, "Language was set to **English**.")
 
-        await interaction.response.send_message(f"{NexusEmojis.CHECKMARK} {msg}", ephemeral=True)
+        await interaction.followup.send(f"{NexusEmojis.CHECKMARK} {msg}", ephemeral=True)
 
     # row=1: Alle Buttons wandern gemeinsam sauber in die zweite Zeile
     @discord.ui.button(label="Log-Channel ändern", style=discord.ButtonStyle.secondary, row=1)
@@ -341,10 +344,11 @@ class ChannelSelectView(NexusView):
         channel_types=[discord.ChannelType.text],
     )
     async def select_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()
         channel = select.values[0]
         await db_settings.update_guild(interaction.guild_id, **{self.setting_key: channel.id})
         self.stop()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=self.lang.get("channel_switched", "{nexus_checkmark} **{label}** was set to {channel}.").format(
                 nexus_checkmark=NexusEmojis.CHECKMARK,
                 label=self.label,

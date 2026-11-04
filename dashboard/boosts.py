@@ -1,5 +1,5 @@
 import asyncio
-from .registry import register_action, parse_id, DashCtx
+from .registry import register_action, parse_id, DashCtx, DashboardError
 from database import db_boosts, db_limits
 from systems.premium import is_premium
 
@@ -22,14 +22,14 @@ async def add_message(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
     text = (payload.get("message") or "").strip()
     if not text:
-        raise ValueError("Nachricht darf nicht leer sein")
+        raise DashboardError("dash_err_msg_empty")
     if len(text) > 1000:
-        raise ValueError("Nachricht ist zu lang (max. 1000 Zeichen)")
+        raise DashboardError("dash_err_msg_too_long")
 
     current_count = await db_boosts.count_boost_messages(guild_id)
     limit = await db_limits.get_limit(guild_id, "boost_messages", await is_premium(guild_id))
     if current_count >= limit:
-        raise ValueError(f"Limit erreicht ({limit} Nachrichten)")
+        raise DashboardError("dash_err_msg_limit", limit=limit)
 
     message_id = await db_boosts.add_boost_message(guild_id, text)
     return {"id": message_id, "message": text}
@@ -37,16 +37,16 @@ async def add_message(ctx: DashCtx) -> dict:
 @register_action("boosts", "edit-message")
 async def edit_message(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
-    message_id = parse_id(payload.get("message_id"), "message_id und message werden benötigt")
+    message_id = parse_id(payload.get("message_id"), "message_id wird benötigt")
     text = (payload.get("message") or "").strip()
     if not text:
-        raise ValueError("message_id und message werden benötigt")
+        raise DashboardError("dash_err_msg_empty")
     if len(text) > 1000:
-        raise ValueError("Nachricht ist zu lang (max. 1000 Zeichen)")
+        raise DashboardError("dash_err_msg_too_long")
 
     updated = await db_boosts.update_boost_message(message_id, guild_id, text)
     if not updated:
-        raise ValueError("Nachricht wurde nicht gefunden")
+        raise DashboardError("dash_err_message_not_found")
     return {"id": message_id, "message": text}
 
 @register_action("boosts", "delete-message")
@@ -56,5 +56,5 @@ async def delete_message(ctx: DashCtx) -> dict:
 
     deleted = await db_boosts.delete_boost_message(message_id, guild_id)
     if not deleted:
-        raise ValueError("Nachricht wurde nicht gefunden")
+        raise DashboardError("dash_err_message_not_found")
     return {"id": message_id}

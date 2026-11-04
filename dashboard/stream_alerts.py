@@ -1,12 +1,13 @@
 import asyncio
 import aiomysql
-from .registry import register_action, parse_id, DashCtx
+from .registry import register_action, parse_id, DashCtx, DashboardError, InvalidRequest
 from database import db_stream_alerts, db_limits
 from systems.premium import is_premium
 from systems.platform_registry import PLATFORM_HANDLERS
 
 PLATFORMS = ("twitch", "youtube", "kick")
 PING_ROLE_SCOPES = ("all", *PLATFORMS)
+PLATFORM_NAMES = {"twitch": "Twitch", "youtube": "YouTube", "kick": "Kick"}   # für Meldungen
 
 @register_action("stream_alerts", "list")
 async def list_alerts(ctx: DashCtx) -> dict:
@@ -67,28 +68,28 @@ async def add_alert(ctx: DashCtx) -> dict:
 
     handler = PLATFORM_HANDLERS.get(platform)
     if handler is None:
-        raise ValueError("Unbekannte Plattform")
+        raise InvalidRequest(f"Unbekannte Plattform: {platform!r}")
     if not login_raw or not channel_id or not str(channel_id).isdigit():
-        raise ValueError("Username und Channel werden benötigt")
+        raise DashboardError("dash_err_sa_username_channel_required")
     if message and len(message) > 200:
-        raise ValueError("Nachricht zu lang (max. 200 Zeichen)")
+        raise DashboardError("dash_err_sa_message_too_long")
 
     if guild.get_channel(int(channel_id)) is None:
-        raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
+        raise DashboardError("dash_err_channel_gone")
 
     login = handler.normalize_input(login_raw)
     if login is None:
-        raise ValueError("Ungültiger Username/Link")
+        raise DashboardError("dash_err_sa_invalid_username")
 
     current_count = await db_stream_alerts.count_subscriptions_for_guild(guild_id, platform)
     premium = await is_premium(guild_id)
     limit = await db_limits.get_limit(guild_id, f"stream_alerts_{platform}", premium)
     if current_count >= limit:
-        raise ValueError(f"Limit erreicht ({limit} Kanäle für {platform})")
+        raise DashboardError("dash_err_sa_limit", limit=limit, platform=PLATFORM_NAMES.get(platform, platform))
 
     user = await handler.resolve_user(login)
     if user is None:
-        raise ValueError(f"User '{login}' wurde nicht gefunden")
+        raise DashboardError("dash_err_sa_user_not_found", name=login)
 
     external_id = user["id"]
     monitored = await db_stream_alerts.get_monitored_channel(platform, external_id)
@@ -99,7 +100,7 @@ async def add_alert(ctx: DashCtx) -> dict:
             try:
                 sub_ids = await handler.create_subscriptions(external_id)
             except Exception:
-                raise ValueError("Abo konnte nicht eingerichtet werden — bitte später erneut versuchen")
+                raise DashboardError("dash_err_sa_subscription_failed") from None
 
         monitored = await db_stream_alerts.get_or_create_monitored_channel(platform, external_id, user["display_name"])
         if sub_ids:
@@ -112,14 +113,15 @@ async def add_alert(ctx: DashCtx) -> dict:
     else:
         existing = await db_stream_alerts.get_subscription(guild_id, monitored["id"])
         if existing is not None:
-            raise ValueError(f"'{login}' wird bereits überwacht")
+            raise DashboardError("dash_err_sa_already_monitored", name=login)
 
-    await db_stream_alerts.add_subscription(
+    subscription_id = await db_stream_alerts.add_subscription(
         guild_id=guild_id, channel_id=int(channel_id), monitored_channel_id=monitored["id"], message=message,
     )
 
     return {
         "monitored_channel_id": monitored["id"],
+        "subscription_id": subscription_id,   # damit das Dashboard den Kanal sofort verknüpfen kann
         "streamer_name": user["display_name"],
         "platform": platform,
     }
@@ -127,46 +129,41 @@ async def add_alert(ctx: DashCtx) -> dict:
 @register_action("stream_alerts", "edit")
 async def edit_alert(ctx: DashCtx) -> dict:
     guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
-    monitored_channel_id = payload.get("monitored_channel_id")
+    monitored_channel_id = parse_id(payload.get("monitored_channel_id"), "monitored_channel_id wird benötigt")
     channel_id = payload.get("channel_id")
     message = payload.get("message", ...)
-
-    if not monitored_channel_id:
-        raise ValueError("monitored_channel_id wird benötigt")
 
     channel_id_int = None
     if channel_id and str(channel_id).isdigit():
         if guild.get_channel(int(channel_id)) is None:
-            raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
+            raise DashboardError("dash_err_channel_gone")
         channel_id_int = int(channel_id)
 
     if message is not ... and message:
         message = str(message).strip()[:200] or None
 
     updated = await db_stream_alerts.update_subscription(
-        guild_id=guild_id, monitored_channel_id=int(monitored_channel_id),
+        guild_id=guild_id, monitored_channel_id=monitored_channel_id,
         channel_id=channel_id_int, message=message,
     )
     if not updated:
-        raise ValueError("Nichts zu aktualisieren oder Eintrag nicht gefunden")
+        raise DashboardError("dash_err_sa_not_found")
     return {"monitored_channel_id": monitored_channel_id}
 
 @register_action("stream_alerts", "remove")
 async def remove_alert(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
-    monitored_channel_id = payload.get("monitored_channel_id")
-    if not monitored_channel_id:
-        raise ValueError("monitored_channel_id wird benötigt")
+    monitored_channel_id = parse_id(payload.get("monitored_channel_id"), "monitored_channel_id wird benötigt")
 
-    monitored = await db_stream_alerts.get_monitored_channel_by_id(int(monitored_channel_id))
+    monitored = await db_stream_alerts.get_monitored_channel_by_id(monitored_channel_id)
     if monitored is None:
-        raise ValueError("Kanal wurde nicht gefunden")
+        raise DashboardError("dash_err_sa_not_found")
 
-    removed = await db_stream_alerts.remove_subscription(guild_id, int(monitored_channel_id))
+    removed = await db_stream_alerts.remove_subscription(guild_id, monitored_channel_id)
     if not removed:
-        raise ValueError("Abo wurde nicht gefunden")
+        raise DashboardError("dash_err_sa_not_found")
 
-    still_referenced = await db_stream_alerts.is_channel_still_referenced(int(monitored_channel_id))
+    still_referenced = await db_stream_alerts.is_channel_still_referenced(monitored_channel_id)
     if not still_referenced:
         handler = PLATFORM_HANDLERS.get(monitored["platform"])
         if handler and handler.delete_subscriptions:
@@ -174,7 +171,7 @@ async def remove_alert(ctx: DashCtx) -> dict:
                 await handler.delete_subscriptions(monitored)
             except Exception:
                 pass
-        await db_stream_alerts.delete_monitored_channel(int(monitored_channel_id))
+        await db_stream_alerts.delete_monitored_channel(monitored_channel_id)
 
     return {"monitored_channel_id": monitored_channel_id}
 
@@ -185,18 +182,18 @@ async def set_ping_role(ctx: DashCtx) -> dict:
     role_id = payload.get("role_id")
 
     if platform not in PING_ROLE_SCOPES:
-        raise ValueError("Unbekannte Plattform")
+        raise InvalidRequest(f"Unbekannte Plattform: {platform!r}")
     if platform != "all":
         premium = await is_premium(guild_id)
         if not premium:
-            raise ValueError("Plattform-spezifische Rollen erfordern Premium")
+            raise DashboardError("dash_err_sa_platform_roles_premium")
 
     if role_id:
         if not str(role_id).isdigit():
-            raise ValueError("Ungültige role_id")
+            raise InvalidRequest(f"Ungültige role_id: {role_id!r}")
         role = guild.get_role(int(role_id))
         if role is None:
-            raise ValueError("Rolle existiert nicht auf diesem Server")
+            raise DashboardError("dash_err_role_gone")
         await db_stream_alerts.set_ping_role(guild_id, platform, int(role_id))
     else:
         await db_stream_alerts.remove_ping_role(guild_id, platform)
@@ -224,31 +221,29 @@ async def create_link(ctx: DashCtx) -> dict:
     sub_b_id = payload.get("subscription_b_id")
 
     if not sub_a_id or not sub_b_id:
-        raise ValueError("Beide Kanäle werden benötigt")
+        raise DashboardError("dash_err_sa_link_both_required")
     sub_a_id = parse_id(sub_a_id, "Ungültige Kanal-ID")
     sub_b_id = parse_id(sub_b_id, "Ungültige Kanal-ID")
     if sub_a_id == sub_b_id:
-        raise ValueError("Ein Kanal kann nicht mit sich selbst verknüpft werden")
+        raise DashboardError("dash_err_sa_link_self")
 
     subs = await db_stream_alerts.get_subscriptions_for_guild(guild_id)
     sub_ids = {s["id"] for s in subs}
     if sub_a_id not in sub_ids or sub_b_id not in sub_ids:
-        raise ValueError("Kanal gehört nicht zu diesem Server")
+        raise DashboardError("dash_err_sa_not_found")   # z. B. in einem anderen Tab entfernt
 
     try:
         link_id = await db_stream_alerts.create_link(guild_id, sub_a_id, sub_b_id)
     except aiomysql.IntegrityError:
-        raise ValueError("Diese Verknüpfung existiert bereits")
+        raise DashboardError("dash_err_sa_link_exists") from None
 
     return {"id": link_id}
 
 @register_action("stream_alerts", "delete-link")
 async def delete_link(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
-    link_id = payload.get("link_id")
-    if not link_id:
-        raise ValueError("link_id wird benötigt")
-    deleted = await db_stream_alerts.delete_link(int(link_id), guild_id)
+    link_id = parse_id(payload.get("link_id"), "link_id wird benötigt")
+    deleted = await db_stream_alerts.delete_link(link_id, guild_id)
     if not deleted:
-        raise ValueError("Verknüpfung wurde nicht gefunden")
+        raise DashboardError("dash_err_sa_link_not_found")
     return {"id": link_id}

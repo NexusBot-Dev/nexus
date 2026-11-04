@@ -3,8 +3,6 @@ import re
 import discord
 
 from database import db_settings
-from cogs.utils import get_lang
-from translations import TRANSLATIONS
 from dashboard.registry import register_action, DashCtx
 from systems.health_checks import get_guild_issues
 
@@ -30,14 +28,10 @@ def plain_mentions(guild: discord.Guild, text: str) -> str:
 async def get_health_issues(ctx: DashCtx) -> dict:
     """Dieselben strukturierten Probleme wie /diagnose — als JSON fürs
     Notifications-Dropdown im Dashboard statt als Discord-Embed."""
-    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
-
-    # Dashboard-Sprache hat Vorrang vor der Bot-Sprache des Servers
-    lang_code = payload.get("lang")
-    lang = TRANSLATIONS[lang_code] if lang_code in TRANSLATIONS else await get_lang(guild_id)
+    guild, guild_id = ctx.guild, ctx.guild_id
 
     settings = await db_settings.get_guild(guild_id) or {}
-    issues = await get_guild_issues(guild, settings, lang)
+    issues = await get_guild_issues(guild, settings, ctx.lang)
 
     return {
         "issues": [

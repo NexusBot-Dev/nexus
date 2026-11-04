@@ -12,6 +12,7 @@ COMMANDS: dict[str, str] = {
 
     # ─── AutoMod Commands ────────────────────────────────────────────
     "cmd_automod_desc": "Configurar AutoMod",
+    "cmd_honeypot_desc": "Configurar el canal trampa para bots de raid",
 
     # ─── Setup Commands ──────────────────────────────────────────────
     "cmd_setup_desc":   "Configura Nexus",

@@ -9,9 +9,13 @@ CLOSURE_OPTIONS  = (12, 24, 48, 72, 168)   # automatisch schließen ohne Reaktio
 DELETION_OPTIONS = (1, 12, 24, 48, 168)    # Channel löschen nach dem Schließen
 DEFAULT_CLOSURE_HOURS  = 72
 DEFAULT_DELETION_HOURS = 24
-PANEL_MODES = ("buttons", "dropdown")      # dropdown: Vorbereitung, noch nicht genutzt
+PANEL_MODES = ("buttons", "dropdown")      # Darstellung des Ticket-Panels
 
 _cache: TTLCache[int, dict] = TTLCache(maxsize=2000, ttl=900)
+
+def forget_guild(guild_id: int) -> None:
+    """Cache-Eintrag verwerfen — nach dem Löschen aller Guild-Daten (db_settings.delete_guild_data)."""
+    _cache.pop(guild_id, None)
 
 UPDATABLE_TICKET_COLUMNS = frozenset({
     "panel_channel_id", "panel_message_id", "panel_title", "panel_description", "panel_mode",

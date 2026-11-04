@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.exceptions import InvalidSignature
 from dashboard.dashboard_auth import dashboard_auth_middleware
-from dashboard.registry import get_handler
+from dashboard.registry import DashboardError, InvalidRequest, get_handler
 from dashboard import settings as dashboard_settings
 from collections import OrderedDict
 
@@ -121,6 +121,10 @@ class WebhookServer(commands.Cog):
         try:
             result = await handler(ctx)
             return web.json_response({"ok": True, "data": result})
+        except DashboardError as e:
+            if isinstance(e, InvalidRequest):
+                log.warning("Dashboard-Aktion %s/%s: ungültige Anfrage auf %s: %s", module, action, ctx.guild_id, e.detail)
+            return web.json_response({"ok": False, "error": e.render(ctx.lang)}, status=400)
         except ValueError as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
         except Exception:
@@ -239,8 +243,12 @@ class WebhookServer(commands.Cog):
             return web.json_response({"ok": False, "error": "invalid_request"}, status=400)
 
         try:
-            result = await dashboard_settings.update_settings(ctx.guild_id, fields)
+            result = await dashboard_settings.update_settings(ctx.guild_id, fields, ctx.lang)
             return web.json_response({"ok": True, "data": result})
+        except DashboardError as e:
+            if isinstance(e, InvalidRequest):
+                log.warning("Settings-Update auf %s: ungültige Anfrage: %s", ctx.guild_id, e.detail)
+            return web.json_response({"ok": False, "error": e.render(ctx.lang)}, status=400)
         except ValueError as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
         except Exception:

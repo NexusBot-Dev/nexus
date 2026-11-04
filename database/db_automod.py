@@ -4,6 +4,10 @@ from cachetools import TTLCache
 # ─── Cache (analog zu _settings_cache in db_settings.py) ──────────────────
 _antinuke_cache: TTLCache[int, int] = TTLCache(maxsize=2_000, ttl=900)
 
+def forget_guild(guild_id: int) -> None:
+    """Cache-Eintrag verwerfen — nach dem Löschen aller Guild-Daten (db_settings.delete_guild_data)."""
+    _antinuke_cache.pop(guild_id, None)
+
 async def get_antinuke(guild_id: int) -> int:
     """Liest den Status von Anti-Nuke aus (0 oder 1) — gecacht."""
     if guild_id in _antinuke_cache:

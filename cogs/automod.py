@@ -6,10 +6,9 @@ from database import db_settings
 from database import db_automod
 from database import db_honeypot
 from cogs.utils import get_lang, module_required
-from cogs.honeypot import _slugify_channel_name, cleanup_honeypot
+from systems import honeypot as hp_system
 from config import NEXUS_COLOR
 from emojis import NexusEmojis
-from systems.hierarchy import can_apply_overwrites, format_issue
 from systems.ui import NexusView, NexusModal
 
 log = logging.getLogger(__name__)
@@ -118,11 +117,6 @@ class AutoModView(NexusView):
         self.toggle_shield.label = f"Anti-Nuke: {self.lang.get('setup_on', 'ON') if self.shield_enabled else self.lang.get('setup_off', 'OFF')}"
         self.toggle_shield.emoji = "🚨"
         self.toggle_shield.style = discord.ButtonStyle.success if self.shield_enabled else discord.ButtonStyle.secondary
-
-        honeypot_active = self.honeypot_channel_id is not None
-        self.toggle_honeypot.label = f"Honeypot: {self.lang.get('setup_on', 'ON') if honeypot_active else self.lang.get('setup_off', 'OFF')}"
-        self.toggle_honeypot.emoji = "🍯"
-        self.toggle_honeypot.style = discord.ButtonStyle.success if honeypot_active else discord.ButtonStyle.secondary
 
         self.remove_item(self.manage_keywords_btn)
         if kw_rule is not None:
@@ -243,119 +237,7 @@ class AutoModView(NexusView):
             KeywordModal(self.lang, self.guild, self.active_rules.get("keywords"), self)
         )
 
-    @discord.ui.button(custom_id="nexus_am_toggle_honeypot", row=1)
-    async def toggle_honeypot(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.honeypot_channel_id is None:
-            await interaction.response.send_modal(HoneypotModal(self.guild, self.lang, self))
-            return
-
-        await interaction.response.defer(ephemeral=True)
-        await cleanup_honeypot(self.guild, self.honeypot_channel_id)
-        self.honeypot_channel_id = None
-        self.honeypot_stats = await db_honeypot.get_honeypot_settings(self.guild.id)
-        self._sync_button_styles()
-        await interaction.edit_original_response(
-            embed=_automod_embed(self.active_rules, self.shield_enabled, self.lang, self.honeypot_channel_id, self.honeypot_stats),
-            view=self,
-        )
-
 # ─── Modal ───────────────────────────────────────────────────────────────────
-
-class HoneypotModal(NexusModal):
-    def __init__(self, guild: discord.Guild, lang: dict, parent_view: AutoModView):
-        super().__init__(lang, title=lang.get("honeypot_modal_title", "Create Honeypot"))
-        self.guild       = guild
-        self.parent_view = parent_view
-
-        self.name_input = discord.ui.TextInput(
-            label=lang.get("honeypot_modal_name_label", "Channel Name"),
-            placeholder=lang.get("honeypot_modal_name_placeholder", "e.g. dont-write-here"),
-            max_length=90,
-            required=True,
-        )
-        self.warntext_input = discord.ui.TextInput(
-            label=lang.get("honeypot_modal_warntext_label", "Warning Text in Channel"),
-            style=discord.TextStyle.paragraph,
-            placeholder=lang.get(
-                "honeypot_modal_warntext_placeholder",
-                "⚠️ Raid bot trap: Anyone posting here will be automatically timed out.",
-            ),
-            max_length=1000,
-            required=True,
-        )
-        self.add_item(self.name_input)
-        self.add_item(self.warntext_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        overwrites = {
-            self.guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-            self.guild.me:           discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, manage_messages=True,
-                embed_links=True, read_message_history=True,
-            ),
-        }
-
-        check = can_apply_overwrites(self.guild, overwrites)
-        if not check:
-            await interaction.followup.send(format_issue(check, self.lang), ephemeral=True)
-            return
-
-        try:
-            channel = await self.guild.create_text_channel(
-                name=_slugify_channel_name(self.name_input.value),
-                overwrites=overwrites,
-                reason="[Nexus Honeypot] Erstellt",
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                self.lang.get("setup_right_error", "I am missing the 'Manage Channels' permission."),
-                ephemeral=True,
-            )
-            return
-
-        try:
-            await channel.edit(position=0)
-        except discord.HTTPException:
-            pass
-
-        color = await db_settings.get_color(self.guild.id)
-        embed = discord.Embed(
-            title=self.lang.get("honeypot_channel_title", "⚠️ Warning"),
-            description=self.warntext_input.value,
-            color=color,
-        )
-        embed.set_footer(text="Nexus • Honeypot")
-        message_id = None
-        try:
-            sent = await channel.send(embed=embed)
-            message_id = sent.id
-        except discord.HTTPException:
-            log.warning("[HONEYPOT] Konnte Warn-Embed nicht in %s posten.", channel)
-
-        await db_settings.update_guild(self.guild.id, honeypot_channel_id=channel.id)
-        await db_honeypot.update_honeypot_settings(self.guild.id, message_id=message_id)
-
-        self.parent_view.honeypot_channel_id = channel.id
-        self.parent_view.honeypot_stats = await db_honeypot.get_honeypot_settings(self.guild.id)
-        self.parent_view._sync_button_styles()
-
-        await interaction.followup.edit_message(
-            message_id="@original",
-            embed=_automod_embed(
-                self.parent_view.active_rules, self.parent_view.shield_enabled, self.lang,
-                channel.id, self.parent_view.honeypot_stats,
-            ),
-            view=self.parent_view,
-        )
-        await interaction.followup.send(
-            self.lang.get("honeypot_created", "{nexus_checkmark} Honeypot set up in {channel}.").format(
-                nexus_checkmark=NexusEmojis.CHECKMARK,
-                channel=channel.mention,
-            ),
-            ephemeral=True,
-        )
 
 class KeywordModal(NexusModal):
     def __init__(self, lang: dict, guild: discord.Guild, rule: discord.AutoModRule | None, parent_view: AutoModView):
@@ -454,14 +336,20 @@ def _automod_embed(active_rules: dict, shield_enabled: bool, lang: dict, honeypo
     shield_desc = lang.get("automod_shield_desc", "Monitors audit logs with risk-scoring against rapid server nukes.")
     embed.add_field(name="🚨 Anti-Nuke Shield", value=f"{shield_status}\n{shield_desc}", inline=False)
 
+    # Honeypot: nur Überblick — eingerichtet und bearbeitet wird er mit /honeypot
     stats = honeypot_stats or {}
     days = stats.get("timeout_days", db_honeypot.DEFAULT_TIMEOUT_DAYS)
     honeypot_active = honeypot_channel_id is not None
     honeypot_status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')} — <#{honeypot_channel_id}>" if honeypot_active else f"{lang.get('module_inactive', '❌ Disabled')}"
-    honeypot_desc = lang.get("automod_honeypot_desc", "Anyone posting here will be timed out for {days} days.").format(days=days)
-    honeypot_value = f"{honeypot_status}\n{honeypot_desc}"
-    if honeypot_active and stats.get("catches"):
-        honeypot_value += "\n" + lang.get("automod_honeypot_caught", "🍯 {count} caught so far").format(count=f"{stats['catches']:,}")
+    honeypot_value = honeypot_status
+    if honeypot_active:
+        honeypot_value += "\n" + lang.get("automod_honeypot_punish", "👤 {members} · 🤖 {bots}").format(
+            members=hp_system.punishment_label(lang, stats.get("punish_members", db_honeypot.DEFAULT_PUNISH_MEMBERS), days),
+            bots=hp_system.punishment_label(lang, stats.get("punish_bots", db_honeypot.DEFAULT_PUNISH_BOTS), days),
+        )
+        if stats.get("catches"):
+            honeypot_value += "\n" + lang.get("automod_honeypot_caught", "🍯 {count} caught so far").format(count=f"{stats['catches']:,}")
+    honeypot_value += "\n" + lang.get("automod_honeypot_manage", "Set up and edit with `/honeypot`.")
     embed.add_field(name="🍯 Honeypot", value=honeypot_value, inline=False)
 
     embed.set_footer(text="Nexus • AutoMod")
@@ -482,9 +370,9 @@ class AutoMod(commands.Cog):
         lang         = await get_lang(interaction.guild_id)
         active_rules = await _get_nexus_rules(interaction.guild)
 
-        settings       = await db_settings.get_guild(interaction.guild_id)
         shield_enabled = bool(await db_automod.get_antinuke(interaction.guild_id))
-        honeypot_channel_id = settings.get("honeypot_channel_id") if settings else None
+        honeypot_channel = await hp_system.get_channel(interaction.guild)   # von Hand gelöscht → inaktiv
+        honeypot_channel_id = honeypot_channel.id if honeypot_channel else None
         honeypot_stats = await db_honeypot.get_honeypot_settings(interaction.guild_id)
 
         view = AutoModView(

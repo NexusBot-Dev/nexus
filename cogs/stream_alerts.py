@@ -41,6 +41,7 @@ class AlertMessageModal(NexusModal):
         self.add_item(self.message_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         new_message = self.message_input.value.strip() or None
 
         await db_stream_alerts.update_subscription(
@@ -55,7 +56,7 @@ class AlertMessageModal(NexusModal):
 
         # Kein eigenes View-Objekt hier zum self.show()en — dieses Modal ist selbst
         # keine View, daher direktes edit_message (kein alter View-Timeout zu stoppen).
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=embed,
             view=AlertEditView(self.sub, self.lang, self.cog)
         )
@@ -69,6 +70,7 @@ class ChannelPickView(NexusView):
 
     @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[discord.ChannelType.text], placeholder="Select new channel...")
     async def select_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()
         new_channel = select.values[0]
         await db_stream_alerts.update_subscription(
             guild_id=interaction.guild_id,
@@ -88,7 +90,7 @@ class ChannelPickView(NexusView):
         )
 
         self.stop()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=feedback_text, 
             embed=embed, 
             view=AlertEditView(self.sub, self.lang, self.cog)
@@ -130,6 +132,7 @@ class StreamerSelectView(NexusView):
 
     @discord.ui.select(placeholder="Select a channel...")
     async def select_streamer(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
         chosen_id = int(select.values[0])
         sub = next(s for s in self.subs if s["monitored_channel_id"] == chosen_id)
         lang = await get_lang(interaction.guild_id)
@@ -431,11 +434,12 @@ class StreamAlerts(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     @module_required("stream_alerts")
     async def alert_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         subs = await db_stream_alerts.get_subscriptions_for_guild(interaction.guild_id)
 
         if not subs:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("alert_list_empty", "No monitored channels on this server."),
                 ephemeral=True,
             )
@@ -480,7 +484,7 @@ class StreamAlerts(commands.Cog):
             )
 
         embed.set_footer(text=NEXUS_FOOTER)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="alert_role", description=app_commands.locale_str("cmd_alert_role_desc"))
     @app_commands.default_permissions(manage_guild=True)
@@ -498,6 +502,7 @@ class StreamAlerts(commands.Cog):
         role: discord.Role = None,
         platform: app_commands.Choice[str] = None,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         premium = await is_premium(interaction.guild_id)
 
@@ -513,7 +518,7 @@ class StreamAlerts(commands.Cog):
         label = platform.name if platform else lang.get("alert_role_all_platforms", "all platforms")
         if role is None:
             await db_stream_alerts.remove_ping_role(interaction.guild_id, target_platform)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("alert_role_removed", "{nexus_checkmark} Ping role for {platform} has been removed.").format(
                     nexus_checkmark=NexusEmojis.CHECKMARK, platform=label
                 ) + fallback_notice,
@@ -526,7 +531,7 @@ class StreamAlerts(commands.Cog):
         await db_stream_alerts.set_ping_role(interaction.guild_id, target_platform, role.id)
 
         if not can_ping:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get(
                     "alert_role_not_pingable",
                     "⚠️ {role} was saved, but is currently not marked as mentionable by everyone.\n"
@@ -538,7 +543,7 @@ class StreamAlerts(commands.Cog):
             )
             return
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             lang.get("alert_role_set", "{nexus_checkmark} {role} will now be pinged for {platform}.").format(
                 nexus_checkmark=NexusEmojis.CHECKMARK, 
                 role=role.mention, 
@@ -572,12 +577,13 @@ class StreamAlerts(commands.Cog):
         app_commands.Choice(name="Kick", value="kick"),
     ])
     async def alert_edit(self, interaction: discord.Interaction, platform: app_commands.Choice[str]):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         all_subs = await db_stream_alerts.get_subscriptions_for_guild(interaction.guild_id)
         subs = [s for s in all_subs if s["platform"] == platform.value]
 
         if not subs:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("alert_edit_none_for_platform", "❌ Nothing is currently being monitored on this platform."),
                 ephemeral=True,
             )
@@ -588,12 +594,12 @@ class StreamAlerts(commands.Cog):
         if len(subs) == 1:
             embed = self._build_edit_embed(subs[0], lang, color)
             view = AlertEditView(subs[0], lang, self)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             view.bind(interaction)
             return
 
         view = StreamerSelectView(subs, lang, self)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             lang.get("alert_edit_pick_streamer", "Which channel would you like to edit?"),
             view=view,
             ephemeral=True,

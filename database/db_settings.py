@@ -170,12 +170,21 @@ async def delete_old_guilds(days: int = 7):
                 (days,)
             )
             rows = await cur.fetchall()
-            if not rows:
-                return
+    if not rows:
+        return
 
-            guild_ids = [row[0] for row in rows]
-            format_strings = ','.join(['%s'] * len(guild_ids))
+    await delete_guild_data([row[0] for row in rows])
 
+async def delete_guild_data(guild_ids: list[int]) -> bool:
+    """Löscht alle Daten der Guilds aus jeder Tabelle mit guild_id — außer premium, damit bezahltes
+    oder geschenktes Premium bei einer erneuten Einladung erhalten bleibt.
+    Alles oder nichts (eine Transaktion); False, wenn die Löschung zurückgerollt wurde."""
+    if not guild_ids:
+        return True
+    format_strings = ','.join(['%s'] * len(guild_ids))
+
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
             EXCLUDED_TABLES = {"premium"}
             await cur.execute(
                 """SELECT table_name FROM information_schema.columns
@@ -198,16 +207,17 @@ async def delete_old_guilds(days: int = 7):
                     "DSGVO-Löschung fehlgeschlagen, Rollback ausgeführt für Guilds: %s",
                     guild_ids, exc_info=True
                 )
-                return
+                return False
 
-            # Cache erst NACH erfolgreichem Commit säubern
-            for g_id in guild_ids:
-                _settings_cache.pop(g_id, None)
-
-            log.info(
-                "DSGVO: %s Guilds nach %s Tagen Inaktivität vollständig gelöscht (%s Tabellen bereinigt).",
-                len(guild_ids), days, len(tables)
-            )
+    # Caches erst NACH erfolgreichem Commit säubern — sonst sähe eine sofort wieder eingeladene
+    # Guild bis zu 15 Minuten lang noch ihre alten Einstellungen
+    from database import db_automod, db_honeypot, db_levels, db_ticket_settings
+    for g_id in guild_ids:
+        _settings_cache.pop(g_id, None)
+        for module in (db_automod, db_honeypot, db_levels, db_ticket_settings):
+            module.forget_guild(g_id)
+    log.info("DSGVO: Daten von %s Guild(s) gelöscht (%s Tabellen bereinigt): %s", len(guild_ids), len(tables), guild_ids)
+    return True
 
 async def get_enabled_modules(guild_id: int) -> list[str]:
     """Liste aller aktiven Module — berücksichtigt DEFAULT_MODULES für Keys, die (noch) nicht in der DB stehen."""

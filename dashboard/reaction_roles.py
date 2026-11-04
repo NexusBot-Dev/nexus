@@ -1,6 +1,6 @@
 import asyncio
 import discord
-from .registry import register_action, parse_id, DashCtx
+from .registry import register_action, parse_id, DashCtx, DashboardError, InvalidRequest
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
 from cogs.reaction_roles import _entry_cap, _update_dropdown_message, repost_panel, save_panel_text
@@ -18,7 +18,7 @@ async def create_group(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
     name = (payload.get("name") or "").strip()
     if not name or len(name) > 100:
-        raise ValueError("Gültiger Gruppenname wird benötigt")
+        raise DashboardError("dash_err_rr_group_name_invalid")
     group_id = await db_reaction_roles.create_group(guild_id, name, "unique")
     return {"id": group_id, "name": name}
 
@@ -46,7 +46,7 @@ async def list_messages(ctx: DashCtx) -> dict:
                 "id": e["id"],
                 "emoji": e["emoji"],
                 "role_id": str(e["role_id"]),
-                "role_name": role.name if role else "(gelöschte Rolle)",
+                "role_name": role.name if role else ctx.lang.get("dash_deleted_role", "(deleted role)"),
                 "mode": e["mode"],
                 "group_id": e["group_id"],
             })
@@ -72,21 +72,21 @@ async def create_message(ctx: DashCtx) -> dict:
     display_mode = payload.get("display_mode", "reaction")
 
     if not title or not description:
-        raise ValueError("Titel und Beschreibung werden benötigt")
+        raise DashboardError("dash_err_rr_text_required")
     if display_mode not in ("reaction", "dropdown"):
-        raise ValueError("Ungültiger Anzeige-Modus")
+        raise InvalidRequest(f"Ungültiger Anzeige-Modus: {display_mode!r}")
 
     premium = await is_premium(guild_id)
     if display_mode == "dropdown" and not premium:
-        raise ValueError("Dropdown-Modus ist ein Premium-Feature")
+        raise DashboardError("dash_err_rr_dropdown_premium")
 
     # Vor dem Posten prüfen — sonst bliebe eine Nachricht zurück, an die der User keine Rolle hängen darf
     if not (check := can_set_up_self_roles(guild, ctx.actor)):
-        raise ValueError(format_issue(check, await get_lang(guild_id)))
+        raise ValueError(format_issue(check, ctx.lang))
 
     channel = guild.get_channel(channel_id)
     if channel is None:
-        raise ValueError("Channel existiert nicht (mehr)")
+        raise DashboardError("dash_err_channel_gone")
 
     color = await db_settings.get_color(guild_id)
     embed = discord.Embed(title=title, description=description, color=color)
@@ -95,7 +95,7 @@ async def create_message(ctx: DashCtx) -> dict:
     try:
         msg = await channel.send(embed=embed)
     except discord.Forbidden:
-        raise ValueError("Fehlende Berechtigung zum Posten in diesem Channel")
+        raise DashboardError("dash_err_no_post_permission") from None
 
     await db_reaction_roles.create_message_ref(
         guild_id, channel.id, msg.id, title, description, display_mode=display_mode
@@ -114,9 +114,9 @@ async def add_entry(ctx: DashCtx) -> dict:
     group_id = payload.get("group_id")
 
     if not all([channel_id, message_id, role_id, emoji]):
-        raise ValueError("channel_id, message_id, role_id und emoji werden benötigt")
+        raise InvalidRequest("channel_id, message_id, role_id und emoji werden benötigt")
     if mode not in ("toggle", "unique"):
-        raise ValueError("Ungültiger Modus")
+        raise InvalidRequest(f"Ungültiger Modus: {mode!r}")
     channel_id = parse_id(channel_id, "Ungültige channel_id")
     message_id = parse_id(message_id, "Ungültige message_id")
     role_id = parse_id(role_id, "Ungültige role_id")
@@ -124,39 +124,39 @@ async def add_entry(ctx: DashCtx) -> dict:
 
     role = guild.get_role(role_id)
     if role is None:
-        raise ValueError("Rolle existiert nicht auf diesem Server")
+        raise DashboardError("dash_err_role_gone")
     if not (check := can_grant_role(guild, role, ctx.actor)):
-        raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
+        raise ValueError(plain_mentions(guild, format_issue(check, ctx.lang)))
 
     channel = guild.get_channel(channel_id)
     if channel is None:
-        raise ValueError("Channel existiert nicht (mehr)")
+        raise DashboardError("dash_err_channel_gone")
     try:
         message = await channel.fetch_message(message_id)
     except discord.NotFound:
-        raise ValueError("Nachricht existiert nicht (mehr)")
+        raise DashboardError("dash_err_message_not_found") from None
 
     msg_ref = await db_reaction_roles.get_message_ref(guild_id, message_id)
     if msg_ref is None:
-        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+        raise DashboardError("dash_err_rr_unknown_message")
 
     existing_emoji = await db_reaction_roles.get_reaction_role(guild_id, message_id, emoji)
     if existing_emoji is not None:
-        raise ValueError("Dieses Emoji ist auf dieser Nachricht bereits vergeben")
+        raise DashboardError("dash_err_rr_emoji_taken")
 
     all_current = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
     if any(e["role_id"] == role_id for e in all_current):
-        raise ValueError("Diese Rolle ist auf dieser Nachricht bereits vergeben")
+        raise DashboardError("dash_err_rr_role_taken")
     cap = _entry_cap(msg_ref["display_mode"])
     if len(all_current) >= cap:
-        raise ValueError(f"Diese Nachricht hat bereits das Maximum von {cap} Rollen")
+        raise DashboardError("dash_err_rr_entry_limit", cap=cap)
 
     premium = await is_premium(guild_id)
     is_custom_emoji = emoji.startswith("<") and emoji.endswith(">")
     if is_custom_emoji and not premium:
-        raise ValueError("Custom-Emojis sind ein Premium-Feature")
+        raise DashboardError("dash_err_rr_custom_emoji_premium")
     if mode == "unique" and not premium:
-        raise ValueError("Unique-Modus ist ein Premium-Feature")
+        raise DashboardError("dash_err_rr_unique_premium")
 
     display_mode = msg_ref["display_mode"]
 
@@ -164,7 +164,7 @@ async def add_entry(ctx: DashCtx) -> dict:
         try:
             await message.add_reaction(emoji)
         except discord.HTTPException:
-            raise ValueError("Emoji konnte nicht zur Nachricht hinzugefügt werden — ungültiges Emoji?")
+            raise DashboardError("dash_err_rr_emoji_invalid") from None
 
     new_id = await db_reaction_roles.add_reaction_role(
         guild_id=guild_id, channel_id=channel_id, message_id=message_id,
@@ -178,24 +178,24 @@ async def add_entry(ctx: DashCtx) -> dict:
 
 @register_action("reaction_roles", "update-message")
 async def update_message(ctx: DashCtx) -> dict:
-    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
+    guild, payload = ctx.guild, ctx.payload
     message_id = parse_id(payload.get("message_id"), "Ungültige message_id")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
 
     if not title or not description:
-        raise ValueError("Titel und Beschreibung werden benötigt")
+        raise DashboardError("dash_err_rr_text_required")
     if len(title) > 256:
-        raise ValueError("Titel zu lang (max. 256 Zeichen)")
+        raise DashboardError("dash_err_rr_title_too_long")
     if len(description) > 4000:
-        raise ValueError("Beschreibung zu lang (max. 4000 Zeichen)")
+        raise DashboardError("dash_err_rr_description_too_long")
 
     if not (check := can_set_up_self_roles(guild, ctx.actor)):
-        raise ValueError(format_issue(check, await get_lang(guild_id)))
+        raise ValueError(format_issue(check, ctx.lang))
 
     status = await save_panel_text(guild, message_id, title, description)
     if status == "gone":
-        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+        raise DashboardError("dash_err_rr_unknown_message")
 
     # Text ist in jedem Fall gespeichert — status sagt dem Dashboard, ob Discord nachgezogen wurde:
     # "updated", "saved_only" (Nachricht nicht erreichbar), "not_own" (fremde Nachricht), "failed"
@@ -217,19 +217,19 @@ async def update_entry(ctx: DashCtx) -> dict:
 
     role = guild.get_role(role_id)
     if role is None:
-        raise ValueError("Rolle existiert nicht auf diesem Server")
+        raise DashboardError("dash_err_role_gone")
     if not (check := can_grant_role(guild, role, ctx.actor)):
-        raise ValueError(plain_mentions(guild, format_issue(check, await get_lang(guild_id))))
+        raise ValueError(plain_mentions(guild, format_issue(check, ctx.lang)))
 
     entries = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
     entry = next((e for e in entries if e["id"] == entry_id), None)
     if entry is None:
-        raise ValueError("Eintrag wurde nicht gefunden")
+        raise DashboardError("dash_err_rr_entry_not_found")
 
     # Gleiche Rolle: nichts zu tun (UPDATE würde 0 Zeilen melden und wie ein Fehler aussehen)
     if role_id != entry["role_id"]:
         if any(e["role_id"] == role_id for e in entries):
-            raise ValueError("Diese Rolle ist auf dieser Nachricht bereits vergeben")
+            raise DashboardError("dash_err_rr_role_taken")
         await db_reaction_roles.update_reaction_role_role(entry_id, guild_id, role_id)
 
     return {
@@ -247,26 +247,23 @@ async def repost_message(ctx: DashCtx) -> dict:
     message_id = parse_id(payload.get("message_id"), "Ungültige message_id")
     channel_id = parse_id(payload.get("channel_id"), "Gültiger Channel wird benötigt")
 
-    lang = await get_lang(guild_id)
     if not (check := can_set_up_self_roles(guild, ctx.actor)):
-        raise ValueError(format_issue(check, lang))
+        raise ValueError(format_issue(check, ctx.lang))
 
     channel = guild.get_channel(channel_id)
     if not isinstance(channel, discord.TextChannel):
-        raise ValueError("Channel existiert nicht (mehr)")
+        raise DashboardError("dash_err_channel_gone")
 
-    result = await repost_panel(guild, message_id, channel, lang)
+    # Server-Sprache: repost_panel schreibt (z. B. den Ersatztitel) in die Discord-Nachricht
+    result = await repost_panel(guild, message_id, channel, await get_lang(guild_id))
     if result.status == "gone":
-        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+        raise DashboardError("dash_err_rr_unknown_message")
     if result.status == "still_there":
-        raise ValueError(
-            "Die Nachricht existiert noch oder Nexus kann ihren Channel nicht lesen — "
-            "Neu-Posten ist nur für gelöschte Nachrichten möglich"
-        )
+        raise DashboardError("dash_err_rr_repost_still_there")
     if result.status == "no_perms":
-        raise ValueError(plain_mentions(guild, format_issue(result.check, lang)))
+        raise ValueError(plain_mentions(guild, format_issue(result.check, ctx.lang)))
     if result.status == "send_failed":
-        raise ValueError("Discord hat das Senden abgelehnt — bitte später erneut versuchen")
+        raise DashboardError("dash_err_discord_rejected")
 
     return {
         "old_message_id": str(message_id),
@@ -285,14 +282,14 @@ async def delete_entry(ctx: DashCtx) -> dict:
     emoji = payload.get("emoji")
 
     if not all([entry_id, channel_id, message_id, emoji]):
-        raise ValueError("entry_id, channel_id, message_id und emoji werden benötigt")
+        raise InvalidRequest("entry_id, channel_id, message_id und emoji werden benötigt")
     entry_id = parse_id(entry_id, "Ungültige entry_id")
     channel_id = parse_id(channel_id, "Ungültige channel_id")
     message_id = parse_id(message_id, "Ungültige message_id")
 
     deleted = await db_reaction_roles.delete_reaction_role(entry_id, guild_id)
     if not deleted:
-        raise ValueError("Eintrag wurde nicht gefunden")
+        raise DashboardError("dash_err_rr_entry_not_found")
 
     channel = guild.get_channel(channel_id)
     if channel is not None:
@@ -316,13 +313,13 @@ async def delete_message_entries(ctx: DashCtx) -> dict:
     channel_id = payload.get("channel_id")
     message_id = payload.get("message_id")
     if not channel_id or not message_id:
-        raise ValueError("channel_id und message_id werden benötigt")
+        raise InvalidRequest("channel_id und message_id werden benötigt")
     channel_id = parse_id(channel_id, "Ungültige channel_id")
     message_id = parse_id(message_id, "Ungültige message_id")
 
     msg_ref = await db_reaction_roles.get_message_ref(guild_id, message_id)
     if msg_ref is None:
-        raise ValueError("Diese Nachricht ist keine bekannte Reaction-Role-Nachricht")
+        raise DashboardError("dash_err_rr_unknown_message")
 
     channel = guild.get_channel(channel_id)
     if channel is not None:

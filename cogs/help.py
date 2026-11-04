@@ -91,6 +91,7 @@ MODULE_INFO = {
         "name_key": "help_mod_automod",
         "commands": {
             "automod": "help_cmd_automod",
+            "honeypot": "help_cmd_honeypot",
         }
     },
     "Stream Alerts": {
@@ -256,6 +257,7 @@ class Help(commands.Cog):
 
     @app_commands.command(name="help", description=app_commands.locale_str("cmd_help_desc"))
     async def help(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang     = get_user_lang(interaction)
         color    = await db_settings.get_color(interaction.guild_id)
         settings = await db_settings.get_or_create_guild(interaction.guild_id)
@@ -264,7 +266,7 @@ class Help(commands.Cog):
         view  = HelpView(interaction.user.id, lang, color, modules)
         embed = view._overview_embed()
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embed,
             view=view,
             ephemeral=True,
@@ -273,6 +275,7 @@ class Help(commands.Cog):
 
     @app_commands.command(name="info", description=app_commands.locale_str("cmd_info_desc"))
     async def info(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang  = get_user_lang(interaction)
         color = await db_settings.get_color(interaction.guild_id)
         site_locale = LOCALE_MAP.get(str(interaction.locale), "en")
@@ -317,7 +320,7 @@ class Help(commands.Cog):
             inline=True,
         )
         embed.set_footer(text=NEXUS_FOOTER)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Help(bot))

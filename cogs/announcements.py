@@ -33,6 +33,7 @@ class AnnouncementSettingsView(NexusView):
         row=0,
     )
     async def select_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()
         channel = select.values[0]
         # Channel wählen = Opt-in: Announcements werden gleichzeitig aktiviert.
         await db_settings.update_guild(
@@ -44,10 +45,11 @@ class AnnouncementSettingsView(NexusView):
         self._update_toggle_button()
 
         embed = await _build_status_embed(interaction.guild_id, self.lang)
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
 
     @discord.ui.button(row=1)
     async def toggle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         # Einschalten ergibt ohne Channel keinen Sinn (es gibt keinen Fallback mehr)
         if not self.enabled:
             settings = await db_settings.get_or_create_guild(interaction.guild_id)
@@ -63,7 +65,7 @@ class AnnouncementSettingsView(NexusView):
         self._update_toggle_button()
 
         embed = await _build_status_embed(interaction.guild_id, self.lang)
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
 
 
 async def _build_status_embed(guild_id: int, lang: dict) -> discord.Embed:
@@ -107,17 +109,18 @@ class AnnouncementDisableView(NexusView):
         custom_id="nexus_announcement_disable",
     )
     async def disable_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         lang = await get_lang(interaction.guild_id)
 
         if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("no_permission", "You don't have permission to use this command."),
                 ephemeral=True,
             )
             return
 
         await db_settings.update_guild(interaction.guild_id, announcements_enabled=False)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             lang.get(
                 "announcement_disabled_via_button",
                 "Announcements have been disabled. You can re-enable them at any time using `/announcement`.",
@@ -186,6 +189,7 @@ class Announcements(commands.Cog):
     @app_commands.command(name="announcement", description=app_commands.locale_str("cmd_announcement_desc"))
     @app_commands.default_permissions(manage_guild=True)
     async def announcement(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         settings = await db_settings.get_or_create_guild(interaction.guild_id)
 
@@ -193,7 +197,7 @@ class Announcements(commands.Cog):
         view = AnnouncementSettingsView(
             interaction.user.id, lang, enabled=settings.get("announcements_enabled", False)
         )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 
 async def setup(bot):

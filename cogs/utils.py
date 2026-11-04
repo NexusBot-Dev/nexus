@@ -96,21 +96,22 @@ class ModuleEnableView(discord.ui.View):
 
     @discord.ui.button(style=discord.ButtonStyle.success)
     async def enable_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         lang = await get_lang(self.guild_id)
         if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("module_enable_perm_error", "You need 'Manage Server' permission to change this."),
                 ephemeral=True
             )
             return
         ok, msg = await toggle_module(interaction.client, interaction.guild, self.module, True, lang)
         if ok:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"{NexusEmojis.CHECKMARK} {lang.get('module_enabled_msg', 'Module enabled. Please run the command again.')}",
                 embed=None, view=None,
             )
         else:
-            await interaction.response.send_message(msg, ephemeral=True)
+            await interaction.followup.send(msg, ephemeral=True)
 
 def module_required(module: str):
     """Decorator für Slash-Commands: bricht mit Hinweis-Embed ab, falls das
@@ -157,7 +158,7 @@ async def toggle_module(
     log.info("Modul '%s' für %s %s.", module, guild.name, "aktiviert" if enable else "deaktiviert")
 
     if module == "automod" and not enable:
-        from cogs.honeypot import cleanup_honeypot
+        from systems.honeypot import cleanup as cleanup_honeypot
         settings = await db_settings.get_guild(guild.id)
         if settings and settings.get("honeypot_channel_id"):
             await cleanup_honeypot(guild, settings["honeypot_channel_id"])
@@ -182,7 +183,7 @@ async def toggle_modules_bulk(
     log.info("Bulk-Modul-Update für %s: %s", guild.name, changes)
 
     if changes.get("automod") is False:
-        from cogs.honeypot import cleanup_honeypot
+        from systems.honeypot import cleanup as cleanup_honeypot
         settings = await db_settings.get_guild(guild.id)
         if settings and settings.get("honeypot_channel_id"):
             await cleanup_honeypot(guild, settings["honeypot_channel_id"])

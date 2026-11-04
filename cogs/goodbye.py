@@ -29,23 +29,25 @@ class GoodbyeConfigView(NexusView):
 
     @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[discord.ChannelType.text])
     async def select_goodbye_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()
         channel = select.values[0]
         # Channel wählen = Opt-in: Goodbye wird gleichzeitig aktiviert.
         await db_settings.update_guild(interaction.guild_id, goodbye_channel_id=channel.id, goodbye_enabled=True)
         self.enabled = True
         self._update_button()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=await _goodbye_status_embed(interaction.guild_id, self.lang),
             view=self,
         )
 
     @discord.ui.button(label="Goodbye: ON", style=discord.ButtonStyle.success)
     async def toggle_goodbye(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         # Einschalten ergibt ohne Channel keinen Sinn (es gibt keinen Log-Channel-Fallback mehr)
         if not self.enabled:
             settings = await db_settings.get_guild(interaction.guild_id) or {}
             if not settings.get("goodbye_channel_id"):
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     self.lang.get("announcement_need_channel", "❌ Please select a channel first."),
                     ephemeral=True,
                 )
@@ -54,7 +56,7 @@ class GoodbyeConfigView(NexusView):
         self.enabled = not self.enabled
         await db_settings.update_guild(interaction.guild_id, goodbye_enabled=self.enabled)
         self._update_button()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=await _goodbye_status_embed(interaction.guild_id, self.lang),
             view=self,
         )
@@ -107,12 +109,13 @@ class Goodbye(commands.Cog):
     @app_commands.command(name="goodbye", description=app_commands.locale_str("cmd_goodbye_desc"))
     @app_commands.default_permissions(manage_guild=True)
     async def goodbye_config(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang     = await get_lang(interaction.guild_id)
         settings = await db_settings.get_or_create_guild(interaction.guild_id)
 
         embed = await _goodbye_status_embed(interaction.guild_id, lang)
         view  = GoodbyeConfigView(lang, settings.get("goodbye_enabled", False))
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 
     @commands.Cog.listener()

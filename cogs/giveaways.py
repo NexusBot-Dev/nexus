@@ -45,15 +45,16 @@ class GiveawaysView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.danger)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         giveaways = await db_giveaways.get_active_giveaways(self.guild_id)
         if not giveaways:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 self.lang.get("no_giveaways_found", "No Giveaways are ongoing currently on this server."),
                 ephemeral=True,
             )
             return
         view = CancelGiveawaySelectView(self.guild_id, self.lang, giveaways, self.finish)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             content=self.lang.get("giveaways_cancel_prompt", "Select the giveaway to cancel:"),
             view=view,
             ephemeral=True,
@@ -103,20 +104,21 @@ class GiveawayJoinView(NexusView):
         style=discord.ButtonStyle.primary, 
         custom_id="join_giveaway")
     async def join_giveaway(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         message_id = interaction.message.id
         user_id = interaction.user.id
         giveaway = await db_giveaways.get_giveaway(interaction.guild_id, message_id)
         lang = await get_lang(interaction.guild_id)
 
         if giveaway is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("giveaway_not_found", "❌ This giveaway no longer exists."),
                 ephemeral=True,
             )
             return
 
         if giveaway["status"] != "running" or giveaway["end_time"] <= datetime.now(timezone.utc).replace(tzinfo=None):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("giveaway_ended", "The Giveaway has already ended"),
                 ephemeral=True,
             )
@@ -124,13 +126,13 @@ class GiveawayJoinView(NexusView):
 
         joined = await db_giveaways.add_participant(giveaway["id"], user_id)
         if not joined:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("giveaway_already_joined", "You've already joined this giveaway."),
                 ephemeral=True,
             )
             return
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             lang.get("giveaway_joined", "You have joined the giveaway!"),
             ephemeral=True
         )

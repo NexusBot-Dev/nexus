@@ -2,20 +2,20 @@ import asyncio
 import re
 import discord
 import logging
-from .registry import register_action, parse_id, DashCtx
+from .registry import register_action, parse_id, DashCtx, DashboardError, InvalidRequest
 from database import db_ticket_categories, db_tickets, db_limits, db_ticket_settings
 from systems.premium import is_premium
 from systems.hierarchy import can_apply_overwrites, format_issue
 from systems.ticket_panel import PanelError, publish_panel, refresh_panel, import_panel
-from cogs.utils import get_lang
 
 log = logging.getLogger(__name__)
 
+# PanelError.code → Übersetzungs-Key
 _PANEL_ERRORS = {
-    "no_categories": "Es existiert noch keine Ticket-Kategorie",
-    "no_channel":    "Es gibt noch kein Panel — bitte einen Channel wählen",
-    "no_permission": "Fehlende Berechtigung zum Posten in diesem Channel",
-    "not_a_panel":   "Diese Nachricht ist kein Nexus-Ticket-Panel",
+    "no_categories": "dash_err_ticket_panel_no_categories",
+    "no_channel":    "dash_err_ticket_panel_no_channel",
+    "no_permission": "dash_err_ticket_panel_no_permission",
+    "not_a_panel":   "dash_err_ticket_panel_not_a_panel",
 }
 
 _MESSAGE_LINK = re.compile(r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)")
@@ -37,7 +37,7 @@ async def list_categories(ctx: DashCtx) -> dict:
         role_names = []
         for rid in role_ids:
             role = guild.get_role(rid)
-            role_names.append({"id": str(rid), "name": role.name if role else "(gelöschte Rolle)"})
+            role_names.append({"id": str(rid), "name": role.name if role else ctx.lang.get("dash_deleted_role", "(deleted role)")})
         result.append({
             "id": cat["id"],
             "name": cat["name"],
@@ -54,15 +54,15 @@ async def create_category(ctx: DashCtx) -> dict:
     role_ids = payload.get("role_ids") or []
 
     if not name or len(name) > 100:
-        raise ValueError("Name ist erforderlich (max. 100 Zeichen)")
+        raise DashboardError("dash_err_ticket_name_invalid")
     if not isinstance(role_ids, list):
-        raise ValueError("role_ids muss eine Liste sein")
+        raise InvalidRequest("role_ids muss eine Liste sein")
 
     current_count = await db_ticket_categories.get_category_count(guild_id)
     premium = await is_premium(guild_id)
     limit = await db_limits.get_limit(guild_id, "ticket_categories", premium)
     if current_count >= limit:
-        raise ValueError(f"Limit erreicht ({limit} Kategorien)")
+        raise DashboardError("dash_err_ticket_category_limit", limit=limit)
 
     valid_role_ids = []
     for rid in role_ids:
@@ -82,17 +82,17 @@ async def create_category(ctx: DashCtx) -> dict:
     }
     check = can_apply_overwrites(guild, overwrites)
     if not check:
-        raise ValueError(format_issue(check, await get_lang(guild_id)))
+        raise ValueError(format_issue(check, ctx.lang))
 
     try:
         discord_category = await guild.create_category(
             name=name, overwrites=overwrites, reason="Nexus Dashboard — Kategorie erstellt",
         )
     except discord.Forbidden:
-        raise ValueError("Fehlende Berechtigung zum Erstellen von Kategorien")
+        raise DashboardError("dash_err_missing_manage_channels")
     except discord.HTTPException:
         log.exception("Dashboard: Kategorie erstellen auf %s fehlgeschlagen", guild_id)
-        raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
+        raise DashboardError("dash_err_discord_rejected")
 
     category_id = await db_ticket_categories.create_category(
         guild_id=guild_id, name=name, category_channel_id=discord_category.id,
@@ -106,24 +106,24 @@ async def create_category(ctx: DashCtx) -> dict:
 @register_action("tickets", "rename-category")
 async def rename_category(ctx: DashCtx) -> dict:
     guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
-    category_id = parse_id(payload.get("category_id"), "category_id und ein gültiger Name werden benötigt")
+    category_id = parse_id(payload.get("category_id"), "category_id wird benötigt")
     new_name = (payload.get("name") or "").strip()
     if not new_name or len(new_name) > 100:
-        raise ValueError("category_id und ein gültiger Name werden benötigt")
+        raise DashboardError("dash_err_ticket_name_invalid")
 
     category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
-        raise ValueError("Kategorie wurde nicht gefunden")
+        raise DashboardError("dash_err_ticket_category_not_found")
 
     discord_category = guild.get_channel(category["category_channel_id"])
     if discord_category is not None:
         try:
             await discord_category.edit(name=new_name, reason="Nexus Dashboard — umbenannt")
         except discord.Forbidden:
-            raise ValueError("Fehlende Berechtigung zum Umbenennen")
+            raise DashboardError("dash_err_missing_manage_channels")
         except discord.HTTPException:
             log.exception("Dashboard: Kategorie umbenennen auf %s fehlgeschlagen", guild_id)
-            raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
+            raise DashboardError("dash_err_discord_rejected")
 
     await db_ticket_categories.rename_category(category_id, guild_id, new_name)
     await refresh_panel(guild)
@@ -135,11 +135,11 @@ async def set_category_roles(ctx: DashCtx) -> dict:
     category_id = parse_id(payload.get("category_id"), "category_id wird benötigt")
     role_ids = payload.get("role_ids") or []
     if not isinstance(role_ids, list):
-        raise ValueError("role_ids muss eine Liste sein")
+        raise InvalidRequest("role_ids muss eine Liste sein")
 
     category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
-        raise ValueError("Kategorie wurde nicht gefunden")
+        raise DashboardError("dash_err_ticket_category_not_found")
 
     valid_role_ids = []
     role_names = []
@@ -161,21 +161,21 @@ async def delete_category(ctx: DashCtx) -> dict:
 
     category = await db_ticket_categories.get_category(category_id, guild_id)
     if category is None:
-        raise ValueError("Kategorie wurde nicht gefunden")
+        raise DashboardError("dash_err_ticket_category_not_found")
 
     # Erst nach der Guild-Prüfung — sonst ließe sich über fremde IDs abfragen, ob dort Tickets offen sind
     if await db_tickets.has_open_tickets_for_category(category_id):
-        raise ValueError("Kategorie hat noch offene Tickets — zuerst schließen")
+        raise DashboardError("dash_err_ticket_category_has_open_tickets")
 
     discord_category = guild.get_channel(category["category_channel_id"])
     if discord_category is not None:
         try:
             await discord_category.delete(reason="Nexus Dashboard — gelöscht")
         except discord.Forbidden:
-            raise ValueError("Fehlende Berechtigung zum Löschen")
+            raise DashboardError("dash_err_missing_manage_channels")
         except discord.HTTPException:
             log.exception("Dashboard: Kategorie löschen auf %s fehlgeschlagen", guild_id)
-            raise ValueError("Discord hat die Anfrage abgelehnt — bitte später erneut versuchen")
+            raise DashboardError("dash_err_discord_rejected")
 
     await db_ticket_categories.delete_category(category_id, guild_id)
     await refresh_panel(guild)
@@ -197,8 +197,8 @@ async def list_open(ctx: DashCtx) -> dict:
             "id": t["id"],
             "ticket_number": t["ticket_number"],
             "status": t["status"],
-            "category_name": categories.get(t["category_id"], "(gelöschte Kategorie)"),
-            "user_tag": member.display_name if member else f"Unbekannt ({t['user_id']})",
+            "category_name": categories.get(t["category_id"], ctx.lang.get("dash_deleted_category", "(deleted category)")),
+            "user_tag": member.display_name if member else ctx.lang.get("dash_unknown_user", "Unknown ({id})").format(id=t["user_id"]),
             "channel_id": str(t["channel_id"]),
         })
     return {"tickets": result}
@@ -214,6 +214,7 @@ async def get_settings(ctx: DashCtx) -> dict:
         "panel_message_id": str(s["panel_message_id"]) if s.get("panel_message_id") else None,
         "panel_title": s.get("panel_title"),
         "panel_description": s.get("panel_description"),
+        "panel_mode": s.get("panel_mode") or "buttons",
         "closure_timeout_hours": s["closure_timeout_hours"],
         "deletion_delay_hours": s["deletion_delay_hours"],
         "closure_options": list(db_ticket_settings.CLOSURE_OPTIONS),
@@ -229,10 +230,13 @@ async def set_timeouts(ctx: DashCtx) -> dict:
             try:
                 fields[key] = int(payload[key])
             except (TypeError, ValueError):
-                raise ValueError(f"Ungültiger Wert für {key}")
+                raise InvalidRequest(f"Ungültiger Wert für {key}")
     if not fields:
-        raise ValueError("Keine Änderung angegeben")
-    s = await db_ticket_settings.update_ticket_settings(ctx.guild_id, **fields)   # prüft die erlaubten Werte
+        raise InvalidRequest("Keine Änderung angegeben")
+    try:
+        s = await db_ticket_settings.update_ticket_settings(ctx.guild_id, **fields)   # prüft die erlaubten Werte
+    except ValueError as e:   # Wert nicht in der Auswahl — die Oberfläche bietet nur erlaubte an
+        raise InvalidRequest(str(e)) from None
     return {"closure_timeout_hours": s["closure_timeout_hours"], "deletion_delay_hours": s["deletion_delay_hours"]}
 
 @register_action("tickets", "post-panel")
@@ -243,24 +247,27 @@ async def post_panel(ctx: DashCtx) -> dict:
     channel_id = payload.get("channel_id")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
+    panel_mode = payload.get("panel_mode")   # fehlt: gespeicherte Darstellung beibehalten
 
     if not title or not description:
-        raise ValueError("Titel und Beschreibung werden benötigt")
+        raise DashboardError("dash_err_ticket_panel_text_required")
     if len(title) > 256 or len(description) > 1000:
-        raise ValueError("Titel max. 256, Beschreibung max. 1000 Zeichen")
+        raise DashboardError("dash_err_ticket_panel_text_too_long")
 
     channel = None
     if channel_id:
         if not str(channel_id).isdigit():
-            raise ValueError("Ungültiger Channel")
+            raise InvalidRequest(f"Ungültiger Channel: {channel_id!r}")
         channel = guild.get_channel(int(channel_id))
         if channel is None:
-            raise ValueError("Channel existiert nicht (mehr)")
+            raise DashboardError("dash_err_channel_gone")
+    if panel_mode is not None and panel_mode not in db_ticket_settings.PANEL_MODES:
+        raise InvalidRequest(f"Ungültige Darstellung: {panel_mode!r}")
 
     try:
-        message, edited = await publish_panel(guild, title, description, channel)
+        message, edited = await publish_panel(guild, title, description, channel, panel_mode)
     except PanelError as e:
-        raise ValueError(_PANEL_ERRORS.get(e.code, "Panel konnte nicht gespeichert werden"))
+        raise DashboardError(_PANEL_ERRORS.get(e.code, "dash_err_ticket_panel_save_failed")) from None
 
     return {"channel_id": str(message.channel.id), "message_id": str(message.id), "edited": edited}
 
@@ -270,25 +277,25 @@ async def import_panel_from_link(ctx: DashCtx) -> dict:
     guild = ctx.guild
     match = _MESSAGE_LINK.search(str(ctx.payload.get("link") or ""))
     if match is None:
-        raise ValueError("Bitte einen gültigen Discord-Nachrichtenlink einfügen")
+        raise DashboardError("dash_err_ticket_invalid_link")
     link_guild_id, channel_id, message_id = (int(x) for x in match.groups())
     if link_guild_id != guild.id:
-        raise ValueError("Der Link gehört zu einem anderen Server")
+        raise DashboardError("dash_err_ticket_link_other_server")
 
     channel = guild.get_channel_or_thread(channel_id)
     if channel is None:
-        raise ValueError("Channel existiert nicht (mehr)")
+        raise DashboardError("dash_err_channel_gone")
     try:
         message = await channel.fetch_message(message_id)
     except discord.NotFound:
-        raise ValueError("Nachricht wurde nicht gefunden")
+        raise DashboardError("dash_err_message_not_found") from None
     except discord.Forbidden:
-        raise ValueError("Nexus kann diese Nachricht nicht lesen (fehlende Rechte im Channel)")
+        raise DashboardError("dash_err_message_no_access") from None
 
     try:
         await import_panel(guild, message, guild.me.id)
     except PanelError as e:
-        raise ValueError(_PANEL_ERRORS.get(e.code, "Panel konnte nicht übernommen werden"))
+        raise DashboardError(_PANEL_ERRORS.get(e.code, "dash_err_ticket_panel_import_failed")) from None
 
     s = await db_ticket_settings.get_ticket_settings(guild.id)
     return {"channel_id": str(channel_id), "message_id": str(message_id),

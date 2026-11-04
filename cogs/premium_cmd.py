@@ -97,6 +97,7 @@ class PremiumCommand(commands.Cog):
     @app_commands.command(name="premium", description=app_commands.locale_str("cmd_premium_desc"))
     @app_commands.default_permissions(manage_guild=True)
     async def premium(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         guild_id = interaction.guild_id
         lang  = await get_lang(guild_id)
         color = await db_settings.get_color(guild_id)
@@ -125,13 +126,13 @@ class PremiumCommand(commands.Cog):
             view.add_item(discord.ui.Button(sku_id=PREMIUM_SKU_ID))
 
         try:
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         except discord.HTTPException as e:
             if not show_buy or e.code != 50035:
                 raise
             # SKU nicht veröffentlicht oder ID falsch: Status trotzdem zeigen, nur ohne Kauf-Button
             log.warning("/premium: Kauf-Button nicht möglich (SKU %s): %s", PREMIUM_SKU_ID, e)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(PremiumCommand(bot))

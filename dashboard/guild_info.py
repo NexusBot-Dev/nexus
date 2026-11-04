@@ -1,5 +1,10 @@
-from .registry import register_action, get_bot, DashCtx
+import logging
+from datetime import datetime, timezone
+from .registry import register_action, get_bot, DashCtx, DashboardError, InvalidRequest
+from database import db_settings
 from systems.hierarchy import check_bot_hierarchy
+
+log = logging.getLogger(__name__)
 
 @register_action("guild", "channels")
 async def get_channels(ctx: DashCtx) -> dict:
@@ -53,3 +58,30 @@ async def get_emojis(ctx: DashCtx) -> dict:
             for e in guild.emojis
         ]
     }
+
+@register_action("guild", "leave")
+async def leave_guild(ctx: DashCtx) -> dict:
+    """Danger Zone: Nexus verlässt den Server — wie ein Kick, also 7 Tage Wiederherstellung.
+    Mit delete_now werden alle Daten sofort gelöscht (Premium bleibt, siehe delete_guild_data)."""
+    delete_now = ctx.payload.get("delete_now", False)
+    if not isinstance(delete_now, bool):
+        raise InvalidRequest(f"delete_now muss true oder false sein: {delete_now!r}")
+    # Unumkehrbar: nur der Owner, nicht jeder mit "Server verwalten"
+    if ctx.actor.id != ctx.guild.owner_id:
+        raise DashboardError("dash_err_guild_owner_only")
+
+    guild = ctx.guild
+    await guild.leave()
+    # Selbst setzen statt auf on_guild_remove zu warten: Das Dashboard lädt direkt danach die
+    # Serverliste, und die zeigt nur Server ohne left_at als "Nexus ist drauf"
+    await db_settings.update_guild(guild.id, left_at=datetime.now(timezone.utc))
+
+    deleted = False
+    if delete_now:
+        # Schlägt das fehl, bleibt left_at gesetzt — dann löscht der Cleanup nach 7 Tagen
+        deleted = await db_settings.delete_guild_data([guild.id])
+    log.info(
+        "Nexus hat %s (%s) über das Dashboard verlassen (ausgelöst von %s, Daten sofort gelöscht: %s).",
+        guild.name, guild.id, ctx.actor.id, deleted,
+    )
+    return {"left": True, "deleted": deleted}

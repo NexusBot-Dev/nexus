@@ -181,6 +181,7 @@ class EmbedHubView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, row=0)
     async def btn_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         pages = await _load_list_pages(interaction.guild_id, self.lang)
         if not pages:
             await send_ephemeral(interaction, self.lang.get("embed_list_empty", "No saved embeds found."))
@@ -189,14 +190,17 @@ class EmbedHubView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, row=1)
     async def btn_edit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await self._open_picker(interaction, "edit")
 
     @discord.ui.button(style=discord.ButtonStyle.primary, row=1)
     async def btn_post(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await self._open_picker(interaction, "post")
 
     @discord.ui.button(style=discord.ButtonStyle.primary, row=1)
     async def btn_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         if not await is_premium(interaction.guild_id):
             await send_ephemeral(interaction, self.lang.get(
                 "embed_schedule_premium", "⭐ Scheduled posting is a Premium feature!"
@@ -206,6 +210,7 @@ class EmbedHubView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, row=1)
     async def btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await self._open_picker(interaction, "delete")
 
     async def _open_picker(self, interaction: discord.Interaction, mode: str) -> None:
@@ -254,6 +259,7 @@ class EmbedListView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="↩️")
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await _back_to_hub(self, interaction)
 
 _PICK_DEFAULTS = {
@@ -409,6 +415,7 @@ class EmbedPickerView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="↩️", row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await _back_to_hub(self, interaction)
 
     # ─── Aktionen ───────────────────────────────────────────────────────────
@@ -437,6 +444,7 @@ class EmbedPickerView(NexusView):
         await interaction.response.send_modal(EmbedEditModal(self.lang, embed_data, interaction.guild, picker=self))
 
     async def _do_post(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()   # vor dem Posten: Discord gibt nur 3 s für die erste Antwort
         embed_data = await self._load_usable(interaction)
         if embed_data is None:
             return
@@ -727,6 +735,7 @@ class RulesEmbedModal(NexusModal):
         self.add_item(_label(lang.get("embed_field_content", "Content"), self.embed_description))
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)   # vor dem Posten: Discord gibt nur 3 s für die erste Antwort
         color = await db_settings.get_color(interaction.guild_id)
         embed = _build_embed(self.embed_title.value, self.embed_description.value, color)
         if await _send_embed(interaction, self.lang, self.channel, embed) is None:
@@ -751,6 +760,7 @@ class ScheduleModal(NexusModal):
         self.channel    = channel
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             tz_name = await db_settings.get_timezone(interaction.guild_id)
             local_tz = ZoneInfo(tz_name or "Europe/Berlin")
@@ -762,7 +772,7 @@ class ScheduleModal(NexusModal):
 
             now_local = datetime.now(local_tz)
             if scheduled_local < now_local:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     self.lang.get("embed_schedule_past", "❌ The specified time is in the past."),
                     ephemeral=True,
                 )
@@ -771,7 +781,7 @@ class ScheduleModal(NexusModal):
             # Die geplante Kopie belegt einen Embed-Slot -> Limit gilt auch hier
             if not await db_embeds.can_save_embed(interaction.guild_id):
                 limit = await _embed_limit(interaction.guild_id)
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     self.lang.get("embed_limit_reached", "❌ Limit of {limit} saved embeds reached.").format(limit=limit),
                     ephemeral=True,
                 )
@@ -787,7 +797,7 @@ class ScheduleModal(NexusModal):
                 scheduled_at=scheduled_utc,
             )
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 self.lang.get("embed_scheduled", "{checkmark} Embed will be posted on {date}.").format(
                     date=scheduled_local.strftime("%d.%m.%Y %H:%M"),
                     checkmark=NexusEmojis.CHECKMARK
@@ -796,7 +806,7 @@ class ScheduleModal(NexusModal):
             )
 
         except ValueError:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 self.lang.get("embed_schedule_invalid", "❌ Invalid format. Please use DD.MM.YYYY HH:MM"),
                 ephemeral=True,
             )
@@ -867,9 +877,10 @@ class Embeds(commands.Cog):
     @app_commands.command(name="embed", description=app_commands.locale_str("cmd_embed"))
     @app_commands.default_permissions(manage_messages=True)
     async def embed_command(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         view = EmbedHubView(lang, owner_id=interaction.user.id)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=await _hub_embed(interaction.guild_id, lang),
             view=view,
             ephemeral=True,

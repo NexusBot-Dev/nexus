@@ -1,6 +1,6 @@
 import asyncio
 import discord
-from .registry import register_action, DashCtx
+from .registry import register_action, DashCtx, DashboardError, InvalidRequest
 from systems.hierarchy import can_act_on_member, Issue
 
 _chunk_locks: dict[int, asyncio.Lock] = {}
@@ -54,20 +54,20 @@ async def unban(ctx: DashCtx) -> dict:
     guild, actor, payload = ctx.guild, ctx.actor, ctx.payload
     user_id = payload.get("user_id")
     if not user_id or not str(user_id).isdigit():
-        raise ValueError("Gültige user_id wird benötigt")
+        raise InvalidRequest(f"Ungültige user_id: {user_id!r}")
 
     # Unban kennt keine Rollen-Hierarchie (der User ist nicht mehr Member) —
     # hier reicht die reine Discord-Berechtigung des Dashboard-Nutzers.
     if not actor.guild_permissions.ban_members:
-        raise ValueError("Dir fehlt die Berechtigung 'Mitglieder bannen' (Ban Members)")
+        raise DashboardError("dash_err_mod_actor_no_ban")
 
     user = discord.Object(id=int(user_id))
     try:
         await guild.unban(user, reason=f"Nexus Dashboard — entbannt von {actor}")
     except discord.NotFound:
-        raise ValueError("User ist nicht gebannt")
+        raise DashboardError("dash_err_mod_not_banned") from None
     except discord.Forbidden:
-        raise ValueError("Fehlende Berechtigung zum Entbannen")
+        raise DashboardError("dash_err_mod_bot_no_ban") from None
 
     return {"user_id": user_id}
 
@@ -76,14 +76,14 @@ async def remove_timeout(ctx: DashCtx) -> dict:
     guild, actor, payload = ctx.guild, ctx.actor, ctx.payload
     user_id = payload.get("user_id")
     if not user_id or not str(user_id).isdigit():
-        raise ValueError("Gültige user_id wird benötigt")
+        raise InvalidRequest(f"Ungültige user_id: {user_id!r}")
 
     member = guild.get_member(int(user_id))
     if member is None:
         try:
             member = await guild.fetch_member(int(user_id))
         except discord.NotFound:
-            raise ValueError("Mitglied nicht gefunden")
+            raise DashboardError("dash_err_mod_member_not_found") from None
 
     check = can_act_on_member(
         guild, member,
@@ -91,12 +91,12 @@ async def remove_timeout(ctx: DashCtx) -> dict:
     )
     if not check:
         if check.issue is Issue.ACTOR_HIERARCHY:
-            raise ValueError("Du kannst keine Timeouts bei Mitgliedern aufheben, die dir in der Rolle gleich- oder übergeordnet sind")
-        raise ValueError("Dir fehlt die Berechtigung 'Timeout aufheben' (Moderate Members) oder die Hierarchie passt nicht")
+            raise DashboardError("dash_err_mod_timeout_hierarchy")
+        raise DashboardError("dash_err_mod_timeout_no_perm")
 
     try:
         await member.timeout(None, reason=f"Nexus Dashboard — Timeout aufgehoben von {actor}")
     except discord.Forbidden:
-        raise ValueError("Fehlende Berechtigung (Hierarchie?)")
+        raise DashboardError("dash_err_mod_bot_timeout_forbidden") from None
 
     return {"user_id": user_id}

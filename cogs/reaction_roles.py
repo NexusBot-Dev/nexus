@@ -8,10 +8,10 @@ from discord.ext import commands
 from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
 from cogs.utils import get_lang, module_required
-from config import NEXUS_COLOR, NEXUS_FOOTER
+from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.hierarchy import PermCheck, can_grant_role, can_manage_role, can_set_up_self_roles, can_use_channel, format_issue
-from systems.ui import NexusView, NexusModal
+from systems.ui import NexusView, NexusModal, send_ephemeral
 
 log = logging.getLogger(__name__)
 
@@ -211,22 +211,24 @@ class ReactionRoleSetupView(NexusView):
 
     @discord.ui.button(label="➕ Add Role", style=discord.ButtonStyle.success)
     async def add_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         # Auch hier begrenzen: nach "Rolle hinzufügen" im Edit-Flow landet der Admin in dieser View
         msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.panel_message.id)
         cap = _entry_cap(msg_ref["display_mode"] if msg_ref else "reaction")
         entries = await db_reaction_roles.get_reaction_roles(interaction.guild_id, self.panel_message.id)
         if len(entries) >= cap:
-            await interaction.response.send_message(_limit_text(self.lang, cap), ephemeral=True)
+            await interaction.followup.send(_limit_text(self.lang, cap), ephemeral=True)
             return
 
         await self.show(
             interaction,
             RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang),
-            embed=_step_role_embed(self.lang),
+            embed=_step_role_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
         )
 
     @discord.ui.button(label="✅ Fertig", style=discord.ButtonStyle.secondary)
     async def finish_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         color = await db_settings.get_color(interaction.guild_id)
         embed = discord.Embed(
             title=self.lang.get("rr_done", "{nexus_checkmark} Reaction roles configured!").format(nexus_checkmark=NexusEmojis.CHECKMARK),
@@ -234,7 +236,7 @@ class ReactionRoleSetupView(NexusView):
             color=color,
         )
         self.stop()
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.edit_original_response(embed=embed, view=None)
 
 class RoleSelectView(NexusView):
     def __init__(self, bot, owner_id: int, channel: discord.TextChannel, message: discord.Message, lang: dict, *, from_edit: bool = False):
@@ -259,7 +261,7 @@ class RoleSelectView(NexusView):
         await self.show(
             interaction,
             EmojiInputView(self.bot, self.owner_id, self.channel, self.panel_message, role, self.lang, from_edit=self.from_edit),
-            embed=_step_emoji_embed(role, self.lang),
+            embed=_step_emoji_embed(role, self.lang, await db_settings.get_color(interaction.guild_id)),
         )
 
 class EmojiInputView(NexusView):
@@ -283,7 +285,7 @@ class EmojiInputView(NexusView):
                     "React to the created message in {channel} now!\n\n"
                     "You have **60 seconds**.",
                 ).format(channel=self.channel.mention),
-                color=NEXUS_COLOR,
+                color=await db_settings.get_color(interaction.guild_id),
             ),
             view=None,
         )
@@ -328,7 +330,7 @@ class EmojiInputView(NexusView):
                         ephemeral=True
                     )
                     await interaction.edit_original_response(
-                        embed=_step_role_embed(self.lang),
+                        embed=_step_role_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
                         view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
                     )
                     break # Loop beenden, da View gewechselt wurde
@@ -350,7 +352,7 @@ class EmojiInputView(NexusView):
                         ephemeral=True
                     )
                     await interaction.edit_original_response(
-                        embed=_step_role_embed(self.lang),
+                        embed=_step_role_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
                         view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
                     )
                     break # Loop beenden!
@@ -368,7 +370,7 @@ class EmojiInputView(NexusView):
                             ephemeral=True
                         )
                         await interaction.edit_original_response(
-                            embed=_step_role_embed(self.lang),
+                            embed=_step_role_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
                             view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
                         )
                         break
@@ -388,14 +390,14 @@ class EmojiInputView(NexusView):
 
                 premium_status = await is_premium(interaction.guild_id)
                 await interaction.edit_original_response(
-                    embed=_step_mode_embed(self.role, emoji_str, self.lang),
+                    embed=_step_mode_embed(self.role, emoji_str, self.lang, await db_settings.get_color(interaction.guild_id)),
                     view=ModeSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, emoji_str, self.lang, has_premium=premium_status, from_edit=self.from_edit),
                 )
                 break
 
             except asyncio.TimeoutError:
                 await interaction.edit_original_response(
-                    embed=_step_emoji_embed(self.role, self.lang),
+                    embed=_step_emoji_embed(self.role, self.lang, await db_settings.get_color(interaction.guild_id)),
                     view=EmojiInputView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.lang, from_edit=self.from_edit),
                 )
                 await interaction.followup.send(
@@ -430,8 +432,9 @@ class ModeSelectView(NexusView):
 
     @discord.ui.button(label="🔒 Unique (Premium)", style=discord.ButtonStyle.secondary)
     async def unique_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()   # ohne Premium: Hinweis als neue Nachricht, sonst weiter in derselben
         if not await is_premium(interaction.guild_id):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 self.lang.get("rr_premium_unique"), ephemeral=True
             )
             return
@@ -442,7 +445,7 @@ class ModeSelectView(NexusView):
             await self.show(
                 interaction,
                 GroupInputView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, self.lang, from_edit=self.from_edit),
-                embed=_step_group_embed(self.role, self.emoji, self.lang),
+                embed=_step_group_embed(self.role, self.emoji, self.lang, await db_settings.get_color(interaction.guild_id)),
             )
         else:
             await self._save(interaction, mode=mode, group_id=None, previous_view=self)
@@ -454,6 +457,9 @@ class ModeSelectView(NexusView):
         """previous_view: die View, die bei Erfolg gestoppt werden muss — meist self
         (direkter Button-Klick), bei Aufruf über GroupModal/GroupSelectView aber eine
         ANDERE, noch sichtbare View (siehe dort)."""
+        # Erst bestätigen, dann Reaktion setzen bzw. Dropdown anpassen (API) — Discord gibt nur 3 s für die erste Antwort
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, self.panel_message.id)
         display_mode = msg_ref["display_mode"] if msg_ref else "reaction"
 
@@ -461,9 +467,7 @@ class ModeSelectView(NexusView):
             try:
                 await self.panel_message.add_reaction(self.emoji)
             except discord.HTTPException:
-                await interaction.response.send_message(
-                    self.lang.get("rr_emoji_failed", "❌ Emoji could not be added to the message."), ephemeral=True
-                )
+                await send_ephemeral(interaction, self.lang.get("rr_emoji_failed", "❌ Emoji could not be added to the message."))
                 return
 
         await db_reaction_roles.add_reaction_role(
@@ -495,7 +499,7 @@ class ModeSelectView(NexusView):
         embed.set_footer(text=self.lang.get("rr_add_another_hint", "Would you like to add more roles?"))
         if previous_view is not None:
             previous_view.stop()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=embed,
             view=ReactionRoleSetupView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang),
         )
@@ -523,9 +527,10 @@ class GroupInputView(NexusView):
 
     @discord.ui.button(label="📋 Bestehende Gruppe", style=discord.ButtonStyle.secondary)
     async def existing_group_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         groups = await db_reaction_roles.get_groups(interaction.guild_id)
         if not groups:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 self.lang.get("rr_no_groups", "No existing groups found."),
                 ephemeral=True,
             )
@@ -533,7 +538,7 @@ class GroupInputView(NexusView):
         await self.show(
             interaction,
             GroupSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.emoji, groups, self.lang, from_edit=self.from_edit),
-            embed=_step_group_select_embed(self.lang),
+            embed=_step_group_select_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
         )
 
 class GroupModal(NexusModal):
@@ -559,6 +564,7 @@ class GroupModal(NexusModal):
         self.group_name.placeholder = self.lang.get("rr_modal_group_placeholder", "e.g., Colors, Teams, Regions...")
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()   # _save setzt danach die Reaktion (API) und bearbeitet die Nachricht
         group_id  = await db_reaction_roles.create_group(
             interaction.guild_id, self.group_name.value, "unique"
         )
@@ -616,14 +622,14 @@ async def _update_dropdown_message(msg: discord.Message, guild_id: int, message_
 
 # ─── Embed Helpers ────────────────────────────────────────────────────────────
 
-def _step_role_embed(lang: dict) -> discord.Embed:
+def _step_role_embed(lang: dict, color: int) -> discord.Embed:
     return discord.Embed(
         title=lang.get("rr_step1_title", "🎭 Step 1: Select Role"),
         description=lang.get("rr_step1_desc", "Select the role that should be assigned."),
-        color=NEXUS_COLOR,
+        color=color,
     )
 
-def _step_emoji_embed(role: discord.Role, lang: dict) -> discord.Embed:
+def _step_emoji_embed(role: discord.Role, lang: dict, color: int) -> discord.Embed:
     return discord.Embed(
         title=lang.get("rr_step2_title", "😀 Step 2: Choose Emoji"),
         description=lang.get(
@@ -632,10 +638,10 @@ def _step_emoji_embed(role: discord.Role, lang: dict) -> discord.Embed:
             "2. React **directly on the setup message** with your desired emoji.\n\n"
             "**Custom Server Emojis:** ⭐ Premium Only",
         ).format(role=role.mention),
-        color=NEXUS_COLOR,
+        color=color,
     )
 
-def _step_mode_embed(role: discord.Role, emoji: str, lang: dict) -> discord.Embed:
+def _step_mode_embed(role: discord.Role, emoji: str, lang: dict, color: int) -> discord.Embed:
     return discord.Embed(
         title=lang.get("rr_step3_title", "⚙️ Step 3: Choose Mode"),
         description=lang.get(
@@ -644,24 +650,24 @@ def _step_mode_embed(role: discord.Role, emoji: str, lang: dict) -> discord.Embe
             "**Toggle** — Clicking grants the role, clicking again removes it.\n"
             "**Unique** ⭐ — Users can only own one role from this group.",           
         ).format(role=role.mention, emoji=emoji),
-        color=NEXUS_COLOR,
+        color=color,
     )
 
-def _step_group_embed(role: discord.Role, emoji: str, lang: dict) -> discord.Embed:
+def _step_group_embed(role: discord.Role, emoji: str, lang: dict, color: int) -> discord.Embed:
     return discord.Embed(
         title=lang.get("rr_step4_title", "📋 Step 4: Choose Group"),
         description=lang.get(
             "rr_step4_desc",
             "Role: {role} | Emoji: {emoji}\n\nGroups ensure that when selecting a role, all other roles in this group are automatically removed."
         ).format(role=role.mention, emoji=emoji),
-        color=NEXUS_COLOR,
+        color=color,
     )
 
-def _step_group_select_embed(lang: dict) -> discord.Embed:
+def _step_group_select_embed(lang: dict, color: int) -> discord.Embed:
     return discord.Embed(
         title=lang.get("rr_group_select_title", "📋 Select Existing Group"),
         description=lang.get("rr_group_select_desc", "Select an existing group from the dropdown."),
-        color=NEXUS_COLOR,
+        color=color,
     )
 
 # ─── /reactionrole_edit — Übersicht + Hub ────────────────────────────────────
@@ -830,6 +836,9 @@ async def _show_hub(
     keine toten Buttons hinterlassen, wenn der Admin aus einer Unter-View zurückkommt.
     previous: die gerade sichtbare View — wird gestoppt, damit ihr Timeout den Hub nicht überschreibt.
     """
+    # Der Hub holt die Panel-Nachricht per API — vorher bestätigen (Discord gibt nur 3 s für die erste Antwort)
+    if not interaction.response.is_done():
+        await interaction.response.defer()
     if previous is not None:
         previous.stop()
 
@@ -841,10 +850,7 @@ async def _show_hub(
     else:
         kwargs = {"content": None, "embed": embed, "view": view}
 
-    if interaction.response.is_done():
-        await interaction.edit_original_response(**kwargs)
-    else:
-        await interaction.response.edit_message(**kwargs)
+    await interaction.edit_original_response(**kwargs)
 
     if embed is not None:
         view.bind(interaction)
@@ -977,11 +983,12 @@ class PanelEditView(NexusView):
 
     @discord.ui.button(label="Add role", emoji="➕", style=discord.ButtonStyle.success, row=0)
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         display_mode = self.msg_ref["display_mode"]
         cap = _entry_cap(display_mode)
         entries = await db_reaction_roles.get_reaction_roles(interaction.guild_id, self.message_id)
         if len(entries) >= cap:
-            await interaction.response.send_message(_limit_text(self.lang, cap), ephemeral=True)
+            await interaction.followup.send(_limit_text(self.lang, cap), ephemeral=True)
             return
 
         # Reaktions-Modus: Nexus hängt das Emoji am Ende selbst an die Nachricht
@@ -989,14 +996,14 @@ class PanelEditView(NexusView):
         if display_mode == "reaction":
             needed.append("add_reactions")
         if not (check := can_use_channel(self.channel, *needed)):
-            await interaction.response.send_message(format_issue(check, self.lang), ephemeral=True)
+            await interaction.followup.send(format_issue(check, self.lang), ephemeral=True)
             return
 
         # Ab hier übernimmt der bestehende Setup-Flow (Rolle → Emoji → Modus) inkl. aller Prüfungen
         await self.show(
             interaction,
             RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=True),
-            embed=_step_role_embed(self.lang),
+            embed=_step_role_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
         )
 
     @discord.ui.button(label="Remove role", emoji="➖", style=discord.ButtonStyle.danger, row=0)
@@ -1010,7 +1017,7 @@ class PanelEditView(NexusView):
                     "rr_edit_remove_desc",
                     "Select the roles to remove from this panel. Members keep roles they already have.",
                 ),
-                color=NEXUS_COLOR,
+                color=await db_settings.get_color(interaction.guild_id),
             ),
         )
 
@@ -1026,7 +1033,7 @@ class PanelEditView(NexusView):
                     "Select the entry whose role should be replaced. Emoji and mode stay the same. "
                     "Members keep the old role — only new reactions grant the new one.",
                 ),
-                color=NEXUS_COLOR,
+                color=await db_settings.get_color(interaction.guild_id),
             ),
         )
 
@@ -1041,7 +1048,7 @@ class PanelEditView(NexusView):
                     "rr_edit_repost_desc",
                     "Choose the channel where the panel should be posted again. All roles and settings are kept.",
                 ),
-                color=NEXUS_COLOR,
+                color=await db_settings.get_color(interaction.guild_id),
             ),
         )
 
@@ -1153,7 +1160,7 @@ class PanelEntrySelectView(NexusView):
                     "rr_edit_change_desc",
                     "Current: {emoji} → {role}\n\nSelect the new role for this emoji.",
                 ).format(emoji=entry["emoji"], role=f"<@&{entry['role_id']}>"),
-                color=NEXUS_COLOR,
+                color=await db_settings.get_color(interaction.guild_id),
             ),
         )
 
@@ -1425,11 +1432,12 @@ class ReactionRoles(commands.Cog):
     @app_commands.default_permissions(manage_roles=True)
     @module_required("reaction_roles")
     async def reactionrole_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang     = await get_lang(interaction.guild_id)
         messages = await db_reaction_roles.get_all_panels(interaction.guild_id)
 
         if not messages:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("rr_list_empty"), ephemeral=True
             )
             return
@@ -1450,7 +1458,7 @@ class ReactionRoles(commands.Cog):
                 value=role_list or "—",
                 inline=False,
             )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="reactionrole_delete", description=app_commands.locale_str("cmd_rr_delete_desc"))
     @app_commands.default_permissions(manage_roles=True)
@@ -1517,28 +1525,28 @@ class ReactionRoles(commands.Cog):
         interaction: discord.Interaction,
         message_id: str,
     ):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         # default_permissions lässt sich pro Server überschreiben — vor dem Bearbeiten selbst prüfen
         if not (check := can_set_up_self_roles(interaction.guild, interaction.user)):
-            await interaction.response.send_message(format_issue(check, lang), ephemeral=True)
+            await interaction.followup.send(format_issue(check, lang), ephemeral=True)
             return
 
         try:
             msg_id = int(message_id)
         except ValueError:
-            await interaction.response.send_message(lang.get("invalid_id", "❌ Invalid ID."), ephemeral=True)
+            await interaction.followup.send(lang.get("invalid_id", "❌ Invalid ID."), ephemeral=True)
             return
 
         msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, msg_id)
         roles = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
         if not msg_ref and not roles:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 lang.get("rr_not_found", "❌ This reaction role no longer exists."), ephemeral=True
             )
             return
 
         # Der Hub holt die Discord-Nachricht per API — das kann knapp an die 3-Sekunden-Grenze gehen
-        await interaction.response.defer(ephemeral=True)
         await _show_hub(interaction, self.bot, interaction.user.id, msg_id, lang)
 
     @reactionrole_edit.autocomplete("message_id")

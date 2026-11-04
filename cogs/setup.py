@@ -7,7 +7,7 @@ from config import NEXUS_COLOR, DASHBOARD_URL
 from emojis import NexusEmojis
 from cogs.utils import get_lang, MODULE_DISPLAY, CORE_MODULES
 from systems.hierarchy import check_bot_hierarchy, get_bot_position_info, can_apply_overwrites, format_issue
-from systems.ui import NexusView
+from systems.ui import NexusView, send_ephemeral
 
 log = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ async def _overwrites_ok(interaction: discord.Interaction, lang: dict, overwrite
     check = can_apply_overwrites(interaction.guild, overwrites)
     if check:
         return True
-    await interaction.response.send_message(format_issue(check, lang), ephemeral=True)
+    await send_ephemeral(interaction, format_issue(check, lang))
     return False
 
 async def _skip_channel(guild: discord.Guild, column: str) -> str:
@@ -321,12 +321,13 @@ class ChannelPermissionWarningView(SetupStepView):
 
     @discord.ui.button(label="🔍 Validate", style=discord.ButtonStyle.primary)
     async def validate_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         is_logging = (self.step_type == "log")
         channel, missing = await _resolve_channel_and_check_perms(self.channel, interaction.guild, interaction.client.user.id, for_logging=is_logging)
 
         if missing:
             embed = await _channel_permission_warning_embed(channel, interaction.guild, interaction.client.user.id, is_logging, self.lang)
-            await interaction.response.edit_message(embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, view=self)
             return
 
         self.channel = channel
@@ -335,6 +336,7 @@ class ChannelPermissionWarningView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary)
     async def skip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         mention = await _skip_channel(interaction.guild, self._column)
         await self._proceed_next_step(interaction, mention)
 
@@ -436,6 +438,7 @@ class LogChannelView(SetupStepView):
         row=0
     )
     async def select_log_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         raw_channel = select.values[0]
         channel, missing = await _resolve_channel_and_check_perms(raw_channel, interaction.guild, interaction.client.user.id, for_logging=True)
 
@@ -453,6 +456,7 @@ class LogChannelView(SetupStepView):
 
     @discord.ui.button(label="✨ Create one for me", style=discord.ButtonStyle.secondary, row=1)
     async def create_log_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         bot_role = interaction.guild.me.top_role
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -473,8 +477,8 @@ class LogChannelView(SetupStepView):
                 reason=channel_reason,
             )
         except discord.Forbidden:
-            await interaction.response.send_message(
-                f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}", ephemeral=True
+            await send_ephemeral(
+                interaction, f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}"
             )
             return
 
@@ -486,6 +490,7 @@ class LogChannelView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         mention = await _skip_channel(interaction.guild, "log_channel_id")
         await self.show(
             interaction, RulesChannelView(self.setup_owner_id, self.lang, self.setup_channel),
@@ -507,6 +512,7 @@ class RulesChannelView(SetupStepView):
         row=0
     )
     async def select_rules_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         raw_channel = select.values[0]
         channel, missing = await _resolve_channel_and_check_perms(raw_channel, interaction.guild, interaction.client.user.id, for_logging=False)
 
@@ -524,6 +530,7 @@ class RulesChannelView(SetupStepView):
 
     @discord.ui.button(label="✨ Create one for me", style=discord.ButtonStyle.secondary, row=1)
     async def create_rules_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         bot_role = interaction.guild.me.top_role
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(
@@ -544,8 +551,8 @@ class RulesChannelView(SetupStepView):
                 reason=channel_reason,
             )
         except discord.Forbidden:
-            await interaction.response.send_message(
-                f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}", ephemeral=True
+            await send_ephemeral(
+                interaction, f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}"
             )
             return
 
@@ -557,6 +564,7 @@ class RulesChannelView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         mention = await _skip_channel(interaction.guild, "rules_channel_id")
         await self.show(
             interaction, WelcomeChannelView(self.setup_owner_id, self.lang, self.setup_channel),
@@ -578,6 +586,7 @@ class WelcomeChannelView(SetupStepView):
         row=0
     )
     async def select_welcome_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         raw_channel = select.values[0]
         channel, missing = await _resolve_channel_and_check_perms(raw_channel, interaction.guild, interaction.client.user.id, for_logging=False)
 
@@ -595,6 +604,7 @@ class WelcomeChannelView(SetupStepView):
 
     @discord.ui.button(label="✨ Create one for me", style=discord.ButtonStyle.secondary, row=1)
     async def create_welcome_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()   # vor API-Aufrufen: Discord gibt nur 3 s für die erste Antwort
         bot_role = interaction.guild.me.top_role
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(
@@ -615,8 +625,8 @@ class WelcomeChannelView(SetupStepView):
                 reason=channel_reason,
             )
         except discord.Forbidden:
-            await interaction.response.send_message(
-                f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}", ephemeral=True
+            await send_ephemeral(
+                interaction, f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}"
             )
             return
 
@@ -628,6 +638,7 @@ class WelcomeChannelView(SetupStepView):
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, row=1)
     async def skip_step(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await _skip_channel(interaction.guild, "welcome_channel_id")
         await self.show(
             interaction, ModulesView(self.setup_owner_id, self.lang, self.setup_channel),
@@ -683,6 +694,7 @@ class ModulesView(SetupStepView):
 
     @discord.ui.button(label="Finish Setup", style=discord.ButtonStyle.primary, row=1)
     async def finish_setup(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         from database.db_settings import DEFAULT_MODULES
         modules = DEFAULT_MODULES.copy()
         for key in self.available:
@@ -734,7 +746,7 @@ class ModulesView(SetupStepView):
             inline=False,
         )
 
-        await interaction.response.edit_message(embed=ready_embed, view=final_view)
+        await interaction.edit_original_response(embed=ready_embed, view=final_view)
 
         if settings and settings.get("log_channel_id"):
             log_channel = interaction.guild.get_channel(settings["log_channel_id"])
@@ -783,6 +795,7 @@ class RestoreView(SetupStepView):
 
     @discord.ui.button(label="Restart", style=discord.ButtonStyle.danger)
     async def restart_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await db_settings.reset_guild(interaction.guild_id)
         embed = discord.Embed(
             title=self.lang.get("setup_hello_title", "👋 Hello, I'm Nexus!"),
@@ -807,6 +820,7 @@ class SetupCog(commands.Cog):
     @app_commands.command(name="setup", description=app_commands.locale_str("cmd_setup_desc"))
     @app_commands.default_permissions(manage_guild=True)
     async def setup(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await db_settings.get_or_create_guild(interaction.guild_id)
         lang = await get_lang(interaction.guild_id)
 
@@ -820,7 +834,7 @@ class SetupCog(commands.Cog):
         )
         embed.set_footer(text="Nexus • Setup")
         view = SetupView(interaction.user.id, lang, interaction.guild_id)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 
 async def setup(bot):

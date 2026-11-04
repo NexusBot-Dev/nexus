@@ -1,22 +1,23 @@
 import discord
-from .registry import register_action, DashCtx
+from .registry import register_action, DashCtx, DashboardError, InvalidRequest
 from database import db_settings, db_automod, db_honeypot
 from cogs.automod import (
        _get_nexus_rules, _get_existing_rule_by_type, _build_actions,
        AUTOMOD_RULES,
    )
-from cogs.honeypot import _slugify_channel_name
 from cogs.utils import get_lang
-from systems.hierarchy import can_apply_overwrites, format_issue
+from systems import honeypot as hp_system
+from systems.hierarchy import format_issue
 
 @register_action("automod", "status")
 async def status(ctx: DashCtx) -> dict:
     guild, guild_id = ctx.guild, ctx.guild_id
     active_rules = await _get_nexus_rules(guild)
-    settings = await db_settings.get_guild(guild_id)
     shield_enabled = bool(await db_automod.get_antinuke(guild_id))
-    honeypot_channel_id = settings.get("honeypot_channel_id") if settings else None
+    honeypot_channel = await hp_system.get_channel(guild)   # von Hand gelöscht → kein Honeypot
     honeypot = await db_honeypot.get_honeypot_settings(guild_id)
+    # Server-Sprache: der Standardtitel steht so in Discord. Liest beim ersten Mal die bestehende Nachricht aus.
+    honeypot_title, honeypot_text = await hp_system.load_texts(guild, honeypot_channel, honeypot, await get_lang(guild_id))
 
     keywords_rule = active_rules.get("keywords")
     return {
@@ -25,9 +26,14 @@ async def status(ctx: DashCtx) -> dict:
         "keywords_enabled": keywords_rule is not None and keywords_rule.enabled,
         "keywords": list(keywords_rule.trigger.keyword_filter) if keywords_rule else [],
         "shield_enabled": shield_enabled,
-        "honeypot_channel_id": str(honeypot_channel_id) if honeypot_channel_id else None,
+        "honeypot_channel_id": str(honeypot_channel.id) if honeypot_channel else None,
         "honeypot_timeout_days": honeypot["timeout_days"],
         "honeypot_catches": honeypot["catches"],
+        "honeypot_title": honeypot_title,
+        "honeypot_text": honeypot_text,
+        "honeypot_punish_members": honeypot["punish_members"],
+        "honeypot_punish_bots": honeypot["punish_bots"],
+        "honeypot_day_options": list(db_honeypot.TIMEOUT_DAY_OPTIONS),
     }
 
 @register_action("automod", "toggle-rule")
@@ -35,19 +41,20 @@ async def toggle_rule(ctx: DashCtx) -> dict:
     guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     rule_key = payload.get("rule_key")
     if rule_key not in AUTOMOD_RULES:
-        raise ValueError("Unbekannte Regel")
+        raise InvalidRequest(f"Unbekannte Regel: {rule_key!r}")
 
     active_rules = await _get_nexus_rules(guild)
     rule = active_rules.get(rule_key)
 
     if rule and rule.enabled:
         await rule.edit(enabled=False, reason="Nexus Dashboard — deaktiviert")
+        enabled = False
     else:
         rule_conf = AUTOMOD_RULES[rule_key]
         existing = await _get_existing_rule_by_type(guild, rule_conf["trigger"].type)
 
         if existing and not existing.name.startswith("Nexus —"):
-            raise ValueError("Eine fremde AutoMod-Regel dieses Typs existiert bereits — bitte manuell in Discord auflösen")
+            raise DashboardError("dash_err_am_foreign_rule")
 
         if existing and existing.name.startswith("Nexus —"):
             await existing.edit(enabled=True, reason="Nexus Dashboard — aktiviert")
@@ -63,15 +70,18 @@ async def toggle_rule(ctx: DashCtx) -> dict:
                 enabled=True,
                 reason="Nexus Dashboard — aktiviert",
             )
+        enabled = True
 
-    return {"rule_key": rule_key}
+    # Neuer Zustand, damit das Dashboard ihn übernimmt statt nur seine Anzeige umzudrehen
+    # (die Regel kann seit dem Laden der Seite in Discord geändert worden sein)
+    return {"rule_key": rule_key, "enabled": enabled}
 
 @register_action("automod", "set-keywords")
 async def set_keywords(ctx: DashCtx) -> dict:
     guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
     keywords = payload.get("keywords")
     if not isinstance(keywords, list):
-        raise ValueError("keywords muss eine Liste sein")
+        raise InvalidRequest("keywords muss eine Liste sein")
     keywords = [str(k).strip().lower() for k in keywords if str(k).strip()][:1000]
 
     active_rules = await _get_nexus_rules(guild)
@@ -82,6 +92,7 @@ async def set_keywords(ctx: DashCtx) -> dict:
             trigger=discord.AutoModTrigger(type=discord.AutoModRuleTriggerType.keyword, keyword_filter=keywords),
             reason="Nexus Dashboard — Keywords aktualisiert",
         )
+        enabled = rule.enabled
     else:
         settings = await db_settings.get_guild(guild_id)
         log_ch_id = settings.get("log_channel_id") if settings else None
@@ -94,8 +105,9 @@ async def set_keywords(ctx: DashCtx) -> dict:
             enabled=True,
             reason="Nexus Dashboard — Keywords erstellt",
         )
+        enabled = True   # neu angelegte Regel ist sofort aktiv
 
-    return {"keywords": keywords}
+    return {"keywords": keywords, "enabled": enabled}
 
 @register_action("automod", "toggle-shield")
 async def toggle_shield(ctx: DashCtx) -> dict:
@@ -104,65 +116,82 @@ async def toggle_shield(ctx: DashCtx) -> dict:
     new_status = await db_automod.set_antinuke(guild_id, not current)
     return {"shield_enabled": bool(new_status)}
 
+def _honeypot_texts(payload: dict) -> tuple[str, str]:
+    """Titel (optional — leer = Standardtitel in der Server-Sprache) und Warntext aus dem Request."""
+    title = str(payload.get("title") or "").strip()
+    text = str(payload.get("warn_text") or "").strip()
+    if len(title) > db_honeypot.WARN_TITLE_MAX:
+        raise DashboardError("dash_err_am_honeypot_title_too_long")
+    if len(text) > db_honeypot.WARN_TEXT_MAX:
+        raise DashboardError("dash_err_am_honeypot_text_too_long")
+    return title, text
+
 @register_action("automod", "create-honeypot")
 async def create_honeypot(ctx: DashCtx) -> dict:
-    guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
+    guild, payload = ctx.guild, ctx.payload
     name = (payload.get("name") or "").strip()
-    warn_text = (payload.get("warn_text") or "").strip()
+    title, warn_text = _honeypot_texts(payload)
     if not name or not warn_text:
-        raise ValueError("Name und Warntext werden benötigt")
-    if len(warn_text) > 1000:
-        raise ValueError("Warntext zu lang (max. 1000 Zeichen)")
+        raise DashboardError("dash_err_am_honeypot_text_required")
 
-    settings = await db_settings.get_guild(guild_id)
-    if settings and settings.get("honeypot_channel_id"):
-        raise ValueError("Es existiert bereits ein Honeypot — zuerst löschen")
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        guild.me: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, manage_messages=True,
-            embed_links=True, read_message_history=True,
-        ),
-    }
-    check = can_apply_overwrites(guild, overwrites)
-    if not check:
-        raise ValueError(format_issue(check, await get_lang(guild_id)))
-
-    channel = await guild.create_text_channel(
-        name=_slugify_channel_name(name), overwrites=overwrites, reason="Nexus Dashboard — Honeypot erstellt",
-    )
+    server_lang = await get_lang(guild.id)   # Warn-Nachricht steht in Discord
     try:
-        await channel.edit(position=0)
-    except discord.HTTPException:
-        pass
+        channel = await hp_system.create(guild, name, title, warn_text, server_lang)
+    except hp_system.HoneypotError as e:
+        if e.code == "perms":
+            raise ValueError(format_issue(e.check, ctx.lang)) from None
+        if e.code == "exists":
+            raise DashboardError("dash_err_am_honeypot_exists") from None
+        raise DashboardError("dash_err_missing_manage_channels") from None
 
-    color = await db_settings.get_color(guild_id)
-    embed = discord.Embed(title="⚠️ Warning", description=warn_text, color=color)
-    embed.set_footer(text="Nexus • Honeypot")
-    sent = await channel.send(embed=embed)
+    return {
+        "channel_id": str(channel.id),
+        "channel_name": channel.name,
+        "title": title or hp_system.default_title(server_lang),
+        "text": warn_text,
+    }
 
-    await db_settings.update_guild(guild_id, honeypot_channel_id=channel.id)
-    await db_honeypot.update_honeypot_settings(guild_id, message_id=sent.id)
-    return {"channel_id": str(channel.id), "channel_name": channel.name}
+@register_action("automod", "set-honeypot-text")
+async def set_honeypot_text(ctx: DashCtx) -> dict:
+    """Titel/Text der Warn-Nachricht speichern und die Nachricht im Channel anpassen."""
+    guild = ctx.guild
+    title, warn_text = _honeypot_texts(ctx.payload)
+    if not warn_text:
+        raise DashboardError("dash_err_am_honeypot_warn_text_required")
+    if await hp_system.get_channel(guild) is None:
+        raise DashboardError("dash_err_am_honeypot_missing")
+
+    server_lang = await get_lang(guild.id)
+    status = await hp_system.update_texts(guild, title, warn_text, server_lang)
+    # status: "updated" | "reposted" (Nachricht fehlte) | "saved_only" (Nachricht nicht anpassbar)
+    return {"title": title or hp_system.default_title(server_lang), "text": warn_text, "status": status}
+
+@register_action("automod", "set-honeypot-punishment")
+async def set_honeypot_punishment(ctx: DashCtx) -> dict:
+    """Bestrafung für Mitglieder und Bots sowie die Timeout-Dauer (einzeln oder zusammen)."""
+    payload, fields = ctx.payload, {}
+    for key, column in (("members", "punish_members"), ("bots", "punish_bots")):
+        if key in payload:
+            if payload[key] not in db_honeypot.PUNISHMENTS:
+                raise InvalidRequest(f"Ungültige Bestrafung für {key}: {payload[key]!r}")
+            fields[column] = payload[key]
+    if "days" in payload:
+        days = payload["days"]
+        if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= db_honeypot.MAX_TIMEOUT_DAYS:
+            raise DashboardError("dash_err_am_honeypot_days_range", max=db_honeypot.MAX_TIMEOUT_DAYS)
+        fields["timeout_days"] = days
+    if not fields:
+        raise InvalidRequest("Keine Änderung angegeben")
+
+    hp = await db_honeypot.update_honeypot_settings(ctx.guild_id, **fields)
+    return {"members": hp["punish_members"], "bots": hp["punish_bots"], "days": hp["timeout_days"]}
 
 @register_action("automod", "delete-honeypot")
 async def delete_honeypot(ctx: DashCtx) -> dict:
-    guild, guild_id = ctx.guild, ctx.guild_id
-    settings = await db_settings.get_guild(guild_id)
-    channel_id = settings.get("honeypot_channel_id") if settings else None
-    if not channel_id:
-        raise ValueError("Kein Honeypot vorhanden")
-
-    channel = guild.get_channel(channel_id)
-    if channel is not None:
-        try:
-            await channel.delete(reason="Nexus Dashboard — Honeypot gelöscht")
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            pass
-
-    await db_settings.update_guild(guild_id, honeypot_channel_id=None)
-    await db_honeypot.update_honeypot_settings(guild_id, message_id=None)   # Fang-Zähler bleibt erhalten
+    channel = await hp_system.get_channel(ctx.guild)
+    if channel is None:
+        raise DashboardError("dash_err_am_honeypot_missing")
+    await hp_system.cleanup(ctx.guild, channel.id)   # Fänge, Texte und Bestrafung bleiben gespeichert
     return {"deleted": True}
 
 @register_action("automod", "set-honeypot-timeout")
@@ -171,9 +200,9 @@ async def set_honeypot_timeout(ctx: DashCtx) -> dict:
     try:
         days = int(payload.get("days"))
     except (TypeError, ValueError):
-        raise ValueError("Ungültige Anzahl Tage")
+        raise DashboardError("dash_err_am_honeypot_days_range", max=db_honeypot.MAX_TIMEOUT_DAYS) from None
     if not 1 <= days <= db_honeypot.MAX_TIMEOUT_DAYS:
-        raise ValueError(f"Die Dauer muss zwischen 1 und {db_honeypot.MAX_TIMEOUT_DAYS} Tagen liegen")
+        raise DashboardError("dash_err_am_honeypot_days_range", max=db_honeypot.MAX_TIMEOUT_DAYS)
 
     await db_honeypot.update_honeypot_settings(guild_id, timeout_days=days)
     return {"timeout_days": days}

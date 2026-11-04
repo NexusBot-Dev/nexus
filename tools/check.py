@@ -38,7 +38,7 @@ FORBIDDEN = [
 PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
 USED_KEY_PATTERNS = [
     re.compile(r'lang\.get\(\s*["\']([a-z0-9_]+)["\']'),
-    re.compile(r'["\']((?:help|cmd)_[a-z0-9_]+)["\']'),
+    re.compile(r'["\']((?:help|cmd|dash_err)_[a-z0-9_]+)["\']'),   # dash_err_: DashboardError-Keys
 ]
 
 

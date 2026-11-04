@@ -460,10 +460,11 @@ class LevelRolesView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.danger)
     async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         roles_data = await db_levels.get_all_level_roles(self.guild_id)
         if not roles_data:
             self.stop()
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=self.lang.get("no_level_roles_found", "No level roles have been set up for this server yet."),
                 embed=None,
                 view=None,
@@ -579,10 +580,11 @@ class RemoveLevelRoleView(NexusView):
 
     @discord.ui.select(placeholder="Select a level role to remove...")
     async def select_role(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
         level = int(select.values[0])
         await db_levels.remove_level_role(self.guild_id, level)
         self.stop()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=self.lang.get("remove_level_role_success", "{check} Removed role for Level {level}.").format(
                 check=NexusEmojis.CHECKMARK, level=level
             ),
@@ -636,9 +638,10 @@ class LevelUpChannelView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, row=1)
     async def reset_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await db_levels.update_levels_settings(interaction.guild_id, levelup_channel_id=None)
         button.disabled = True
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=await _levelup_embed(interaction.guild_id, self.lang), view=self,
         )
 
@@ -680,10 +683,11 @@ class LevelExcludeView(NexusView):
         row=0,
     )
     async def select_channels(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        await interaction.response.defer()
         ids = sorted({c.id for c in select.values})
         await db_levels.set_excluded_channels(interaction.guild_id, ids)
         select.default_values = _channel_defaults(ids)
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=await _exclude_embed(interaction.guild, self.lang), view=self,
         )
 

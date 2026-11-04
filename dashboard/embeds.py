@@ -3,7 +3,7 @@ import logging
 import discord
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone as tz
-from .registry import register_action, get_bot, parse_id, DashCtx
+from .registry import register_action, get_bot, parse_id, DashCtx, DashboardError
 from database import db_embeds, db_settings, db_limits
 from systems.premium import is_premium
 from systems.embed_posts import build_embed, track_post, refresh_posts
@@ -14,10 +14,7 @@ async def _ensure_active(guild_id: int, embed_id: int) -> None:
     premium = await is_premium(guild_id)
     limit = await db_limits.get_limit(guild_id, "saved_embeds", premium)
     if not await db_embeds.is_embed_active(embed_id, guild_id, limit):
-        raise ValueError(
-            "Embed ist inaktiv: Der Server liegt über dem Embed-Limit. "
-            "Lösche ältere Embeds oder hol dir Premium."
-        )
+        raise DashboardError("dash_err_embed_inactive")
 
 @register_action("embeds", "list")
 async def list_embeds(ctx: DashCtx) -> dict:
@@ -54,20 +51,20 @@ async def add_embed(ctx: DashCtx) -> dict:
     channel_id = payload.get("channel_id")
 
     if not name or not description:
-        raise ValueError("Name und Inhalt werden benötigt")
+        raise DashboardError("dash_err_embed_name_content_required")
     if len(title) > 256:
-        raise ValueError("Titel zu lang (max. 256 Zeichen)")
+        raise DashboardError("dash_err_embed_title_too_long")
     if len(description) > 4000:
-        raise ValueError("Inhalt zu lang (max. 4000 Zeichen)")
+        raise DashboardError("dash_err_embed_content_too_long")
     channel_id = parse_id(channel_id, "Gültiger Channel wird benötigt")
 
     if guild.get_channel(channel_id) is None:
-        raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
+        raise DashboardError("dash_err_channel_gone")
 
     if not await db_embeds.can_save_embed(guild_id):
         premium = await is_premium(guild_id)
         limit = await db_limits.get_limit(guild_id, "saved_embeds", premium)
-        raise ValueError(f"Limit erreicht ({limit} Embeds)")
+        raise DashboardError("dash_err_embed_limit", limit=limit)
 
     color = await db_settings.get_color(guild_id)
     embed_id = await db_embeds.save_embed(
@@ -79,21 +76,21 @@ async def add_embed(ctx: DashCtx) -> dict:
 @register_action("embeds", "edit")
 async def edit_embed(ctx: DashCtx) -> dict:
     guild, guild_id, payload = ctx.guild, ctx.guild_id, ctx.payload
-    embed_id = parse_id(payload.get("embed_id"), "embed_id und Inhalt werden benötigt")
+    embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
     title = (payload.get("title") or "").strip()
     description = (payload.get("description") or "").strip()
     channel_id = payload.get("channel_id")
 
     if not description:
-        raise ValueError("embed_id und Inhalt werden benötigt")
+        raise DashboardError("dash_err_embed_content_required")
     if len(title) > 256:
-        raise ValueError("Titel zu lang (max. 256 Zeichen)")
+        raise DashboardError("dash_err_embed_title_too_long")
     if len(description) > 4000:
-        raise ValueError("Inhalt zu lang (max. 4000 Zeichen)")
+        raise DashboardError("dash_err_embed_content_too_long")
 
     existing = await db_embeds.get_embed(embed_id, guild_id)
     if existing is None:
-        raise ValueError("Embed wurde nicht gefunden")
+        raise DashboardError("dash_err_embed_not_found")
 
     bot = get_bot()
     # Wird kein Channel mitgeschickt, bleibt der gespeicherte erhalten (statt auf NULL zu fallen)
@@ -101,11 +98,11 @@ async def edit_embed(ctx: DashCtx) -> dict:
     if channel_id not in (None, ""):
         channel_id_int = parse_id(channel_id, "Ungültiger Channel")
         if guild.get_channel(channel_id_int) is None:
-            raise ValueError("Channel existiert nicht (mehr) auf diesem Server")
+            raise DashboardError("dash_err_channel_gone")
 
     updated = await db_embeds.update_embed(embed_id, guild_id, title, description, channel_id_int)
     if not updated:
-        raise ValueError("Embed wurde nicht gefunden")
+        raise DashboardError("dash_err_embed_not_found")
 
     # Bereits gepostete Nachrichten mitziehen
     refreshed = await refresh_posts(bot, guild_id, {"id": embed_id, "title": title, "description": description})
@@ -122,7 +119,7 @@ async def delete_embed(ctx: DashCtx) -> dict:
     embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
     deleted = await db_embeds.delete_embed(embed_id, guild_id)
     if not deleted:
-        raise ValueError("Embed wurde nicht gefunden")
+        raise DashboardError("dash_err_embed_not_found")
     return {"id": embed_id}
 
 @register_action("embeds", "post-now")
@@ -132,14 +129,14 @@ async def post_now(ctx: DashCtx) -> dict:
 
     embed_data = await db_embeds.get_embed(embed_id, guild_id)
     if embed_data is None:
-        raise ValueError("Embed wurde nicht gefunden")
+        raise DashboardError("dash_err_embed_not_found")
     await _ensure_active(guild_id, embed_id)
     if not embed_data.get("channel_id"):
-        raise ValueError("Kein Ziel-Channel hinterlegt")
+        raise DashboardError("dash_err_embed_no_channel")
 
     channel = guild.get_channel(embed_data["channel_id"])
     if channel is None:
-        raise ValueError("Channel existiert nicht (mehr)")
+        raise DashboardError("dash_err_channel_gone")
 
     color = await db_settings.get_color(guild_id)
     discord_embed = build_embed(embed_data["title"], embed_data["description"], color)
@@ -147,10 +144,10 @@ async def post_now(ctx: DashCtx) -> dict:
     try:
         message = await channel.send(embed=discord_embed)
     except discord.Forbidden:
-        raise ValueError("Fehlende Berechtigung zum Posten in diesem Channel")
+        raise DashboardError("dash_err_no_post_permission") from None
     except discord.HTTPException:
         log.exception("Dashboard: Embed %s auf %s konnte nicht gepostet werden", embed_id, guild_id)
-        raise ValueError("Discord hat das Posten abgelehnt — bitte später erneut versuchen")
+        raise DashboardError("dash_err_discord_rejected") from None
 
     # Wie beim Posten über /embed merken, damit spätere Edits die Nachricht mitziehen
     await track_post(embed_data["id"], message)
@@ -160,12 +157,12 @@ async def post_now(ctx: DashCtx) -> dict:
 async def schedule_embed(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
     if not await is_premium(guild_id):
-        raise ValueError("Zeitgesteuertes Posten ist ein Premium-Feature")
+        raise DashboardError("dash_err_embed_schedule_premium")
 
-    embed_id = parse_id(payload.get("embed_id"), "embed_id und scheduled_at werden benötigt")
+    embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
     scheduled_at_iso = payload.get("scheduled_at")
-    if not scheduled_at_iso:
-        raise ValueError("embed_id und scheduled_at werden benötigt")
+    if not scheduled_at_iso:   # leeres Datumsfeld in der Oberfläche
+        raise DashboardError("dash_err_embed_invalid_date")
     await _ensure_active(guild_id, embed_id)
 
     try:
@@ -173,15 +170,15 @@ async def schedule_embed(ctx: DashCtx) -> dict:
         local_tz = ZoneInfo(tz_name)
         scheduled_local = datetime.fromisoformat(scheduled_at_iso).replace(tzinfo=local_tz)
     except (ValueError, KeyError, TypeError):
-        raise ValueError("Ungültiges Datumsformat")
+        raise DashboardError("dash_err_embed_invalid_date") from None
 
     if scheduled_local < datetime.now(local_tz):
-        raise ValueError("Der Zeitpunkt liegt in der Vergangenheit")
+        raise DashboardError("dash_err_embed_time_in_past")
 
     scheduled_utc = scheduled_local.astimezone(tz.utc).replace(tzinfo=None)
     updated = await db_embeds.set_schedule(embed_id, guild_id, scheduled_utc)
     if not updated:
-        raise ValueError("Embed wurde nicht gefunden")
+        raise DashboardError("dash_err_embed_not_found")
 
     return {"id": embed_id, "scheduled_at": scheduled_utc.isoformat() + "Z"}  # wie in "list": naive UTC + "Z"
 
@@ -191,5 +188,5 @@ async def unschedule_embed(ctx: DashCtx) -> dict:
     embed_id = parse_id(payload.get("embed_id"), "embed_id wird benötigt")
     updated = await db_embeds.set_schedule(embed_id, guild_id, None)
     if not updated:
-        raise ValueError("Embed wurde nicht gefunden")
+        raise DashboardError("dash_err_embed_not_found")
     return {"id": embed_id}

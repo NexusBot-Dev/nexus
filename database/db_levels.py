@@ -9,6 +9,11 @@ IMPORT_MAX_XP = 2_000_000_000
 _levels_settings_cache: TTLCache[int, dict] = TTLCache(maxsize=2000, ttl=900)
 _excluded_cache: TTLCache[int, frozenset[int]] = TTLCache(maxsize=2000, ttl=900)
 
+def forget_guild(guild_id: int) -> None:
+    """Cache-Einträge verwerfen — nach dem Löschen aller Guild-Daten (db_settings.delete_guild_data)."""
+    _levels_settings_cache.pop(guild_id, None)
+    _excluded_cache.pop(guild_id, None)
+
 UPDATABLE_LEVELS_COLUMNS = frozenset({
     "xp_min", "xp_max", "currency_name", "points_min", "points_max",
     "cooldown", "shop_enabled", "levelup_channel_id",

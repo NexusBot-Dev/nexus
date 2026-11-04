@@ -92,6 +92,7 @@ class UserCommands(commands.Cog):
 
     @app_commands.command(name="invite", description=app_commands.locale_str("cmd_invite_desc"))
     async def invite(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = get_user_lang(interaction)
         color = await db_settings.get_color(interaction.guild_id)
 
@@ -115,10 +116,11 @@ class UserCommands(commands.Cog):
         )
         invite_embed.set_footer(text=NEXUS_FOOTER)
 
-        await interaction.response.send_message(embed=invite_embed, view=invite_view, ephemeral=True)
+        await interaction.followup.send(embed=invite_embed, view=invite_view, ephemeral=True)
 
     @app_commands.command(name="delete_my_data", description=app_commands.locale_str("cmd_delete_desc"))
     async def delete_my_data(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = get_user_lang(interaction)
         color = await db_settings.get_color(interaction.guild_id)
 
@@ -134,7 +136,7 @@ class UserCommands(commands.Cog):
         warn_embed.set_footer(text=NEXUS_FOOTER)
 
         view = DeleteDataConfirmView(lang, color, interaction)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=warn_embed,
             view=view,
             ephemeral=True,

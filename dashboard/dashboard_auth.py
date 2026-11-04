@@ -6,6 +6,8 @@ from collections import deque
 from aiohttp import web
 from .discord_auth_check import resolve_actor
 from .registry import DashCtx
+from cogs.utils import get_lang
+from translations import TRANSLATIONS
 
 RATE_LIMIT_WINDOW_SECONDS = 10
 RATE_LIMIT_MAX_REQUESTS = 60
@@ -90,5 +92,8 @@ async def dashboard_auth_middleware(request: web.Request, handler):
 
     guild, actor = resolved
     body["guild_id"] = guild_id
-    request["dash_ctx"] = DashCtx(guild=guild, actor=actor, payload=body)
+    # Dashboard-Sprache hat Vorrang vor der Bot-Sprache des Servers
+    lang_code = body.get("lang")
+    lang = TRANSLATIONS[lang_code] if isinstance(lang_code, str) and lang_code in TRANSLATIONS else await get_lang(guild_id)
+    request["dash_ctx"] = DashCtx(guild=guild, actor=actor, payload=body, lang=lang)
     return await handler(request)

@@ -249,4 +249,5 @@ class Nexus(commands.AutoShardedBot):
         await super().close()
 
 bot = Nexus()
-bot.run(DISCORD_TOKEN)
+# log_handler=None: Logging ist oben per basicConfig eingerichtet — sonst stünde jede discord.py-Meldung doppelt im Log
+bot.run(DISCORD_TOKEN, log_handler=None)

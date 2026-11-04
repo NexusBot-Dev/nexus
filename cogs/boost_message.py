@@ -33,6 +33,7 @@ class BoostMessageModal(NexusModal):
         self.add_item(self.message_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         if self.message_id is None:
             await db_boosts.add_boost_message(self.guild_id, self.message_input.value)
             text_key = "boost_msg_added"
@@ -40,7 +41,7 @@ class BoostMessageModal(NexusModal):
             await db_boosts.update_boost_message(self.message_id, self.guild_id, self.message_input.value)
             text_key = "boost_msg_updated"
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             self.lang.get(text_key, "{nexus_checkmark} Message saved.").format(nexus_checkmark=NexusEmojis.CHECKMARK),
             ephemeral=True,
         )
@@ -86,8 +87,9 @@ class DeleteConfirmView(NexusView):
 
     @discord.ui.button(style=discord.ButtonStyle.danger)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await db_boosts.delete_boost_message(self.message_id, self.guild_id)
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=self.lang.get("boost_msg_deleted", "{nexus_checkmark} Message #{id} deleted.").format(
                 nexus_checkmark=NexusEmojis.CHECKMARK, id=self.message_id
             ),
@@ -184,6 +186,7 @@ class BoostMessages(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     @module_required("boosts")
     async def boost_message(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         lang = await get_lang(interaction.guild_id)
         color = await db_settings.get_color(interaction.guild_id)
 
@@ -193,7 +196,7 @@ class BoostMessages(commands.Cog):
 
         embed = _build_boost_embed(messages, lang, color, limit)
         view = BoostManageView(interaction.user.id, interaction.guild_id, lang, messages, limit)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 
 async def setup(bot):

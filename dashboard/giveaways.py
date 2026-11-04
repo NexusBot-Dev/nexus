@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from cogs.giveaways import MAX_WINNERS, post_giveaway
 from cogs.utils import get_lang
 from database import db_giveaways, db_settings
-from .registry import register_action, get_bot, parse_id, DashCtx
+from .registry import register_action, get_bot, parse_id, DashCtx, DashboardError
 
 MAX_PRIZE_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 2000
@@ -52,39 +52,40 @@ async def create_giveaway(ctx: DashCtx) -> dict:
 
     prize = str(payload.get("prize") or "").strip()
     if not prize or len(prize) > MAX_PRIZE_LENGTH:
-        raise ValueError(f"Preis muss 1–{MAX_PRIZE_LENGTH} Zeichen lang sein")
+        raise DashboardError("dash_err_gw_prize_length", max=MAX_PRIZE_LENGTH)
 
     description = str(payload.get("description") or "").strip()
     if len(description) > MAX_DESCRIPTION_LENGTH:
-        raise ValueError(f"Beschreibung darf max. {MAX_DESCRIPTION_LENGTH} Zeichen lang sein")
+        raise DashboardError("dash_err_gw_description_too_long", max=MAX_DESCRIPTION_LENGTH)
 
     # Anzahl, keine ID: Zahl oder Ziffern-String, aber kein Float/bool (int(2.7) wäre still 2)
     winners_count = payload.get("winners_count")
     if isinstance(winners_count, str) and winners_count.isascii() and winners_count.isdigit():
         winners_count = int(winners_count)
     if not isinstance(winners_count, int) or isinstance(winners_count, bool) or not 1 <= winners_count <= MAX_WINNERS:
-        raise ValueError(f"Gewinneranzahl muss zwischen 1 und {MAX_WINNERS} liegen")
+        raise DashboardError("dash_err_gw_winners_range", max=MAX_WINNERS)
 
     # Channel immer über die Guild auflösen -> verhindert fremde Channel-IDs
     channel = guild.get_channel(parse_id(payload.get("channel_id"), "Ungültiger Channel"))
     if not isinstance(channel, discord.TextChannel):
-        raise ValueError("Channel nicht gefunden oder kein Text-Channel")
+        raise DashboardError("dash_err_text_channel_invalid")
     perms = channel.permissions_for(guild.me)
     if not (perms.view_channel and perms.send_messages and perms.embed_links):
-        raise ValueError("Dem Bot fehlen Rechte in diesem Channel (Senden / Links einbetten)")
+        raise DashboardError("dash_err_no_embed_permission")
 
     # datetime-local ("2026-10-05T18:00") in der Guild-Timezone interpretieren, wie im Modal
     tz = ZoneInfo(await db_settings.get_timezone(guild_id) or "Europe/Berlin")
     try:
         end_local = datetime.strptime(str(payload.get("end_time")), "%Y-%m-%dT%H:%M").replace(tzinfo=tz)
     except ValueError:
-        raise ValueError("Ungültiges Datumsformat") from None
+        raise DashboardError("dash_err_gw_invalid_date") from None
     if end_local <= datetime.now(tz):
-        raise ValueError("Die Endzeit liegt in der Vergangenheit")
+        raise DashboardError("dash_err_gw_end_in_past")
     end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
 
     # Host ist der eingeloggte Dashboard-User (von der Auth-Middleware geprüft)
     host_id = ctx.actor.id
+    # Server-Sprache: post_giveaway schreibt die Giveaway-Nachricht in Discord
     lang = await get_lang(guild_id)
 
     try:
@@ -99,7 +100,7 @@ async def create_giveaway(ctx: DashCtx) -> dict:
             lang=lang,
         )
     except discord.Forbidden:
-        raise ValueError("Dem Bot fehlen Rechte in diesem Channel") from None
+        raise DashboardError("dash_err_no_embed_permission") from None
     return {"id": giveaway_id}
 
 @register_action("giveaways", "cancel")
@@ -110,12 +111,12 @@ async def cancel_giveaway(ctx: DashCtx) -> dict:
     # Über guild_id mitprüfen, dass das Giveaway wirklich zu diesem Server gehört
     giveaway = await db_giveaways.get_giveaway_by_id(guild_id, giveaway_id)
     if giveaway is None or giveaway["status"] != "running":
-        raise ValueError("Giveaway nicht gefunden oder bereits beendet")
+        raise DashboardError("dash_err_gw_not_running")
 
     cog = get_bot().get_cog("Giveaways")
     if cog is None:
-        raise ValueError("Giveaway-Modul ist nicht geladen")
+        raise DashboardError("dash_err_gw_module_unavailable")
 
     if not await cog._finish_giveaway(giveaway, status="cancelled"):
-        raise ValueError("Giveaway-Nachricht nicht erreichbar (fehlende Rechte?), bitte später erneut versuchen")
+        raise DashboardError("dash_err_gw_message_unreachable")
     return {"cancelled": True}
