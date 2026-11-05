@@ -268,7 +268,7 @@ MESSAGES: dict[str, str] = {
     "rr_step1_title":       "🎭 Step 1: Select Role",
     "rr_step1_desc":        "Select the role that should be assigned.",
     "rr_step2_title":       "😀 Step 2: Choose Emoji",
-    "rr_step2_desc":        "Role: {role}\n\n1. Click the blue button below.\n2. React **directly on the setup message** with your desired emoji.\n\n**Custom Server Emojis:** ⭐ Premium Only",
+    "rr_step2_desc":        "Role: {role}\n\n1. Click the blue button below.\n2. React **directly on the setup message** with your desired emoji.\n\nStandard and server emojis both work.",
     "rr_step3_title":       "⚙️ Step 3: Choose Mode",
     "rr_step3_desc":        "Role: {role} | Emoji: {emoji}\n\n**Toggle** — Clicking grants the role, clicking again removes it.\n**Unique** ⭐ — Users can only own one role from this group.",
     "rr_step4_title":       "📋 Step 4: Choose Group",
@@ -297,10 +297,6 @@ MESSAGES: dict[str, str] = {
     "rr_role_already_set":
         "ℹ️ **Already assigned:** The role {mentioned_role} is already linked to an emoji.\n"
         "Simply select a different role to continue!",
-    "rr_premium_emoji":
-        "💎 **Nexus Premium Feature**\n"
-        "Using custom server emojis is a premium feature.\n"
-        "I have reset your selection – please use a standard emoji or choose a different role.",
     "rr_modal_group_label":       "Group Name",
     "rr_modal_group_placeholder": "e.g., Colors, Teams, Regions...",
     "rr_select_group":            "Select a group...",
@@ -958,6 +954,8 @@ MESSAGES: dict[str, str] = {
     "stream_offline_title":    "⚫ Stream ended",
     "stream_offline_desc":     "**{streamer}** has gone offline.",
     "stream_category":         "🎮 Category",
+    "stream_duration":         "⏱️ Duration",
+    "stream_watch_button":     "Watch stream",
     "alert_platform_unavailable": "❌ This platform isn't available yet.",
     "alert_live":                 "🔴 Live",
     "alert_offline":              "⚫ Offline",
@@ -1009,6 +1007,8 @@ MESSAGES: dict[str, str] = {
     "premium_perk_schedule":       "⏰ Scheduled embed posting",
     "premium_perk_unique":         "🎭 Unique mode for reaction roles",
     "premium_perk_alert_roles":    "🔔 Platform-specific ping roles for stream alerts",
+    "premium_perk_dropdown":       "📋 Dropdown menus for reaction roles",
+    "premium_perk_color":          "🎨 Custom embed color",
 
     # ─── Giveaways ───────────────────────────────────────────────────
     "giveaways_title": "📋 Configured Giveaways",
@@ -1125,7 +1125,6 @@ MESSAGES: dict[str, str] = {
     "dash_err_rr_title_too_long":                 "The title is too long (max. 256 characters).",
     "dash_err_rr_description_too_long":           "The description is too long (max. 4000 characters).",
     "dash_err_rr_dropdown_premium":               "Dropdown mode is a Premium feature.",
-    "dash_err_rr_custom_emoji_premium":           "Custom server emojis are a Premium feature.",
     "dash_err_rr_unique_premium":                 "Unique mode is a Premium feature.",
     "dash_err_rr_unknown_message":                "This message is not a known reaction role message.",
     "dash_err_rr_emoji_taken":                    "This emoji is already used on this message.",

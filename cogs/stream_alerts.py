@@ -1,7 +1,7 @@
 import logging
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from database import db_settings, db_stream_alerts, db_limits
 from systems.premium import is_premium
 from cogs.utils import get_lang, module_required
@@ -9,6 +9,7 @@ from emojis import NexusEmojis
 from systems.platform_registry import PLATFORM_HANDLERS
 from config import NEXUS_FOOTER
 from systems.ui import NexusView, NexusModal
+from systems.alert_dispatch import finish_ended_streams
 
 log = logging.getLogger(__name__)
 
@@ -311,6 +312,24 @@ class AddChannelModal(NexusModal):
 class StreamAlerts(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
+        self.finish_streams_loop.start()
+
+    async def cog_unload(self):
+        self.finish_streams_loop.cancel()
+
+    @tasks.loop(seconds=30)
+    async def finish_streams_loop(self):
+        """Beendet Streams nach Ablauf der Schonfrist (Live-Nachricht -> "Stream beendet")."""
+        try:
+            await finish_ended_streams(self.bot)
+        except Exception:
+            log.exception("Schonfrist-Prüfung der Stream-Alerts fehlgeschlagen.")
+
+    @finish_streams_loop.before_loop
+    async def _before_finish_streams(self):
+        await self.bot.wait_until_ready()
 
     @app_commands.command(name="alert_add", description=app_commands.locale_str("cmd_alert_add_desc"))
     @app_commands.default_permissions(manage_guild=True)

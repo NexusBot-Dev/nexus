@@ -152,9 +152,6 @@ async def add_entry(ctx: DashCtx) -> dict:
         raise DashboardError("dash_err_rr_entry_limit", cap=cap)
 
     premium = await is_premium(guild_id)
-    is_custom_emoji = emoji.startswith("<") and emoji.endswith(">")
-    if is_custom_emoji and not premium:
-        raise DashboardError("dash_err_rr_custom_emoji_premium")
     if mode == "unique" and not premium:
         raise DashboardError("dash_err_rr_unique_premium")
 

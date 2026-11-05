@@ -6,6 +6,7 @@ Kanal-Auflösung, Ping-Rolle, Senden (inkl. AllowedMentions) und Parallelisierun
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Callable
 
 import discord
@@ -20,20 +21,36 @@ log = logging.getLogger(__name__)
 # Max. parallel verarbeitete Subscriptions pro Event (DB-Pool hat maxsize=25)
 ALERT_CONCURRENCY = 10
 
+# So lange darf ein Stream offline sein, bevor er als beendet gilt. Kommt er vorher zurück
+# (Verbindungsabbruch), bleibt es derselbe Stream: keine neue Nachricht, kein neuer Ping.
+OFFLINE_GRACE_SECONDS = 180
+
 PLATFORM_LABELS = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
 
 # (lang) -> fertiges Live-Embed der jeweiligen Plattform
 LiveEmbedBuilder = Callable[[dict], discord.Embed]
 
-def build_offline_embed(lang: dict, streamer_name: str) -> discord.Embed:
+def build_offline_embed(lang: dict, streamer_name: str, duration: timedelta | None = None) -> discord.Embed:
     """Offline-Embed ist für alle Plattformen identisch."""
-    return discord.Embed(
+    embed = discord.Embed(
         title=lang.get("stream_offline_title", "⚫ Stream ended"),
         description=lang.get("stream_offline_desc", "**{streamer}** has gone offline.").format(
             streamer=streamer_name
         ),
         color=NEXUS_COLOR,
     )
+    if duration is not None and duration.total_seconds() > 0:
+        minutes = int(duration.total_seconds()) // 60
+        embed.add_field(name=lang.get("stream_duration", "⏱️ Duration"), value=f"{minutes // 60}:{minutes % 60:02d} h")
+    return embed
+
+def build_watch_view(lang: dict, url: str) -> discord.ui.View:
+    """Link-Button zum Stream. Link-Buttons lösen keine Interaktion aus — kein Handler, übersteht Neustarts."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.link, url=url, label=lang.get("stream_watch_button", "Watch stream"),
+    ))
+    return view
 
 async def _resolve_channel(bot, sub: dict):
     # 1. Globaler Cache (extrem schnell, 0 REST-Calls)
@@ -59,6 +76,7 @@ async def send_alert_message(
     is_live: bool,
     ping_role_id: int | None,
     custom_message: str | None,
+    view: discord.ui.View | None = None,
 ) -> discord.Message | None:
     content_parts = []
     if is_live and ping_role_id:
@@ -75,7 +93,7 @@ async def send_alert_message(
     )
 
     try:
-        return await channel.send(content=content, embed=embed, allowed_mentions=allowed)
+        return await channel.send(content=content, embed=embed, allowed_mentions=allowed, view=view)
     except discord.Forbidden:
         log.warning("Fehlende Berechtigungen zum Senden von Alerts in Kanal %s", channel.id)
     except Exception:
@@ -90,6 +108,7 @@ async def _process_subscription(
     is_live: bool,
     streamer_name: str,
     build_live_embed: LiveEmbedBuilder | None,
+    stream_url: str | None,
     dedupe: bool,
     sem: asyncio.Semaphore,
 ) -> discord.Message | None:
@@ -138,10 +157,22 @@ async def _process_subscription(
                 is_live=is_live,
                 ping_role_id=ping_role_id,
                 custom_message=sub.get("message"),
+                view=build_watch_view(lang, stream_url) if (is_live and stream_url) else None,
             )
 
-            if msg and is_live and dedupe:
-                await db_stream_alerts.mark_alert_posted(sub["id"])
+            if msg and is_live:
+                # Eigener try: Die Nachricht ist schon gesendet — ein Fehler hier darf sie nicht "verlieren"
+                # (sonst bekommt z. B. Kick sie nicht zurück und lädt kein Vorschaubild nach)
+                try:
+                    if dedupe:
+                        await db_stream_alerts.mark_alert_posted(sub["id"])
+                    await db_stream_alerts.set_live_message(sub["id"], msg.channel.id, msg.id)
+                    # Alte Live-Nachricht, deren Ende nie ankam (z. B. Bot war beim Offline-Event down)
+                    if sub.get("live_message_id") and sub.get("live_message_channel_id"):
+                        await _end_message(bot, sub["live_message_channel_id"], sub["live_message_id"], lang, streamer_name)
+                except Exception:
+                    log.exception("%s-Alert für Subscription %s gesendet, aber Speichern der Nachricht fehlgeschlagen.",
+                                  label, sub.get("id"))
             return msg
         except Exception:
             log.exception("%s-Alert für Subscription %s fehlgeschlagen.", label, sub.get("id"))
@@ -155,12 +186,14 @@ async def dispatch_alerts(
     is_live: bool,
     streamer_name: str,
     build_live_embed: LiveEmbedBuilder | None = None,
+    stream_url: str | None = None,
     dedupe: bool = True,
 ) -> list[discord.Message]:
     """Schickt den Alert an alle Subscriptions (parallel, begrenzt durch ALERT_CONCURRENCY).
 
     platform:         "twitch" | "kick" | "youtube" (bestimmt Limit-Key, Ping-Rolle, Logs)
     build_live_embed: lang -> Embed, nur nötig bei is_live=True
+    stream_url:       Ziel des "Zum Stream"-Buttons unter dem Live-Alert
     dedupe:           plattformübergreifende Duplikat-Unterdrückung nutzen (should_suppress_duplicate
                       + mark_alert_posted)
 
@@ -176,9 +209,71 @@ async def dispatch_alerts(
             is_live=is_live,
             streamer_name=streamer_name,
             build_live_embed=build_live_embed,
+            stream_url=stream_url,
             dedupe=dedupe,
             sem=sem,
         )
         for sub in subs
     ))
-    return [m for m in results if m is not None]
+    sent = [m for m in results if m is not None]
+    log.info("%s-%s-Alert für %s: %d von %d Abo(s) gesendet.", PLATFORM_LABELS.get(platform, platform),
+             "Live" if is_live else "Offline", streamer_name, len(sent), len(subs))
+    return sent
+
+# ─── Stream-Ende: Live-Nachricht bearbeiten statt neu posten ──────────────────
+
+async def _end_message(bot, channel_id: int, message_id: int, lang: dict, streamer_name: str,
+                       ended_at: datetime | None = None):
+    """Macht aus der Live-Nachricht die Offline-Nachricht. Gelöschte Nachricht / fehlende Rechte: still überspringen."""
+    duration = ended_at - discord.utils.snowflake_time(message_id) if ended_at else None
+    embed = build_offline_embed(lang, streamer_name, duration)
+    embed.set_footer(text=NEXUS_FOOTER)
+    try:
+        # attachments=[] entfernt ein hochgeladenes Vorschaubild (Kick); Inhalt (Ping, eigene Nachricht)
+        # und Button bleiben — ein Edit pingt nicht erneut.
+        await bot.get_partial_messageable(int(channel_id)).get_partial_message(int(message_id)).edit(
+            embed=embed, attachments=[],
+        )
+    except (discord.NotFound, discord.Forbidden):
+        pass
+    except discord.HTTPException:
+        log.exception("Konnte Live-Nachricht %s nicht als beendet markieren.", message_id)
+
+async def _finish_stream(bot, monitored: dict, offline_for: int):
+    """Stream gilt als beendet: alle Live-Nachrichten bearbeiten. Dauer bis zum Offline-Event, nicht bis jetzt."""
+    live_messages = await db_stream_alerts.get_live_messages(monitored["id"])
+    # Erst nach dem Lesen beanspruchen: Ein neuer Stream danach setzt eigene Nachrichten, die wir nicht anfassen
+    if not await db_stream_alerts.claim_stream_end(monitored["id"], monitored["offline_since"]):
+        return
+    ended_at = discord.utils.utcnow() - timedelta(seconds=offline_for or 0)
+    for sub in live_messages:
+        try:
+            lang = await get_lang(sub["guild_id"])
+            await _end_message(bot, sub["live_message_channel_id"], sub["live_message_id"], lang,
+                               monitored["streamer_name"], ended_at)
+            await db_stream_alerts.clear_live_message(sub["id"], sub["live_message_id"])
+        except Exception:
+            log.exception("Stream-Ende für Subscription %s fehlgeschlagen.", sub["id"])
+
+async def stream_went_offline(monitored_channel_id: int):
+    """Offline-Event: nur vormerken — beendet wird erst nach OFFLINE_GRACE_SECONDS (finish_ended_streams)."""
+    await db_stream_alerts.mark_offline_pending(monitored_channel_id)
+
+async def stream_came_back(monitored_channel_id: int) -> bool:
+    """Online-Event: True, wenn der Stream innerhalb der Schonfrist zurück ist — dann keinen neuen Alert senden."""
+    return await db_stream_alerts.resume_if_offline_pending(monitored_channel_id)
+
+async def finish_ended_streams(bot):
+    """Regelmäßig aufrufen: beendet alle Streams, deren Schonfrist abgelaufen ist (auch nach einem Neustart)."""
+    for monitored in await db_stream_alerts.get_streams_past_grace(OFFLINE_GRACE_SECONDS):
+        try:
+            await _finish_stream(bot, monitored, monitored["offline_for"])
+        except Exception:
+            log.exception("Stream-Ende für Kanal %s fehlgeschlagen.", monitored["id"])
+
+async def end_stream_now(bot, monitored_channel_id: int):
+    """Ohne Schonfrist beenden (YouTube: wird nur alle 15 Minuten abgefragt, ein Abbruch fällt dort kaum auf)."""
+    await db_stream_alerts.mark_offline_pending(monitored_channel_id)
+    monitored = await db_stream_alerts.get_monitored_channel_by_id(monitored_channel_id)
+    if monitored and monitored.get("offline_since"):
+        await _finish_stream(bot, monitored, 0)

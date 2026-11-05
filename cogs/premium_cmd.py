@@ -26,6 +26,8 @@ PERK_FEATURES = (
     ("premium_perk_schedule",    "⏰ Scheduled embed posting"),
     ("premium_perk_unique",      "🎭 Unique mode for reaction roles"),
     ("premium_perk_alert_roles", "🔔 Platform-specific ping roles for stream alerts"),
+    ("premium_perk_dropdown",    "📋 Dropdown menus for reaction roles"),
+    ("premium_perk_color",       "🎨 Custom embed color"),
 )
 
 def describe_status(info: PremiumInfo | None, lang: dict) -> tuple[str, bool, str | None]:

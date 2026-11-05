@@ -1,0 +1,6 @@
+# Feste Regeln für CI und lokal: echte Fehler (Syntax, undefinierte/ungenutzte Namen usw.), keine Stilfragen.
+target-version = "py312"
+extend-exclude = ["__pycache__"]
+
+[lint]
+select = ["E9", "F"]

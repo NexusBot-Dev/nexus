@@ -268,7 +268,7 @@ MESSAGES: dict[str, str] = {
     "rr_step1_title":       "🎭 Schritt 1: Rolle auswählen",
     "rr_step1_desc":        "Wähle die Rolle aus, die vergeben werden soll.",
     "rr_step2_title":       "😀 Schritt 2: Emoji wählen",
-    "rr_step2_desc":        "Rolle: {role}\n\n1. Klicke unten auf den blauen Button.\n2. Reagiere **direkt auf der Setup-Nachricht** mit deinem Wunsch-Emoji.\n\n**Server-Custom-Emojis:** ⭐ Nur Premium",
+    "rr_step2_desc":        "Rolle: {role}\n\n1. Klicke unten auf den blauen Button.\n2. Reagiere **direkt auf der Setup-Nachricht** mit deinem Wunsch-Emoji.\n\nStandard- und Server-Emojis sind möglich.",
     "rr_step3_title":       "⚙️ Schritt 3: Modus wählen",
     "rr_step3_desc":        "Rolle: {role} | Emoji: {emoji}\n\n**Toggle** — Klick gibt die Rolle, erneuter Klick entfernt sie.\n**Unique** ⭐ — User kann nur eine Rolle aus dieser Gruppe besitzen.",
     "rr_step4_title":       "📋 Schritt 4: Gruppe wählen",
@@ -297,10 +297,6 @@ MESSAGES: dict[str, str] = {
     "rr_role_already_set":
         "ℹ️ **Schon vergeben:** Die Rolle {mentioned_role} ist bereits mit einem Emoji verknüpft.\n"
         "Wähle einfach eine andere Rolle aus, um fortzufahren!",
-    "rr_premium_emoji":
-        "💎 **Nexus Premium Feature**\n"
-        "Das Nutzen von Server-eigenen Custom Emojis ist ein Premium-Feature.\n"
-        "Ich habe dich zurückgesetzt – nutze bitte ein Standard-Emoji oder wähle eine andere Rolle.",
     "rr_modal_group_label":       "Gruppenname",
     "rr_modal_group_placeholder": "z.B. Farben, Teams, Regionen...",
     "rr_select_group":            "Gruppe auswählen...",
@@ -958,6 +954,8 @@ MESSAGES: dict[str, str] = {
     "stream_offline_title":    "⚫ Stream beendet",
     "stream_offline_desc":     "**{streamer}** ist offline gegangen.",
     "stream_category":         "🎮 Kategorie",
+    "stream_duration":         "⏱️ Dauer",
+    "stream_watch_button":     "Zum Stream",
     "alert_platform_unavailable": "❌ Diese Plattform ist noch nicht verfügbar.",
     "alert_live":                 "🔴 Live",
     "alert_offline":              "⚫ Offline",
@@ -1009,6 +1007,8 @@ MESSAGES: dict[str, str] = {
     "premium_perk_schedule":       "⏰ Zeitgesteuertes Posten von Embeds",
     "premium_perk_unique":         "🎭 Unique-Modus bei Reaction Roles",
     "premium_perk_alert_roles":    "🔔 Plattform-spezifische Ping-Rollen bei Stream Alerts",
+    "premium_perk_dropdown":       "📋 Dropdown-Menüs bei Reaction Roles",
+    "premium_perk_color":          "🎨 Eigene Embed-Farbe",
 
     # ─── Giveaways ───────────────────────────────────────────────────
     "giveaways_title": "📋 Konfigurierte Giveaways",
@@ -1125,7 +1125,6 @@ MESSAGES: dict[str, str] = {
     "dash_err_rr_title_too_long":                 "Der Titel ist zu lang (max. 256 Zeichen).",
     "dash_err_rr_description_too_long":           "Die Beschreibung ist zu lang (max. 4000 Zeichen).",
     "dash_err_rr_dropdown_premium":               "Der Dropdown-Modus ist ein Premium-Feature.",
-    "dash_err_rr_custom_emoji_premium":           "Eigene Server-Emojis sind ein Premium-Feature.",
     "dash_err_rr_unique_premium":                 "Der Unique-Modus ist ein Premium-Feature.",
     "dash_err_rr_unknown_message":                "Diese Nachricht ist keine bekannte Reaction-Role-Nachricht.",
     "dash_err_rr_emoji_taken":                    "Dieses Emoji ist auf dieser Nachricht bereits vergeben.",

@@ -357,24 +357,6 @@ class EmojiInputView(NexusView):
                     )
                     break # Loop beenden!
 
-                # --- FEHLER-CHECK 3: Premium-Check für Custom Emojis ---
-                if isinstance(reaction.emoji, discord.Emoji):
-                    if not await is_premium(interaction.guild_id):
-                        await interaction.followup.send(
-                            self.lang.get(
-                                "rr_premium_emoji",
-                                "💎 **Nexus Premium Feature**\n"
-                                "Using custom server emojis is a premium feature.\n"
-                                "I have reset your selection – please use a standard emoji or choose a different role.",
-                            ),
-                            ephemeral=True
-                        )
-                        await interaction.edit_original_response(
-                            embed=_step_role_embed(self.lang, await db_settings.get_color(interaction.guild_id)),
-                            view=RoleSelectView(self.bot, self.owner_id, self.channel, self.panel_message, self.lang, from_edit=self.from_edit),
-                        )
-                        break
-
                 # --- ERFOLG: Weiter zu Schritt 3 ---
                 await self.channel.send(
                     self.lang.get(
@@ -542,13 +524,6 @@ class GroupInputView(NexusView):
         )
 
 class GroupModal(NexusModal):
-    group_name = discord.ui.TextInput(
-        label="Group Name",
-        placeholder="e.g., Colors, Teams, Regions...",
-        min_length=1,
-        max_length=100,
-    )
-
     def __init__(self, bot, owner_id: int, channel, message, role, emoji, lang: dict, parent_view: NexusView, *, from_edit: bool = False):
         super().__init__(lang, title=lang.get("rr_modal_group_title", "Create Group"))
         self.bot      = bot
@@ -560,8 +535,14 @@ class GroupModal(NexusModal):
         self.emoji    = emoji
         self.parent_view = parent_view
 
-        self.group_name.label = self.lang.get("rr_modal_group_label", "Group Name")
-        self.group_name.placeholder = self.lang.get("rr_modal_group_placeholder", "e.g., Colors, Teams, Regions...")
+        # Beschriftung im Konstruktor: das nachträgliche Setzen von .label ist seit discord.py 2.6 veraltet
+        self.group_name = discord.ui.TextInput(
+            label=self.lang.get("rr_modal_group_label", "Group Name"),
+            placeholder=self.lang.get("rr_modal_group_placeholder", "e.g., Colors, Teams, Regions..."),
+            min_length=1,
+            max_length=100,
+        )
+        self.add_item(self.group_name)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()   # _save setzt danach die Reaktion (API) und bearbeitet die Nachricht
@@ -636,7 +617,7 @@ def _step_emoji_embed(role: discord.Role, lang: dict, color: int) -> discord.Emb
             "rr_step2_desc",
             "Role: {role}\n\n1. Click the blue button below.\n" \
             "2. React **directly on the setup message** with your desired emoji.\n\n"
-            "**Custom Server Emojis:** ⭐ Premium Only",
+            "Standard and server emojis both work.",
         ).format(role=role.mention),
         color=color,
     )

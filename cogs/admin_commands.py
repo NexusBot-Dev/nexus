@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from database import db_settings, db_support
 from cogs.utils import toggle_module, CORE_MODULES, get_lang
-from config import NEXUS_COLOR, DEV_GUILD_ID
+from config import NEXUS_COLOR
 from emojis import NexusEmojis
 from translations import TRANSLATIONS
 from systems.premium import is_premium

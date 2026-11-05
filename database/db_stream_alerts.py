@@ -349,6 +349,80 @@ async def should_suppress_duplicate(subscription_id: int) -> bool:
             row = await cur.fetchone()
             return row[0] is not None and row[0] < DEDUP_WINDOW_SECONDS
 
+# ─── Live-Nachricht & Schonfrist ───────────────────────────────────────────
+
+async def set_live_message(subscription_id: int, channel_id: int, message_id: int):
+    """Merkt sich die Live-Nachricht, damit sie bei Stream-Ende bearbeitet statt neu gepostet wird."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE guild_subscriptions SET live_message_id = %s, live_message_channel_id = %s WHERE id = %s",
+                (message_id, channel_id, subscription_id),
+            )
+
+async def clear_live_message(subscription_id: int, message_id: int):
+    """Nur, wenn noch dieselbe Nachricht gespeichert ist — ein neuer Stream kann schon eine neue gesetzt haben."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """UPDATE guild_subscriptions SET live_message_id = NULL, live_message_channel_id = NULL
+                   WHERE id = %s AND live_message_id = %s""",
+                (subscription_id, message_id),
+            )
+
+async def get_live_messages(monitored_channel_id: int) -> list[dict]:
+    async with db.pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                """SELECT id, guild_id, live_message_id, live_message_channel_id FROM guild_subscriptions
+                   WHERE monitored_channel_id = %s AND live_message_id IS NOT NULL""",
+                (monitored_channel_id,),
+            )
+            return await cur.fetchall()
+
+async def mark_offline_pending(monitored_channel_id: int):
+    """Stream ist offline gegangen — erst nach der Schonfrist gilt er als beendet."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE monitored_channels SET offline_since = NOW() WHERE id = %s AND offline_since IS NULL",
+                (monitored_channel_id,),
+            )
+
+async def resume_if_offline_pending(monitored_channel_id: int) -> bool:
+    """True, wenn der Stream innerhalb der Schonfrist zurück ist (dann derselbe Stream, kein neuer Alert)."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """UPDATE monitored_channels SET offline_since = NULL, live = TRUE, last_checked = NOW()
+                   WHERE id = %s AND offline_since IS NOT NULL""",
+                (monitored_channel_id,),
+            )
+            return cur.rowcount == 1
+
+async def get_streams_past_grace(grace_seconds: int) -> list[dict]:
+    """Streams, die länger als die Schonfrist offline sind. offline_for = Sekunden seit dem Offline-Event."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                """SELECT id, streamer_name, offline_since, TIMESTAMPDIFF(SECOND, offline_since, NOW()) AS offline_for
+                   FROM monitored_channels
+                   WHERE offline_since IS NOT NULL AND offline_since <= NOW() - INTERVAL %s SECOND""",
+                (grace_seconds,),
+            )
+            return await cur.fetchall()
+
+async def claim_stream_end(monitored_channel_id: int, offline_since) -> bool:
+    """Schließt den Stream ab — nur, wenn er nicht zwischendurch wieder online gegangen ist."""
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """UPDATE monitored_channels SET live = FALSE, offline_since = NULL, last_checked = NOW()
+                   WHERE id = %s AND offline_since = %s""",
+                (monitored_channel_id, offline_since),
+            )
+            return cur.rowcount == 1
+
 async def get_links_for_guild(guild_id: int) -> list[dict]:
     """Für die Dashboard-Übersicht — alle Verknüpfungen einer Guild mit Streamer-Namen."""
     async with db.pool.acquire() as conn:

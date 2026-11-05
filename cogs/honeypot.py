@@ -181,7 +181,7 @@ class HoneypotHubView(NexusView):
         await interaction.response.send_modal(HoneypotTextModal(self.lang, self, create=True))
 
     @discord.ui.button(emoji="✏️", style=discord.ButtonStyle.primary)
-    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):  # check:interaction-ok Modal muss erste Antwort sein; API nur einmalig bei der Migration
         hp = await db_honeypot.get_honeypot_settings(interaction.guild_id)
         channel = await hp_system.get_channel(interaction.guild)
         title, text = await hp_system.load_texts(interaction.guild, channel, hp, self.lang)

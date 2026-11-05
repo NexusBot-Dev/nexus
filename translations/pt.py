@@ -268,7 +268,7 @@ MESSAGES: dict[str, str] = {
     "rr_step1_title":       "🎭 Etapa 1: Escolher cargo",
     "rr_step1_desc":        "Selecione o cargo que será atribuído.",
     "rr_step2_title":       "😀 Etapa 2: Escolher emoji",
-    "rr_step2_desc":        "Cargo: {role}\n\n1. Clique no botão azul abaixo.\n2. Reaja **diretamente na mensagem de setup** com o emoji desejado.\n\n**Emojis do servidor:** ⭐ Apenas Premium",
+    "rr_step2_desc":        "Cargo: {role}\n\n1. Clique no botão azul abaixo.\n2. Reaja **diretamente na mensagem de setup** com o emoji desejado.\n\nFuncionam emojis padrão e do servidor.",
     "rr_step3_title":       "⚙️ Etapa 3: Escolher modo",
     "rr_step3_desc":        "Cargo: {role} | Emoji: {emoji}\n\n**Alternar (Toggle)** — Clicar adiciona o cargo, clicar de novo remove.\n**Único** ⭐ — O usuário só pode ter um cargo deste grupo.",
     "rr_step4_title":       "📋 Etapa 4: Escolher grupo",
@@ -297,10 +297,6 @@ MESSAGES: dict[str, str] = {
     "rr_role_already_set":
         "ℹ️ **Já atribuído:** O cargo {mentioned_role} já está vinculado a um emoji.\n"
         "Basta selecionar outro cargo para continuar!",
-    "rr_premium_emoji":
-        "💎 **Recurso Nexus Premium**\n"
-        "O uso de emojis personalizados do servidor é exclusivo do Premium.\n"
-        "Sua seleção foi redefinida — use um emoji padrão ou escolha outro cargo.",
     "rr_modal_group_label":       "Nome do grupo",
     "rr_modal_group_placeholder": "ex: Cores, Times, Regiões...",
     "rr_select_group":            "Selecionar grupo...",
@@ -956,6 +952,8 @@ MESSAGES: dict[str, str] = {
     "stream_offline_title":    "⚫ Transmissão encerrada",
     "stream_offline_desc":     "**{streamer}** ficou offline.",
     "stream_category":         "🎮 Categoria",
+    "stream_duration":         "⏱️ Duração",
+    "stream_watch_button":     "Assistir",
     "alert_platform_unavailable": "❌ Esta plataforma ainda não está disponível.",
     "alert_live":                 "🔴 Ao vivo",
     "alert_offline":              "⚫ Offline",
@@ -1007,6 +1005,8 @@ MESSAGES: dict[str, str] = {
     "premium_perk_schedule":       "⏰ Postagem agendada de embeds",
     "premium_perk_unique":         "🎭 Modo Único em Reaction Roles",
     "premium_perk_alert_roles":    "🔔 Menção de cargos por plataforma em alertas",
+    "premium_perk_dropdown":       "📋 Menus suspensos em Reaction Roles",
+    "premium_perk_color":          "🎨 Cor de embed personalizada",
 
     # ─── Giveaways ───────────────────────────────────────────────────
     "giveaways_title": "📋 Sorteios configurados",
@@ -1123,7 +1123,6 @@ MESSAGES: dict[str, str] = {
     "dash_err_rr_title_too_long":                 "O título é longo demais (máx. 256 caracteres).",
     "dash_err_rr_description_too_long":           "A descrição é longa demais (máx. 4000 caracteres).",
     "dash_err_rr_dropdown_premium":               "O modo dropdown é um recurso Premium.",
-    "dash_err_rr_custom_emoji_premium":           "Emojis próprios do servidor são um recurso Premium.",
     "dash_err_rr_unique_premium":                 "O modo único é um recurso Premium.",
     "dash_err_rr_unknown_message":                "Esta mensagem não é uma mensagem de cargos por reação conhecida.",
     "dash_err_rr_emoji_taken":                    "Este emoji já está em uso nesta mensagem.",

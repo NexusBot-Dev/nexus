@@ -3,7 +3,7 @@ import logging
 from database.db_stream_alerts import get_monitored_channel, get_subscriptions_for_channel
 from database import db_stream_alerts
 from discord.ext import commands
-from systems.alert_dispatch import dispatch_alerts
+from systems.alert_dispatch import dispatch_alerts, stream_came_back, stream_went_offline
 from systems.twitch_api import get_stream_by_user_id
 
 log = logging.getLogger(__name__)
@@ -26,26 +26,31 @@ class Twitch(commands.Cog):
             )
             return
 
-        is_live = event_type == "stream.online"
-        await db_stream_alerts.set_live_status(channel["id"], is_live)
+        if event_type != "stream.online":
+            await stream_went_offline(channel["id"])
+            return
+        if await stream_came_back(channel["id"]):
+            log.info("Twitch: %s ist innerhalb der Schonfrist wieder live — kein neuer Alert.", broadcaster_name)
+            return
+        await db_stream_alerts.set_live_status(channel["id"], True)
 
         stream_details = None
-        if is_live:
-            try:
-                stream_details = await get_stream_by_user_id(broadcaster_id)
-            except Exception:
-                log.exception("Stream-Details-Abruf für %s fehlgeschlagen — Alert ohne Zusatzinfos.", broadcaster_name)
+        try:
+            stream_details = await get_stream_by_user_id(broadcaster_id)
+        except Exception:
+            log.exception("Stream-Details-Abruf für %s fehlgeschlagen — Alert ohne Zusatzinfos.", broadcaster_name)
 
         subs = await get_subscriptions_for_channel(channel["id"])
         await dispatch_alerts(
             self.bot,
             platform="twitch",
             subs=subs,
-            is_live=is_live,
+            is_live=True,
             streamer_name=broadcaster_name,
             build_live_embed=lambda lang: self._build_live_embed(
                 lang, broadcaster_name, broadcaster_login, stream_details
             ),
+            stream_url=f"https://twitch.tv/{broadcaster_login}",
         )
 
     @staticmethod
@@ -67,11 +72,6 @@ class Twitch(commands.Cog):
             thumb = stream_details.get("thumbnail_url", "")
             if thumb:
                 embed.set_image(url=thumb.replace("{width}", "1280").replace("{height}", "720"))
-        embed.add_field(
-            name="\u200b",
-            value=f"[twitch.tv/{streamer_login}](https://twitch.tv/{streamer_login})",
-            inline=False,
-        )
         return embed
 
 async def setup(bot):

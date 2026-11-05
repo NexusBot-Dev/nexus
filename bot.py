@@ -1,6 +1,7 @@
 import logging
 import discord
 import asyncio
+import aiohttp
 from pathlib import Path
 from discord import app_commands
 from discord.ext import commands
@@ -11,6 +12,8 @@ from datetime import datetime, timezone
 from cachetools import TTLCache
 from lists.topgg import post_commands_to_topgg
 from lists.discordbotlist import post_commands_to_dbl
+
+DNS_CACHE_SECONDS = 300
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -84,6 +87,10 @@ class Nexus(commands.AutoShardedBot):
         self.started_at = datetime.now(timezone.utc)
 
     # ─── Startup ────────────────────────────────────────────────────────
+
+    async def login(self, token: str) -> None:
+        self.http.connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=DNS_CACHE_SECONDS)
+        await super().login(token)
 
     async def setup_hook(self):
         await init_pool()
@@ -216,7 +223,16 @@ class Nexus(commands.AutoShardedBot):
         elif isinstance(error, app_commands.CheckFailure):
             return
 
-        # 4. Nexus fehlt ein Recht / Hierarchie
+        # 4. Interaktion abgelaufen (10062): Antworten geht nicht mehr — ein weiterer Versuch erzeugt nur
+        #    denselben Fehler. Die Ursache steht in der [DIAG]-Zeile davor.
+        elif isinstance(original, discord.NotFound) and original.code == 10062:
+            log.warning(
+                "Interaction /%s auf %s abgelaufen (10062).",
+                interaction.command.qualified_name if interaction.command else "?", interaction.guild_id,
+            )
+            return
+
+        # 5. Nexus fehlt ein Recht / Hierarchie
         elif isinstance(original, discord.Forbidden):
             log.warning(
                 "Forbidden in /%s auf %s: %s",
@@ -229,7 +245,7 @@ class Nexus(commands.AutoShardedBot):
                 "Run `/diagnose` to see what's wrong.",
             )
 
-        # 5. Alles andere
+        # 6. Alles andere
         else:
             log.exception("Unbehandelter Command-Fehler:", exc_info=error)
             msg = lang.get("error_generic", "❌ Something went wrong. Please try again later.")

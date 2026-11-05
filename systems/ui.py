@@ -29,7 +29,7 @@ async def report_interaction_error(
 
     if isinstance(original, discord.NotFound) and original.code == 10062:
         log.warning(
-            "Interaction in %s auf %s abgelaufen (10062) — vor der ersten Antwort fehlt vermutlich ein defer().",
+            "Interaction in %s auf %s abgelaufen (10062) — Ursache steht in der [DIAG]-Zeile davor.",
             where, interaction.guild_id,
         )
         return
