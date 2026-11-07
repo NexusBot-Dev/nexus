@@ -44,12 +44,6 @@ class GuildEvents(commands.Cog):
         locale = LOCALE_MAP.get(str(guild.preferred_locale), "en")
         lang_dict = TRANSLATIONS.get(locale, TRANSLATIONS["en"])
 
-        # Nickname setzen (Fehler abfangen, falls Permissions fehlen)
-        try:
-            await guild.me.edit(nick="Nexus")
-        except discord.Forbidden:
-            log.warning("Konnte Nickname auf Guild '%s' nicht ändern (Rechte fehlen).", guild.name)
-
         try:
             settings = await db_settings.get_guild(guild.id)
         except Exception as e:

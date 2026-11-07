@@ -4,10 +4,39 @@ from .registry import register_action, parse_id, DashCtx, DashboardError, Invali
 from database import db_stream_alerts, db_limits
 from systems.premium import is_premium
 from systems.platform_registry import PLATFORM_HANDLERS
+from systems.alert_dispatch import ALERT_CHANNEL_PERMS
+from systems.hierarchy import missing_perms, perm_label
+from systems import stream_alert_service as alert_service
 
 PLATFORMS = ("twitch", "youtube", "kick")
 PING_ROLE_SCOPES = ("all", *PLATFORMS)
 PLATFORM_NAMES = {"twitch": "Twitch", "youtube": "YouTube", "kick": "Kick"}   # für Meldungen
+
+
+# Abbruchgründe aus systems/stream_alert_service → Dashboard-Meldung
+_ALERT_ERRORS = {
+    "limit": "dash_err_sa_limit",
+    "user_not_found": "dash_err_sa_user_not_found",
+    "subscription_failed": "dash_err_sa_subscription_failed",
+    "already_monitored": "dash_err_sa_already_monitored",
+    "not_monitored": "dash_err_sa_not_found",
+}
+
+
+def _alert_error(e: "alert_service.AlertError", login: str = "", platform: str = "") -> DashboardError:
+    return DashboardError(_ALERT_ERRORS[e.reason], name=login, platform=PLATFORM_NAMES.get(platform, platform), **e.params)
+
+
+def channel_warning(ctx: DashCtx, channel) -> str | None:
+    """Hinweis fürs Dashboard, wenn Nexus im Alert-Kanal nicht posten kann (Alert wird trotzdem gespeichert).
+    Reiner Text ohne Markdown, weil das Dashboard ihn so anzeigt."""
+    miss = missing_perms(channel, *ALERT_CHANNEL_PERMS)
+    if not miss:
+        return None
+    return ctx.lang.get(
+        "alert_channel_missing_perms",
+        "⚠️ Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
+    ).format(channel=f"#{channel.name}", perms=", ".join(perm_label(p) for p in miss))
 
 @register_action("stream_alerts", "list")
 async def list_alerts(ctx: DashCtx) -> dict:
@@ -74,56 +103,25 @@ async def add_alert(ctx: DashCtx) -> dict:
     if message and len(message) > 200:
         raise DashboardError("dash_err_sa_message_too_long")
 
-    if guild.get_channel(int(channel_id)) is None:
+    channel = guild.get_channel(int(channel_id))
+    if channel is None:
         raise DashboardError("dash_err_channel_gone")
 
     login = handler.normalize_input(login_raw)
     if login is None:
         raise DashboardError("dash_err_sa_invalid_username")
 
-    current_count = await db_stream_alerts.count_subscriptions_for_guild(guild_id, platform)
-    premium = await is_premium(guild_id)
-    limit = await db_limits.get_limit(guild_id, f"stream_alerts_{platform}", premium)
-    if current_count >= limit:
-        raise DashboardError("dash_err_sa_limit", limit=limit, platform=PLATFORM_NAMES.get(platform, platform))
-
-    user = await handler.resolve_user(login)
-    if user is None:
-        raise DashboardError("dash_err_sa_user_not_found", name=login)
-
-    external_id = user["id"]
-    monitored = await db_stream_alerts.get_monitored_channel(platform, external_id)
-
-    if monitored is None:
-        sub_ids = {}
-        if handler.create_subscriptions:
-            try:
-                sub_ids = await handler.create_subscriptions(external_id)
-            except Exception:
-                raise DashboardError("dash_err_sa_subscription_failed") from None
-
-        monitored = await db_stream_alerts.get_or_create_monitored_channel(platform, external_id, user["display_name"])
-        if sub_ids:
-            await db_stream_alerts.set_eventsub_ids(monitored["id"], sub_ids.get("online_id"), sub_ids.get("offline_id"))
-        if handler.on_channel_created:
-            try:
-                await handler.on_channel_created(monitored["id"], user)
-            except Exception:
-                pass
-    else:
-        existing = await db_stream_alerts.get_subscription(guild_id, monitored["id"])
-        if existing is not None:
-            raise DashboardError("dash_err_sa_already_monitored", name=login)
-
-    subscription_id = await db_stream_alerts.add_subscription(
-        guild_id=guild_id, channel_id=int(channel_id), monitored_channel_id=monitored["id"], message=message,
-    )
+    try:
+        added = await alert_service.add_alert(guild_id, platform, login, channel.id, message)
+    except alert_service.AlertError as e:
+        raise _alert_error(e, login, platform) from None
 
     return {
-        "monitored_channel_id": monitored["id"],
-        "subscription_id": subscription_id,   # damit das Dashboard den Kanal sofort verknüpfen kann
-        "streamer_name": user["display_name"],
+        "monitored_channel_id": added.monitored_channel_id,
+        "subscription_id": added.subscription_id,   # damit das Dashboard den Kanal sofort verknüpfen kann
+        "streamer_name": added.streamer_name,
         "platform": platform,
+        "warning": channel_warning(ctx, channel),
     }
 
 @register_action("stream_alerts", "edit")
@@ -134,8 +132,10 @@ async def edit_alert(ctx: DashCtx) -> dict:
     message = payload.get("message", ...)
 
     channel_id_int = None
+    channel = None
     if channel_id and str(channel_id).isdigit():
-        if guild.get_channel(int(channel_id)) is None:
+        channel = guild.get_channel(int(channel_id))
+        if channel is None:
             raise DashboardError("dash_err_channel_gone")
         channel_id_int = int(channel_id)
 
@@ -148,7 +148,10 @@ async def edit_alert(ctx: DashCtx) -> dict:
     )
     if not updated:
         raise DashboardError("dash_err_sa_not_found")
-    return {"monitored_channel_id": monitored_channel_id}
+    return {
+        "monitored_channel_id": monitored_channel_id,
+        "warning": channel_warning(ctx, channel) if channel else None,
+    }
 
 @register_action("stream_alerts", "remove")
 async def remove_alert(ctx: DashCtx) -> dict:
@@ -159,19 +162,10 @@ async def remove_alert(ctx: DashCtx) -> dict:
     if monitored is None:
         raise DashboardError("dash_err_sa_not_found")
 
-    removed = await db_stream_alerts.remove_subscription(guild_id, monitored_channel_id)
-    if not removed:
-        raise DashboardError("dash_err_sa_not_found")
-
-    still_referenced = await db_stream_alerts.is_channel_still_referenced(monitored_channel_id)
-    if not still_referenced:
-        handler = PLATFORM_HANDLERS.get(monitored["platform"])
-        if handler and handler.delete_subscriptions:
-            try:
-                await handler.delete_subscriptions(monitored)
-            except Exception:
-                pass
-        await db_stream_alerts.delete_monitored_channel(monitored_channel_id)
+    try:
+        await alert_service.remove_alert(guild_id, monitored)
+    except alert_service.AlertError as e:
+        raise _alert_error(e) from None
 
     return {"monitored_channel_id": monitored_channel_id}
 

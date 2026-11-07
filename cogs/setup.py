@@ -13,30 +13,6 @@ log = logging.getLogger(__name__)
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async def _apply_brand_role(interaction: discord.Interaction):
-    """Erstellt die Nexus Brand-Rolle (oder findet sie per gespeicherter ID) und weist sie dem Bot zu."""
-    guild    = interaction.guild
-    settings = await db_settings.get_guild(guild.id) or {}
-    role_id  = settings.get("brand_role_id")
-    role     = guild.get_role(role_id) if role_id else None
-
-    try:
-        bot_member = guild.me or await guild.fetch_member(interaction.client.user.id)
-        if role is None:
-            role = await guild.create_role(
-                name="Nexus",
-                color=discord.Color(NEXUS_COLOR),
-                hoist=True,
-                permissions=discord.Permissions.none(),
-                reason="Nexus Setup — set brand color",
-            )
-            await db_settings.update_guild(guild.id, brand_role_id=role.id)
-            await role.edit(position=max(1, bot_member.top_role.position - 1))
-        if role not in bot_member.roles:
-            await bot_member.add_roles(role, reason="Nexus Setup — brand role")
-    except (discord.Forbidden, discord.HTTPException) as e:
-        log.info("Brand-Rolle auf %s (%s) konnte nicht verwaltet werden: %s", guild.name, guild.id, e)
-
 def _dashboard_button(guild_id: int, lang: dict[str, str]) -> discord.ui.Button:
     return discord.ui.Button(
         label=lang.get("setup_dashboard_button", "🌐 Open Dashboard"),
@@ -115,8 +91,7 @@ async def _validate_restored_channels(interaction: discord.Interaction) -> dict[
 
 async def _finish_restore(interaction: discord.Interaction, lang: dict[str, str], setup_channel=None):
     """Gemeinsamer Abschluss für Restore (direkt oder nach der Hierarchie-Prüfung)."""
-    await interaction.response.defer()
-    await _apply_brand_role(interaction)
+    await interaction.response.defer()   # _validate_restored_channels prüft Kanäle (kann API-Aufrufe brauchen)
     channels = await _validate_restored_channels(interaction)
 
     embed = discord.Embed(
@@ -390,8 +365,7 @@ class HierarchyView(SetupStepView):
             self.stop()
             await _finish_restore(interaction, self.lang, self.setup_channel)
             return
-        await interaction.response.defer()  # _apply_brand_role = bis zu 3 API-Calls (create/edit/add)
-        await _apply_brand_role(interaction)
+        await interaction.response.defer()
         await self.show(
             interaction, LogChannelView(self.setup_owner_id, self.lang, self.setup_channel),
             embed=await _log_channel_embed(interaction.guild_id, self.lang),
@@ -415,8 +389,7 @@ class SetupView(SetupStepView):
             )
             return
 
-        await interaction.response.defer()  # _apply_brand_role = bis zu 3 API-Calls (create/edit/add)
-        await _apply_brand_role(interaction)
+        await interaction.response.defer()
 
         await self.show(
             interaction, LogChannelView(self.setup_owner_id, self.lang, self.setup_channel),

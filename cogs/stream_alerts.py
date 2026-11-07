@@ -9,7 +9,9 @@ from emojis import NexusEmojis
 from systems.platform_registry import PLATFORM_HANDLERS
 from config import NEXUS_FOOTER
 from systems.ui import NexusView, NexusModal
-from systems.alert_dispatch import finish_ended_streams
+from systems.alert_dispatch import ALERT_CHANNEL_PERMS, finish_ended_streams
+from systems.hierarchy import missing_perms, perm_label
+from systems import stream_alert_service as alert_service
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +26,35 @@ PLATFORM_PLACEHOLDER_FALLBACKS = {
     "youtube": "z.B. Username oder https://youtube.com/@Username",
     "kick":    "z.B. Username oder https://kick.com/Username",
 }
+
+
+# Abbruchgründe aus systems/stream_alert_service → (Übersetzungsschlüssel, englischer Fallback)
+ALERT_ERRORS = {
+    "limit": ("alert_limit_reached", "❌ Limit of {limit} monitored channels reached."),
+    "user_not_found": ("alert_user_not_found", "❌ User `{login}` was not found."),
+    "subscription_failed": ("alert_subscription_failed", "❌ Subscription could not be created. Please try again later."),
+    "already_monitored": ("alert_already_added", "❌ `{login}` is already being monitored on this server."),
+    "not_monitored": ("alert_not_monitored", "❌ `{login}` is not being monitored on this server."),
+}
+
+
+def alert_error_text(lang: dict, error: alert_service.AlertError, login: str) -> str:
+    key, fallback = ALERT_ERRORS[error.reason]
+    return lang.get(key, fallback).format(login=login, **error.params)
+
+
+def channel_warning(lang: dict, channel: discord.abc.GuildChannel | None) -> str:
+    """Zusatzzeile für die Bestätigung, wenn Nexus im Alert-Kanal nicht posten kann."""
+    if channel is None:
+        return ""
+    miss = missing_perms(channel, *ALERT_CHANNEL_PERMS)
+    if not miss:
+        return ""
+    return "\n" + lang.get(
+        "alert_channel_missing_perms",
+        "⚠️ Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
+    ).format(channel=channel.mention, perms=", ".join(f"`{perm_label(p)}`" for p in miss))
+
 
 class AlertMessageModal(NexusModal):
     def __init__(self, sub: dict, lang: dict, cog):
@@ -89,6 +120,7 @@ class ChannelPickView(NexusView):
             nexus_checkmark=NexusEmojis.CHECKMARK, 
             channel=new_channel.mention
         )
+        feedback_text += channel_warning(self.lang, interaction.guild.get_channel(new_channel.id))
 
         self.stop()
         await interaction.edit_original_response(
@@ -227,76 +259,19 @@ class AddChannelModal(NexusModal):
             )
             return
 
-        current_count = await db_stream_alerts.count_subscriptions_for_guild(interaction.guild_id, self.platform_value)
-        premium = await is_premium(interaction.guild_id)
-        limit = await db_limits.get_limit(interaction.guild_id, f"stream_alerts_{self.platform_value}", premium)
-        if current_count >= limit:
-            await interaction.followup.send(
-                lang.get("alert_limit_reached", "❌ Limit of {limit} monitored channels reached.").format(limit=limit),
-                ephemeral=True,
-            )
-            return
-
-        user = await self.handler.resolve_user(login)
-        if user is None:
-            await interaction.followup.send(
-                lang.get("alert_user_not_found", "❌ User `{login}` was not found.").format(login=login),
-                ephemeral=True,
-            )
-            return
-
-        external_id = user["id"]
-        monitored = await db_stream_alerts.get_monitored_channel(self.platform_value, external_id)
-
-        if monitored is None:
-            sub_ids = {}
-            if self.handler.create_subscriptions:
-                try:
-                    sub_ids = await self.handler.create_subscriptions(external_id)
-                except Exception:
-                    log.exception("Subscription-Anlage für %s (%s) fehlgeschlagen.", login, self.platform_value)
-                    await interaction.followup.send(
-                        lang.get("alert_subscription_failed", "❌ Subscription could not be created. Please try again later."),
-                        ephemeral=True,
-                    )
-                    return
-
-            monitored = await db_stream_alerts.get_or_create_monitored_channel(
-                self.platform_value, external_id, user["display_name"]
-            )
-            if sub_ids:
-                await db_stream_alerts.set_eventsub_ids(
-                    monitored["id"], sub_ids.get("online_id"), sub_ids.get("offline_id")
-                )
-            if self.handler.on_channel_created:
-                try:
-                    await self.handler.on_channel_created(monitored["id"], user)
-                except Exception:
-                    log.exception("on_channel_created-Hook für %s (%s) fehlgeschlagen.", login, self.platform_value)
-        else:
-            existing_sub = await db_stream_alerts.get_subscription(interaction.guild_id, monitored["id"])
-            if existing_sub is not None:
-                await interaction.followup.send(
-                    lang.get("alert_already_added", "❌ `{login}` is already being monitored on this server.").format(login=login),
-                    ephemeral=True,
-                )
-                return
-
         message = self.message_input.value.strip() or None
-        await db_stream_alerts.add_subscription(
-            guild_id=interaction.guild_id,
-            channel_id=self.channel.id,
-            monitored_channel_id=monitored["id"],
-            message=message,
-        )
+        try:
+            await alert_service.add_alert(interaction.guild_id, self.platform_value, login, self.channel.id, message)
+        except alert_service.AlertError as e:
+            await interaction.followup.send(alert_error_text(lang, e, login), ephemeral=True)
+            return
 
         await interaction.followup.send(
             lang.get("alert_add_success", "{nexus_checkmark} `{login}` is now being monitored — alerts will be posted in {channel}.").format(
                 nexus_checkmark=NexusEmojis.CHECKMARK, login=login, channel=self.channel.mention,
-            ),
+            ) + channel_warning(lang, self.channel),
             ephemeral=True,
         )
-        log.info("%s-Alert für %s auf Guild %s eingerichtet.", self.platform_value, login, interaction.guild_id)
 
         existing_role = await db_stream_alerts.get_ping_role(interaction.guild_id, self.platform_value)
         if existing_role is None:
@@ -413,24 +388,11 @@ class StreamAlerts(commands.Cog):
             )
             return
 
-        removed = await db_stream_alerts.remove_subscription(interaction.guild_id, monitored["id"])
-        if not removed:
-            await interaction.followup.send(
-                lang.get("alert_not_monitored", "❌ `{login}` is not being monitored on this server.").format(login=login),
-                ephemeral=True,
-            )
+        try:
+            await alert_service.remove_alert(interaction.guild_id, monitored)
+        except alert_service.AlertError as e:
+            await interaction.followup.send(alert_error_text(lang, e, login), ephemeral=True)
             return
-
-        still_referenced = await db_stream_alerts.is_channel_still_referenced(monitored["id"])
-        if not still_referenced:
-            if handler.delete_subscriptions:
-                try:
-                    await handler.delete_subscriptions(monitored)
-                except Exception:
-                    log.exception("Subscription-Löschung für %s fehlgeschlagen — DB-Eintrag wird trotzdem entfernt.", login)
-
-            await db_stream_alerts.delete_monitored_channel(monitored["id"])
-            log.info("Letzter Server hat %s entfernt — Abos und Kanal-Eintrag bereinigt.", login)
 
         await interaction.followup.send(
             lang.get("alert_remove_success", "{nexus_checkmark} `{login}` is no longer being monitored.").format(

@@ -27,6 +27,9 @@ OFFLINE_GRACE_SECONDS = 180
 
 PLATFORM_LABELS = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
 
+# Ohne diese Rechte im Ziel-Kanal kommt kein Alert an (Nachricht mit Embed und Button)
+ALERT_CHANNEL_PERMS = ("view_channel", "send_messages", "embed_links")
+
 # (lang) -> fertiges Live-Embed der jeweiligen Plattform
 LiveEmbedBuilder = Callable[[dict], discord.Embed]
 

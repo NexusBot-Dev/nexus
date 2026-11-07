@@ -16,7 +16,7 @@ MODULE_COMMANDS = {
     ],
     "levels": [
         "rank", "leaderboard", "set_level", "add_xp", "remove_xp",
-        "wipe_xp", "level_roles",
+        "wipe_xp", "level_roles", "import_mee6",
     ],
     "welcome": [
         "welcome_message",
@@ -34,7 +34,7 @@ MODULE_COMMANDS = {
         "embed",
         "post_rules",
     ],
-    "automod": ["automod"],
+    "automod": ["automod", "honeypot"],
     "help": ["help", "info"],
     "stream_alerts": [
         "alert_add",
@@ -63,9 +63,9 @@ MODULE_DISPLAY = {
     "boosts":         (NexusEmojis.Modules.BOOST, "Boosts"),
     "reaction_roles": ("🎭", "Reaction Roles"),
     "embeds":         ("📋", "Embeds"),
-    "automod":        ("🛡️", "AutoMod"),
+    "automod":        (NexusEmojis.SHIELD, "AutoMod"),
     "stream_alerts":  (NexusEmojis.Modules.BROADCAST, "Stream Alerts"),
-    "tickets":        ("🎫", "Tickets"),
+    "tickets":        (NexusEmojis.Modules.TICKET, "Tickets"),
     "levels":         ("📈", "Level-System"),
     "giveaways":      ("🎉", "Giveaways")
 }
@@ -158,31 +158,6 @@ async def toggle_module(
     log.info("Modul '%s' für %s %s.", module, guild.name, "aktiviert" if enable else "deaktiviert")
 
     if module == "automod" and not enable:
-        from systems.honeypot import cleanup as cleanup_honeypot
-        settings = await db_settings.get_guild(guild.id)
-        if settings and settings.get("honeypot_channel_id"):
-            await cleanup_honeypot(guild, settings["honeypot_channel_id"])
-
-    return True, ""
-
-async def toggle_modules_bulk(
-    bot,
-    guild: discord.Guild,
-    changes: dict[str, bool],
-    lang: dict,
-) -> tuple[bool, str]:
-    """Schaltet mehrere Module in einem Rutsch um (Dashboard-Bulk-Save)."""
-    row = await db_settings.get_or_create_guild(guild.id)
-    modules = row["modules"]
-    for module, enabled in changes.items():
-        if module in CORE_MODULES:
-            continue
-        modules[module] = enabled
-
-    await db_settings.update_guild(guild.id, modules=modules)
-    log.info("Bulk-Modul-Update für %s: %s", guild.name, changes)
-
-    if changes.get("automod") is False:
         from systems.honeypot import cleanup as cleanup_honeypot
         settings = await db_settings.get_guild(guild.id)
         if settings and settings.get("honeypot_channel_id"):

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from cachetools import TTLCache
 from lists.topgg import post_commands_to_topgg
 from lists.discordbotlist import post_commands_to_dbl
+from systems.command_sync import retry_sync, sync_targets
 
 DNS_CACHE_SECONDS = 300
 
@@ -84,6 +85,7 @@ class Nexus(commands.AutoShardedBot):
         self.support_guild = discord.Object(id=SUPPORT_GUILD_ID)
         self._initial_sync_done = False
         self._upload_task: asyncio.Task | None = None
+        self._sync_retry_task: asyncio.Task | None = None
         self.started_at = datetime.now(timezone.utc)
 
     # ─── Startup ────────────────────────────────────────────────────────
@@ -136,18 +138,10 @@ class Nexus(commands.AutoShardedBot):
             return
         self._initial_sync_done = True
 
-        # Command-Sync mit resilientem Fehler-Handling
+        # Command-Sync; was an Rate Limit/Störung scheitert, wird im Hintergrund wiederholt
         targets = [None] + [g for g in (self.support_guild, self.dev_guild) if g]
-        for target in targets:
-            name = "global" if target is None else str(target.id)
-            try:
-                await self.tree.sync(guild=target)
-                log.info("Command-Sync (%s) ausgeführt.", name)
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    log.warning("Rate Limited beim Sync (%s) — überspringe.", name)
-                else:
-                    log.exception("Fehler beim Command-Sync (%s):", name)
+        if failed := await sync_targets(self.tree, targets):
+            self._sync_retry_task = asyncio.create_task(retry_sync(self.tree, failed))
 
         # Externe Uploads völlig entkoppelt im Hintergrund feuern ("Fire & Forget")
         self._upload_task = asyncio.create_task(self._upload_commands_background())
@@ -261,6 +255,8 @@ class Nexus(commands.AutoShardedBot):
     # ─── Shutdown ───────────────────────────────────────────────────────
 
     async def close(self):
+        if self._sync_retry_task:
+            self._sync_retry_task.cancel()
         await close_pool()
         await super().close()
 

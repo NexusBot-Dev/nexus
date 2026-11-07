@@ -25,7 +25,7 @@ UPDATABLE_COLUMNS = frozenset({
     "log_channel_id", "rules_channel_id", "welcome_channel_id",
     "goodbye_enabled", "goodbye_channel_id",
     "boost_channel_id", "announcements_enabled", "announcement_channel_id",
-    "ticket_log_channel_id", "honeypot_channel_id", "brand_role_id",
+    "ticket_log_channel_id", "honeypot_channel_id",
     "modules", "setup_complete", "color", "locale", "timezone", "left_at",
 })
 
@@ -131,10 +131,25 @@ async def is_module_enabled(guild_id: int, module: str) -> bool:
     return modules.get(module, DEFAULT_MODULES.get(module, False))
 
 async def set_module(guild_id: int, module: str, enabled: bool):
-    row = await get_or_create_guild(guild_id)
-    modules = row["modules"]
-    modules[module] = enabled
-    await update_guild(guild_id, modules=modules)
+    await set_modules(guild_id, {module: enabled})
+
+async def set_modules(guild_id: int, changes: dict[str, bool]):
+    """Schaltet Module um, ohne die übrigen anzufassen.
+
+    Die Datenbank ändert nur die übergebenen Schlüssel (JSON_MERGE_PATCH) — kein Lesen,
+    Ändern, Zurückschreiben im Bot. Sonst überschreiben sich zwei gleichzeitige Änderungen
+    (z. B. zwei Admins im Dashboard) gegenseitig."""
+    if not changes:
+        return
+    await get_or_create_guild(guild_id)
+    patch = json.dumps({module: bool(enabled) for module, enabled in changes.items()})
+    async with db.pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE guild_settings SET modules = JSON_MERGE_PATCH(modules, %s) WHERE guild_id = %s",
+                (patch, guild_id),
+            )
+    _settings_cache.pop(guild_id, None)
 
 async def set_locale(guild_id: int, locale: str):
     await update_guild(guild_id, locale=locale)
