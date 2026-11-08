@@ -9,6 +9,8 @@ from typing import Literal
 from database import db_settings
 from database import db_automod
 from cogs.utils import get_lang, get_member_safe
+from systems.ui import with_emoji
+from emojis import NexusEmojis
 
 log = logging.getLogger(__name__)
 
@@ -260,7 +262,7 @@ async def _send_shield_log(
 
     if warning:
         embed = discord.Embed(
-            title=lang.get("shield_warn_title", "⚠️ Nexus Shield — Suspicious Activity"),
+            title=with_emoji(NexusEmojis.WARNING, lang.get("shield_warn_title", "Nexus Shield — Suspicious Activity")),
             description=lang.get(
                 "shield_warn_desc",
                 "{user} triggered the early warning (Score: {score}). Deleted roles and channels were restored, nobody was punished. If this repeats within {minutes} minutes, the full reaction follows.",
@@ -322,10 +324,10 @@ async def _send_shield_log(
         if not warning:
             restore_lines += "\n" + f"{restore_results['bans']} " + lang.get("shield_log_restore_bans", "Bans revoked")
         if not guild.me.guild_permissions.administrator:
-            restore_lines += "\n\n" + lang.get(
+            restore_lines += "\n\n" + with_emoji(NexusEmojis.WARNING, lang.get(
                 "shield_log_restore_no_admin",
-                "⚠️ Nexus has no Administrator. Roles and channels with permissions Nexus doesn't have may not have been restored.",
-            )
+                "Nexus has no Administrator. Roles and channels with permissions Nexus doesn't have may not have been restored.",
+            ))
         embed.add_field(
             name=lang.get("shield_log_restore_title", "♻️ Restored"),
             value=restore_lines,
@@ -334,9 +336,9 @@ async def _send_shield_log(
 
     if invites_paused is not None:
         invite_status = (
-            lang.get("shield_log_invites_paused", "🔒 Invites temporarily paused")
+            with_emoji(NexusEmojis.LOCKED, lang.get("shield_log_invites_paused", "Invites temporarily paused"))
             if invites_paused else
-            lang.get("shield_log_invites_pause_failed", "⚠️ Failed to pause invites (Missing permissions)")
+            with_emoji(NexusEmojis.WARNING, lang.get("shield_log_invites_pause_failed", "Failed to pause invites (Missing permissions)"))
         )
         embed.add_field(
             name=lang.get("shield_log_invites", "🔗 Invite-Links"),

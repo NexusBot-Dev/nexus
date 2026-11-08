@@ -10,7 +10,7 @@ from systems.exp_system import XP_COOLDOWN, CHAT_XP_MAX, xp_range_error
 from cogs.utils import post_logging, get_lang, module_required
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.ui import NexusView, NexusModal, send_ephemeral
+from systems.ui import NexusView, NexusModal, error_msg, send_ephemeral, with_emoji
 from systems.hierarchy import can_use_channel, can_grant_role, format_issue
 from systems import voice_xp
 
@@ -454,7 +454,7 @@ class Levels(commands.Cog):
             color=color,
         )
         if not roles_data:
-            embed.description = lang.get("no_level_roles_found", "No level roles have been set up for this server yet.")
+            embed.description = error_msg(lang.get("no_level_roles_found", "No level roles have been set up for this server yet."))
         else:
             text = ""
             for entry in roles_data:
@@ -522,7 +522,7 @@ class LevelRolesView(NexusView):
         if not roles_data:
             self.stop()
             await interaction.edit_original_response(
-                content=self.lang.get("no_level_roles_found", "No level roles have been set up for this server yet."),
+                content=error_msg(self.lang.get("no_level_roles_found", "No level roles have been set up for this server yet.")),
                 embed=None,
                 view=None,
             )
@@ -552,12 +552,12 @@ class AddLevelRoleModal(NexusModal):
             level = int(self.level_input.value)
         except ValueError:
             await interaction.response.send_message(
-                self.lang.get("level_roles_invalid_level", "❌ Please enter a valid number."), ephemeral=True
+                error_msg(self.lang.get("level_roles_invalid_level", "Please enter a valid number.")), ephemeral=True
             )
             return
         if not (1 <= level <= 1000):
             await interaction.response.send_message(
-                self.lang.get("level_roles_level_range", "❌ Level must be between 1 and 1000."), ephemeral=True
+                error_msg(self.lang.get("level_roles_level_range", "Level must be between 1 and 1000.")), ephemeral=True
             )
             return
 
@@ -571,19 +571,19 @@ class AddLevelRoleModal(NexusModal):
             # Validierung: Managed-Status, @everyone & Rollenhierarchie
             if role.is_default():
                 await select_interaction.response.send_message(
-                    self.lang.get("level_roles_everyone_role_error", "❌ The `@everyone` role cannot be used as a level role."),
+                    error_msg(self.lang.get("level_roles_everyone_role_error", "The `@everyone` role cannot be used as a level role.")),
                     ephemeral=True
                 )
                 return
             if role.managed:
                 await select_interaction.response.send_message(
-                    self.lang.get("level_roles_managed_role_error", "❌ The role {role} is managed by an integration or bot and cannot be assigned manually.").format(role=role.mention),
+                    error_msg(self.lang.get("level_roles_managed_role_error", "The role {role} is managed by an integration or bot and cannot be assigned manually.").format(role=role.mention)),
                     ephemeral=True
                 )
                 return
             if role >= select_interaction.guild.me.top_role:
                 await select_interaction.response.send_message(
-                    self.lang.get("level_roles_hierarchy_nexus", "❌ The role {role} is higher than Nexus in the role hierarchy. Please move the Nexus role above it in your server settings.").format(role=role.mention),
+                    error_msg(self.lang.get("level_roles_hierarchy_nexus", "The role {role} is higher than Nexus in the role hierarchy. Please move the Nexus role above it in your server settings.").format(role=role.mention)),
                     ephemeral=True
                 )
                 return
@@ -593,11 +593,11 @@ class AddLevelRoleModal(NexusModal):
                 and role >= select_interaction.user.top_role
             ):
                 await select_interaction.response.send_message(
-                    self.lang.get(
+                    with_emoji(NexusEmojis.WARNING, self.lang.get(
                         "level_roles_hierarchy_user",
-                        "⚠️ This role is ranked equal to or higher than your own highest role. "
+                        "This role is ranked equal to or higher than your own highest role. "
                         "You cannot use it for level roles. Please choose a different role.",
-                    ),
+                    )),
                     ephemeral=True
                 )
                 return
@@ -681,7 +681,7 @@ class LevelUpChannelView(NexusView):
     async def select_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         channel = interaction.guild.get_channel(select.values[0].id)
         if channel is None:
-            await send_ephemeral(interaction, self.lang.get("giveaway_channel_unreachable", "❌ I can't access that channel."))
+            await send_ephemeral(interaction, error_msg(self.lang.get("giveaway_channel_unreachable", "I can't access that channel.")))
             return
         if not (check := can_use_channel(channel, "send_messages", "embed_links")):
             await send_ephemeral(interaction, format_issue(check, self.lang))
@@ -766,8 +766,8 @@ async def _xp_settings_embed(guild_id: int, lang: dict, settings: dict) -> disco
         ),
         inline=False,
     )
-    status = (lang.get("xps_voice_on", "✅ On") if settings["voice_xp_enabled"]
-              else lang.get("xps_voice_off", "❌ Off"))
+    status = (f"{NexusEmojis.ON} {lang.get('xps_voice_on', 'On')}" if settings["voice_xp_enabled"]
+              else f"{NexusEmojis.OFF} {lang.get('xps_voice_off', 'Off')}")
     embed.add_field(
         name=lang.get("xps_voice_field", "🎙️ Voice XP"),
         value=lang.get("xps_voice_value", "{status} · {min}–{max} XP per minute").format(
@@ -846,7 +846,7 @@ class XpRangeModal(NexusModal):
             key = ("dash_err_lvl_xp_min_gt_max" if problem == "min_gt_max"
                    else "dash_err_lvl_xp_range" if self.kind == "chat" else "dash_err_lvl_voice_xp_range")
             await interaction.response.send_message(
-                "❌ " + self.lang.get(key, "Invalid values.").format(max=self.max_xp), ephemeral=True,
+                error_msg(self.lang.get(key, "Invalid values.").format(max=self.max_xp)), ephemeral=True,
             )
             return
         await db_levels.update_levels_settings(interaction.guild_id, **dict(zip(self.columns, (xp_min, xp_max))))

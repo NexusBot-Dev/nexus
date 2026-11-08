@@ -7,7 +7,7 @@ from cogs.automod import (
    )
 from cogs.utils import get_lang
 from systems import honeypot as hp_system
-from systems.hierarchy import format_issue
+from systems.hierarchy import issue_text
 
 @register_action("automod", "status")
 async def status(ctx: DashCtx) -> dict:
@@ -139,7 +139,7 @@ async def create_honeypot(ctx: DashCtx) -> dict:
         channel = await hp_system.create(guild, name, title, warn_text, server_lang)
     except hp_system.HoneypotError as e:
         if e.code == "perms":
-            raise ValueError(format_issue(e.check, ctx.lang)) from None
+            raise ValueError(issue_text(e.check, ctx.lang)) from None
         if e.code == "exists":
             raise DashboardError("dash_err_am_honeypot_exists") from None
         raise DashboardError("dash_err_missing_manage_channels") from None

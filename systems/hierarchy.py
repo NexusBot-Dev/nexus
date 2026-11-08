@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 import discord
+from systems.ui import error_msg
 
 # ─── Ergebnis-Typ ──────────────────────────────────────────────────────────────
 
@@ -228,21 +229,21 @@ def perm_label(name: str) -> str:
 
 
 _FALLBACKS: dict[Issue, str] = {
-    Issue.MISSING_PERMS:     "❌ I'm missing the following permissions: {perms}",
-    Issue.BOT_HIERARCHY:     "❌ {subject} is ranked equal to or higher than my role. Please move the Nexus role above it.",
-    Issue.ACTOR_HIERARCHY:   "❌ {subject} is ranked equal to or higher than you.",
-    Issue.TARGET_OWNER:      "❌ The server owner cannot be targeted.",
-    Issue.TARGET_SELF:       "❌ This action can't target that user.",
-    Issue.TARGET_ADMIN:      "❌ Discord doesn't allow timing out members with Administrator ({subject}).",
-    Issue.ROLE_MANAGED:      "❌ {subject} is managed by an integration and can't be assigned.",
-    Issue.ROLE_DEFAULT:      "❌ @everyone can't be assigned.",
-    Issue.ROLE_DANGEROUS:    "❌ {subject} has moderation/admin permissions ({perms}). Only administrators can make it self-assignable.",
-    Issue.ACTOR_MISSING_PERMS: "❌ You're missing the following permissions: {perms}",
-    Issue.NO_CHANNEL_ACCESS: "❌ I can't see {subject}. Please give Nexus access to that channel.",
+    Issue.MISSING_PERMS:     "I'm missing the following permissions: {perms}",
+    Issue.BOT_HIERARCHY:     "{subject} is ranked equal to or higher than my role. Please move the Nexus role above it.",
+    Issue.ACTOR_HIERARCHY:   "{subject} is ranked equal to or higher than you.",
+    Issue.TARGET_OWNER:      "The server owner cannot be targeted.",
+    Issue.TARGET_SELF:       "This action can't target that user.",
+    Issue.TARGET_ADMIN:      "Discord doesn't allow timing out members with Administrator ({subject}).",
+    Issue.ROLE_MANAGED:      "{subject} is managed by an integration and can't be assigned.",
+    Issue.ROLE_DEFAULT:      "@everyone can't be assigned.",
+    Issue.ROLE_DANGEROUS:    "{subject} has moderation/admin permissions ({perms}). Only administrators can make it self-assignable.",
+    Issue.ACTOR_MISSING_PERMS: "You're missing the following permissions: {perms}",
+    Issue.NO_CHANNEL_ACCESS: "I can't see {subject}. Please give Nexus access to that channel.",
 }
 
-def format_issue(check: PermCheck, lang: dict[str, str] | None = None) -> str:
-    """Lokalisierte Meldung. Keys: perm_issue_<issue>, z.B. perm_issue_bot_hierarchy."""
+def issue_text(check: PermCheck, lang: dict[str, str] | None = None) -> str:
+    """Lokalisierte Meldung ohne Emoji — für das Dashboard. Keys: perm_issue_<issue>, z.B. perm_issue_bot_hierarchy."""
     if check.ok:
         return ""
     lang = lang or {}
@@ -251,6 +252,10 @@ def format_issue(check: PermCheck, lang: dict[str, str] | None = None) -> str:
         subject=check.subject or "",
         perms=", ".join(f"`{perm_label(p)}`" for p in check.missing),
     )
+
+def format_issue(check: PermCheck, lang: dict[str, str] | None = None) -> str:
+    """Meldung für Discord: wie issue_text, mit dem Fehler-Emoji aus emojis.py davor."""
+    return error_msg(issue_text(check, lang)) if not check.ok else ""
 
 # ─── Bestehende API (setup.py) ──────────────────────────────────
 

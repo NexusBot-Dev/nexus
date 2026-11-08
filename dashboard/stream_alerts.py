@@ -35,7 +35,7 @@ def channel_warning(ctx: DashCtx, channel) -> str | None:
         return None
     return ctx.lang.get(
         "alert_channel_missing_perms",
-        "⚠️ Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
+        "Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
     ).format(channel=f"#{channel.name}", perms=", ".join(perm_label(p) for p in miss))
 
 @register_action("stream_alerts", "list")

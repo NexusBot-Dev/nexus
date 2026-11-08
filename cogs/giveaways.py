@@ -7,7 +7,7 @@ from discord.ext import commands, tasks
 from database import db_settings, db_giveaways
 from cogs.utils import get_lang, NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.ui import NexusView, NexusModal
+from systems.ui import NexusView, NexusModal, error_msg
 from typing import Literal
 from collections.abc import Awaitable, Callable
 
@@ -87,7 +87,7 @@ class CancelGiveawaySelectView(NexusView):
         text = (
             self.lang.get("giveaway_cancelled_admin", "{checkmark} Giveaway cancelled.").format(checkmark=NexusEmojis.CHECKMARK)
             if ok else
-            self.lang.get("giveaway_cancel_failed", "❌ I can't access that giveaway's channel. Check my permissions and try again.")
+            error_msg(self.lang.get("giveaway_cancel_failed", "I can't access that giveaway's channel. Check my permissions and try again."))
         )
         self.stop()
         await interaction.edit_original_response(content=text, view=None)
@@ -112,7 +112,7 @@ class GiveawayJoinView(NexusView):
 
         if giveaway is None:
             await interaction.followup.send(
-                lang.get("giveaway_not_found", "❌ This giveaway no longer exists."),
+                error_msg(lang.get("giveaway_not_found", "This giveaway no longer exists.")),
                 ephemeral=True,
             )
             return
@@ -239,7 +239,7 @@ class AddGiveawayModal(NexusModal):
         seconds = int(self.duration_select.values[0])
         if seconds not in {d[0] for d in DURATIONS}:
             await interaction.followup.send(
-                self.lang.get("giveaway_winners_count_invalid", "❌ Invalid input."),
+                error_msg(self.lang.get("giveaway_winners_count_invalid", "Invalid input.")),
                 ephemeral=True,
             )
             return
@@ -252,7 +252,7 @@ class AddGiveawayModal(NexusModal):
             winners_count = 0
         if not 1 <= winners_count <= MAX_WINNERS:
             await interaction.followup.send(
-                self.lang.get("giveaway_winners_count_invalid", "❌ Invalid winners count."),
+                error_msg(self.lang.get("giveaway_winners_count_invalid", "Invalid winners count.")),
                 ephemeral=True,
             )
             return
@@ -263,7 +263,7 @@ class AddGiveawayModal(NexusModal):
             channel = picked.resolve() or await picked.fetch()
         except discord.HTTPException:
             await interaction.followup.send(
-                self.lang.get("giveaway_channel_unreachable", "❌ I can't access that channel."),
+                error_msg(self.lang.get("giveaway_channel_unreachable", "I can't access that channel.")),
                 ephemeral=True,
             )
             return
@@ -271,20 +271,20 @@ class AddGiveawayModal(NexusModal):
         bot_perms = channel.permissions_for(interaction.guild.me)
         if not (bot_perms.view_channel and bot_perms.send_messages and bot_perms.embed_links):
             await interaction.followup.send(
-                self.lang.get(
+                error_msg(self.lang.get(
                     "giveaway_bot_missing_perms",
-                    "❌ I need View Channel, Send Messages and Embed Links in {channel}.",
-                ).format(channel=channel.mention),
+                    "I need View Channel, Send Messages and Embed Links in {channel}.",
+                ).format(channel=channel.mention)),
                 ephemeral=True,
             )
             return
 
         if not channel.permissions_for(interaction.user).send_messages:
             await interaction.followup.send(
-                self.lang.get(
+                error_msg(self.lang.get(
                     "giveaway_user_missing_perms",
-                    "❌ You can't send messages in {channel}.",
-                ).format(channel=channel.mention),
+                    "You can't send messages in {channel}.",
+                ).format(channel=channel.mention)),
                 ephemeral=True,
             )
             return
@@ -362,12 +362,12 @@ class Giveaways(commands.Cog):
 
         if status == "cancelled":
             embed.color = discord.Color.red()
-            embed.title = f"❌ {giveaway['prize']}"
+            embed.title = f"{NexusEmojis.CANCELLED} {giveaway['prize']}"
             # Index 1 = End Date (Reihenfolge siehe post_giveaway)
             embed.set_field_at(
                 1,
                 name=lang.get("giveaways_status", "Status"),
-                value=lang.get("giveaway_cancelled", "❌ Cancelled"),
+                value=f"{NexusEmojis.CANCELLED} {lang.get('giveaway_cancelled', 'Cancelled')}",
                 inline=True,
             )
             await message.edit(embed=embed, view=ended_view)

@@ -1,7 +1,19 @@
 class NexusEmojis:
     # Format: <:name:id> (oder <a:name:id> für animierte Emojis)
     CHECKMARK   = "<:nexus_checkmark:1511660868105146489>"
-    CROSS       = "<:nexus_cross:1511976374414475314>"
+
+    # Bedeutung → Emoji. Texte enthalten diese Emojis nicht selbst, der Code setzt sie davor
+    # (systems/ui.error_msg usw.) — so lassen sie sich hier an einer Stelle austauschen.
+    # Vorerst Unicode; eigene Emojis später einfach hier eintragen.
+    ERROR       = "❌"
+    WARNING     = "⚠️"
+    PREMIUM     = "⭐"
+    LOCKED      = "🔒"
+    LOADING     = "⏳"
+    ON          = "✅"   # Status „an“, z. B. in /xp_settings
+    OFF         = "❌"   # Status „aus“
+    CANCELLED   = "❌"   # abgebrochen, z. B. Giveaway
+    DECLINE     = "❌"   # Button „Ablehnen“
     SHIELD      = "<:nexus_shield:1558794418155290687>"
     ADD         = "<:nexus_add:1558785417271058463>"
     DELETE      = "<:nexus_delete:1558786886825414776>"

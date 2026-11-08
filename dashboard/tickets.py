@@ -5,7 +5,7 @@ import logging
 from .registry import register_action, parse_id, DashCtx, DashboardError, InvalidRequest
 from database import db_ticket_categories, db_tickets, db_limits, db_ticket_settings
 from systems.premium import is_premium
-from systems.hierarchy import can_apply_overwrites, format_issue
+from systems.hierarchy import can_apply_overwrites, issue_text
 from systems.ticket_panel import PanelError, publish_panel, refresh_panel, import_panel
 
 log = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ async def create_category(ctx: DashCtx) -> dict:
     }
     check = can_apply_overwrites(guild, overwrites)
     if not check:
-        raise ValueError(format_issue(check, ctx.lang))
+        raise ValueError(issue_text(check, ctx.lang))
 
     try:
         discord_category = await guild.create_category(

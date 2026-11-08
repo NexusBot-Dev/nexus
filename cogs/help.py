@@ -8,7 +8,7 @@ from emojis import NexusEmojis
 from config import NEXUS_FOOTER
 from translations import LOCALE_MAP
 from cogs.utils import get_user_lang
-from systems.ui import NexusView
+from systems.ui import NexusView, with_emoji
 
 log = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ class Help(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name=lang.get("info_premium", "⭐ Premium"),
+            name=with_emoji(NexusEmojis.PREMIUM, lang.get("info_premium", "Premium")),
             value=f"[trynexus.de/premium](https://trynexus.de/{site_locale}/#premium)",
             inline=True,
         )

@@ -8,6 +8,7 @@ from database import db_giveaways, db_levels, db_settings, db_activity
 from emojis import NexusEmojis
 from systems.card_generator import generate_rank_card
 from systems.exp_system import xp_for_level
+from systems.ui import with_emoji
 from .utils import get_user_lang, module_required
 
 log = logging.getLogger(__name__)
@@ -21,7 +22,8 @@ class DeleteDataConfirmView(discord.ui.View):
         self.orig_interaction = orig_interaction
         self._is_processing = False
 
-        self.confirm_btn.label = lang.get("rr_btn_delete_confirm", "⚠️ Yes, delete everything")
+        self.confirm_btn.label = lang.get("rr_btn_delete_confirm", "Yes, delete everything")
+        self.confirm_btn.emoji = NexusEmojis.WARNING
         self.cancel_btn.label = lang.get("rr_btn_cancel", "Abort")
 
     async def on_timeout(self):
@@ -125,7 +127,7 @@ class UserCommands(commands.Cog):
         color = await db_settings.get_color(interaction.guild_id)
 
         warn_embed = discord.Embed(
-            title=lang.get("delete_data_warn_title", "⚠️ Are you absolutely sure?"),
+            title=with_emoji(NexusEmojis.WARNING, lang.get("delete_data_warn_title", "Are you absolutely sure?")),
             description=lang.get(
                 "delete_data_warn_desc",
                 "This step will permanently delete all your **XP and levels** on this server!\n"

@@ -7,7 +7,7 @@ from database import db_settings, db_levels, db_warnings, db_activity, db_giveaw
 from cogs.utils import get_lang
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.ui import NexusView
+from systems.ui import NexusView, error_msg
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class GoodbyeConfigView(NexusView):
             settings = await db_settings.get_guild(interaction.guild_id) or {}
             if not settings.get("goodbye_channel_id"):
                 await interaction.followup.send(
-                    self.lang.get("announcement_need_channel", "❌ Please select a channel first."),
+                    error_msg(self.lang.get("announcement_need_channel", "Please select a channel first.")),
                     ephemeral=True,
                 )
                 return
@@ -70,7 +70,7 @@ async def _goodbye_status_embed(guild_id: int, lang: dict[str, str]) -> discord.
     status = (
         f"{NexusEmojis.CHECKMARK} {lang.get('setup_on', 'ON')}"
         if settings.get("goodbye_enabled", False)
-        else f"❌ {lang.get('setup_off', 'OFF')}"
+        else f"{NexusEmojis.OFF} {lang.get('setup_off', 'OFF')}"
     )
 
     embed = discord.Embed(

@@ -8,7 +8,7 @@ from cogs.utils import get_lang, module_required
 from emojis import NexusEmojis
 from systems.platform_registry import PLATFORM_HANDLERS
 from config import NEXUS_FOOTER
-from systems.ui import NexusView, NexusModal
+from systems.ui import NexusView, NexusModal, error_msg, with_emoji
 from systems.alert_dispatch import ALERT_CHANNEL_PERMS, finish_ended_streams
 from systems.hierarchy import missing_perms, perm_label
 from systems import stream_alert_service as alert_service
@@ -31,17 +31,17 @@ PLATFORM_PLACEHOLDER_FALLBACKS = {
 
 # Abbruchgründe aus systems/stream_alert_service → (Übersetzungsschlüssel, englischer Fallback)
 ALERT_ERRORS = {
-    "limit": ("alert_limit_reached", "❌ Limit of {limit} monitored channels reached."),
-    "user_not_found": ("alert_user_not_found", "❌ User `{login}` was not found."),
-    "subscription_failed": ("alert_subscription_failed", "❌ Subscription could not be created. Please try again later."),
-    "already_monitored": ("alert_already_added", "❌ `{login}` is already being monitored on this server."),
-    "not_monitored": ("alert_not_monitored", "❌ `{login}` is not being monitored on this server."),
+    "limit": ("alert_limit_reached", "Limit of {limit} monitored channels reached."),
+    "user_not_found": ("alert_user_not_found", "User `{login}` was not found."),
+    "subscription_failed": ("alert_subscription_failed", "Subscription could not be created. Please try again later."),
+    "already_monitored": ("alert_already_added", "`{login}` is already being monitored on this server."),
+    "not_monitored": ("alert_not_monitored", "`{login}` is not being monitored on this server."),
 }
 
 
 def alert_error_text(lang: dict, error: alert_service.AlertError, login: str) -> str:
     key, fallback = ALERT_ERRORS[error.reason]
-    return lang.get(key, fallback).format(login=login, **error.params)
+    return error_msg(lang.get(key, fallback).format(login=login, **error.params))
 
 
 def channel_warning(lang: dict, channel: discord.abc.GuildChannel | None) -> str:
@@ -51,10 +51,10 @@ def channel_warning(lang: dict, channel: discord.abc.GuildChannel | None) -> str
     miss = missing_perms(channel, *ALERT_CHANNEL_PERMS)
     if not miss:
         return ""
-    return "\n" + lang.get(
+    return "\n" + with_emoji(NexusEmojis.WARNING, lang.get(
         "alert_channel_missing_perms",
-        "⚠️ Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
-    ).format(channel=channel.mention, perms=", ".join(f"`{perm_label(p)}`" for p in miss))
+        "Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
+    ).format(channel=channel.mention, perms=", ".join(f"`{perm_label(p)}`" for p in miss)))
 
 
 class AlertMessageModal(NexusModal):
@@ -255,7 +255,7 @@ class AddChannelModal(NexusModal):
         login = self.handler.normalize_input(self.streamer_input.value)
         if login is None:
             await interaction.followup.send(
-                lang.get("alert_invalid_username", "❌ That doesn't look like a valid Username or Link."),
+                error_msg(lang.get("alert_invalid_username", "That doesn't look like a valid Username or Link.")),
                 ephemeral=True,
             )
             return
@@ -335,7 +335,7 @@ class StreamAlerts(commands.Cog):
         handler = PLATFORM_HANDLERS.get(platform.value)
         if handler is None:
             await interaction.response.send_message(
-                lang.get("alert_platform_unavailable", "❌ This platform isn't available yet."),
+                error_msg(lang.get("alert_platform_unavailable", "This platform isn't available yet.")),
                 ephemeral=True,
             )
             return
@@ -365,7 +365,7 @@ class StreamAlerts(commands.Cog):
         handler = PLATFORM_HANDLERS.get(platform.value)
         if handler is None:
             await interaction.followup.send(
-                lang.get("alert_platform_unavailable", "❌ This platform isn't available yet."),
+                error_msg(lang.get("alert_platform_unavailable", "This platform isn't available yet.")),
                 ephemeral=True,
             )
             return
@@ -373,7 +373,7 @@ class StreamAlerts(commands.Cog):
         login = handler.normalize_input(streamer)
         if login is None:
             await interaction.followup.send(
-                lang.get("alert_invalid_username", "❌ That doesn't look like a valid Twitch username."),
+                error_msg(lang.get("alert_invalid_username", "That doesn't look like a valid Twitch username.")),
                 ephemeral=True,
             )
             return
@@ -381,7 +381,7 @@ class StreamAlerts(commands.Cog):
         user = await handler.resolve_user(login)
         if user is None:
             await interaction.followup.send(
-                lang.get("alert_user_not_found", "❌ User `{login}` was not found.").format(login=login),
+                error_msg(lang.get("alert_user_not_found", "User `{login}` was not found.").format(login=login)),
                 ephemeral=True,
             )
             return
@@ -390,7 +390,7 @@ class StreamAlerts(commands.Cog):
         monitored = await db_stream_alerts.get_monitored_channel(platform.value, external_id)
         if monitored is None:
             await interaction.followup.send(
-                lang.get("alert_not_monitored", "❌ `{login}` is not being monitored on this server.").format(login=login),
+                error_msg(lang.get("alert_not_monitored", "`{login}` is not being monitored on this server.").format(login=login)),
                 ephemeral=True,
             )
             return
@@ -520,13 +520,13 @@ class StreamAlerts(commands.Cog):
 
         if not can_ping:
             await interaction.followup.send(
-                lang.get(
+                with_emoji(NexusEmojis.WARNING, lang.get(
                     "alert_role_not_pingable",
-                    "⚠️ {role} was saved, but is currently not marked as mentionable by everyone.\n"
+                    "{role} was saved, but is currently not marked as mentionable by everyone.\n"
                     "For the ping to actually notify (not just display), enable "
                     "**'Allow anyone to @mention this role'** in Server Settings → Roles → {role}, "
                     "or grant me the 'Mention @everyone, @here, and All Roles' permission.",
-                ).format(role=role.mention) + fallback_notice,
+                ).format(role=role.mention)) + fallback_notice,
                 ephemeral=True,
             )
             return
@@ -572,7 +572,7 @@ class StreamAlerts(commands.Cog):
 
         if not subs:
             await interaction.followup.send(
-                lang.get("alert_edit_none_for_platform", "❌ Nothing is currently being monitored on this platform."),
+                error_msg(lang.get("alert_edit_none_for_platform", "Nothing is currently being monitored on this platform.")),
                 ephemeral=True,
             )
             return

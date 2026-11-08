@@ -10,7 +10,7 @@ from config import NEXUS_COLOR
 from emojis import NexusEmojis
 from translations import TRANSLATIONS
 from systems.premium import is_premium
-from systems.ui import NexusView, NexusModal
+from systems.ui import NexusView, NexusModal, error_msg, with_emoji
 from systems.premium_ui import send_upsell
 
 ALL_TIMEZONES = sorted(list(zoneinfo.available_timezones()))
@@ -40,7 +40,7 @@ class ModuleView(NexusView):
             button = discord.ui.Button(
                 label=formatted_name,
                 style=discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary,
-                emoji=discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK) if enabled else "❌",
+                emoji=discord.PartialEmoji.from_str(NexusEmojis.CHECKMARK) if enabled else NexusEmojis.OFF,
                 custom_id=f"module_{module}",
             )
             button.callback = self._make_callback(module, enabled)
@@ -74,12 +74,12 @@ def _modules_embed(modules: dict, lang: dict) -> discord.Embed:
         if module in CORE_MODULES:
             core_names.append(_format_module_name(module, lang))
             continue
-        status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')}" if enabled else f"{lang.get('module_inactive', '❌ Disabled')}"
+        status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')}" if enabled else f"{NexusEmojis.OFF} {lang.get('module_inactive', 'Disabled')}"
         embed.add_field(name=_format_module_name(module, lang), value=status, inline=True)
 
     if core_names:
         embed.add_field(
-            name=lang.get("module_core_title", "🔒 Always active"),
+            name=with_emoji(NexusEmojis.LOCKED, lang.get("module_core_title", "Always active")),
             value=", ".join(core_names),
             inline=False,
         )
@@ -144,7 +144,7 @@ class AdminCommands(commands.Cog):
         lang = await get_lang(interaction.guild_id)
         if tz not in ALL_TIMEZONES:
             await interaction.followup.send(
-                lang.get("timezone_invalid", "❌ **Invalid timezone.** Please select a suggestion from the list (e.g., `Europe/Berlin`)."),
+                error_msg(lang.get("timezone_invalid", "**Invalid timezone.** Please select a suggestion from the list (e.g., `Europe/Berlin`).")),
                 ephemeral=True
             )
             return
@@ -304,7 +304,7 @@ class EmbedColorModal(NexusModal):
                 raw = "".join(c * 2 for c in raw)
             if not re.fullmatch(r"[0-9a-fA-F]{6}", raw) or int(raw, 16) == 0:   # 000000 = "keine Farbe" bei Discord
                 await interaction.response.send_message(
-                    self.lang.get("color_invalid", "❌ Please enter a valid hex color like `#00F5D4`."),
+                    error_msg(self.lang.get("color_invalid", "Please enter a valid hex color like `#00F5D4`.")),
                     ephemeral=True,
                 )
                 return
@@ -312,7 +312,7 @@ class EmbedColorModal(NexusModal):
 
         if not await db_settings.set_color(interaction.guild_id, value):   # prüft Premium erneut
             await interaction.response.send_message(
-                self.lang.get("color_premium_required", "⭐ A custom embed color is a Premium feature. See `/premium` for details."),
+                with_emoji(NexusEmojis.PREMIUM, self.lang.get("color_premium_required", "A custom embed color is a Premium feature. See `/premium` for details.")),
                 ephemeral=True,
             )
             return

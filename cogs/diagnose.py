@@ -10,7 +10,7 @@ from emojis import NexusEmojis
 
 log = logging.getLogger(__name__)
 
-OK, WARN, ERR = NexusEmojis.CHECKMARK, "⚠️", "❌"
+OK, WARN, ERR = NexusEmojis.CHECKMARK, NexusEmojis.WARNING, NexusEmojis.ERROR
 MAX_LINES = 8
 
 _SEVERITY_ICON = {"info": "ℹ️", "warn": WARN, "error": ERR}

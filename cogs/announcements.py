@@ -6,7 +6,7 @@ from database import db_settings
 from cogs.utils import get_lang
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
-from systems.ui import NexusView, send_ephemeral
+from systems.ui import NexusView, send_ephemeral, error_msg
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class AnnouncementSettingsView(NexusView):
         else:
             self.toggle_btn.label = self.lang.get("announcement_status_off", "Disabled")
             self.toggle_btn.style = discord.ButtonStyle.secondary
-            self.toggle_btn.emoji = "❌"
+            self.toggle_btn.emoji = NexusEmojis.OFF
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -56,7 +56,7 @@ class AnnouncementSettingsView(NexusView):
             if not settings.get("announcement_channel_id"):
                 await send_ephemeral(
                     interaction,
-                    self.lang.get("announcement_need_channel", "❌ Please select a channel first."),
+                    error_msg(self.lang.get("announcement_need_channel", "Please select a channel first.")),
                 )
                 return
 

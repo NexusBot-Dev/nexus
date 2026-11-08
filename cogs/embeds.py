@@ -11,7 +11,7 @@ from systems.premium import is_premium
 from systems.premium_ui import send_upsell
 from cogs.utils import get_lang
 from emojis import NexusEmojis
-from systems.ui import NexusModal, NexusView, ConfirmView, send_ephemeral
+from systems.ui import NexusModal, NexusView, ConfirmView, error_msg, send_ephemeral, with_emoji
 from systems.embed_posts import build_embed as _build_embed, track_post, refresh_posts
 
 log = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ async def _embed_limit_reached(interaction: discord.Interaction, lang: dict) -> 
     if not await is_premium(interaction.guild_id) and await db_limits.get_limit(interaction.guild_id, "saved_embeds", True) > limit:
         await send_upsell(interaction, lang, "embed_limit", limit=limit)
         return
-    await send_ephemeral(interaction, lang.get("embed_limit_reached", "❌ Limit of {limit} saved embeds reached.").format(limit=limit))
+    await send_ephemeral(interaction, error_msg(lang.get("embed_limit_reached", "Limit of {limit} saved embeds reached.").format(limit=limit)))
 
 async def _embed_limit(guild_id: int) -> int:
     """Aktuelles Limit gespeicherter Embeds (Free/Premium)."""
@@ -48,14 +48,14 @@ async def _send_embed(interaction: discord.Interaction, lang: dict, channel, emb
     try:
         message = await channel.send(embed=embed)
     except discord.Forbidden:
-        await send_ephemeral(interaction, lang.get(
+        await send_ephemeral(interaction, error_msg(lang.get(
             "embed_no_permission",
-            "❌ I don't have permission to send messages in {channel}.",
-        ).format(channel=channel.mention))
+            "I don't have permission to send messages in {channel}.",
+        ).format(channel=channel.mention)))
         return None
     except discord.HTTPException as e:
         log.warning("Konnte Embed nicht in %s posten: %s", channel, e)
-        await send_ephemeral(interaction, lang.get("error_generic", "❌ Something went wrong. Please try again later."))
+        await send_ephemeral(interaction, error_msg(lang.get("error_generic", "Something went wrong. Please try again later.")))
         return None
     return message
 
@@ -107,9 +107,9 @@ def _build_list_pages(embeds: list[dict], active_ids: set[int], limit: int, lang
     """Baut die Seiten für die Embed-Liste. `embeds` ist FIFO sortiert, aktive stehen also oben."""
     description = lang.get("embed_list_count", "{count}/{limit} used").format(count=len(embeds), limit=limit)
     if len(embeds) > limit:
-        description += "\n" + lang.get(
-            "embed_over_limit", "⚠️ Only the {limit} oldest embeds are active."
-        ).format(limit=limit)
+        description += "\n" + with_emoji(NexusEmojis.WARNING, lang.get(
+            "embed_over_limit", "Only the {limit} oldest embeds are active."
+        ).format(limit=limit))
 
     chunks = [embeds[i:i + EMBEDS_PER_PAGE] for i in range(0, len(embeds), EMBEDS_PER_PAGE)]
     pages = []
@@ -123,9 +123,9 @@ def _build_list_pages(embeds: list[dict], active_ids: set[int], limit: int, lang
             field_value = f"**{e['title'][:50]}**\n{e['description'][:80]}..."
             inactive = e["id"] not in active_ids
             if inactive:
-                field_value += "\n\n" + lang.get(
-                    "embed_inactive_hint", "🔒 Inactive — over the limit. Delete embeds or get Premium."
-                )
+                field_value += "\n\n" + with_emoji(NexusEmojis.LOCKED, lang.get(
+                    "embed_inactive_hint", "Inactive — over the limit. Delete embeds or get Premium."
+                ))
 
             if e.get("scheduled_at"):
                 utc_dt = e["scheduled_at"].replace(tzinfo=ZoneInfo("UTC"))
@@ -134,7 +134,7 @@ def _build_list_pages(embeds: list[dict], active_ids: set[int], limit: int, lang
                 field_value += f"\n\n⏰ **Geplant für:** {time_str}"
 
             page.add_field(
-                name=f"{'🔒 ' if inactive else ''}#{e['id']} — {e['name']}",
+                name=f"{NexusEmojis.LOCKED + ' ' if inactive else ''}#{e['id']} — {e['name']}",
                 value=field_value,
                 inline=False,
             )
@@ -348,6 +348,7 @@ class EmbedPickerView(NexusView):
         chunk = self.embeds[self.page * PICK_PAGE_SIZE:(self.page + 1) * PICK_PAGE_SIZE]
         self.embed_select.options = [
             discord.SelectOption(
+                # Auswahl-Beschriftung: Discord zeigt hier nur Unicode-Emojis, daher fest 🔒 statt NexusEmojis.LOCKED
                 label=f"{'🔒 ' if e['id'] not in self.active_ids else ''}#{e['id']} — {e['name']}"[:100],
                 value=str(e["id"]),
                 description=((e["title"] or e["description"] or "")[:100]) or None,
@@ -431,15 +432,15 @@ class EmbedPickerView(NexusView):
         """Embed laden und prüfen, ob er noch existiert und aktiv ist. Antwortet selbst bei Fehlern."""
         embed_data = await db_embeds.get_embed(self.selected_id, interaction.guild_id)
         if embed_data is None:
-            await send_ephemeral(interaction, self.lang.get("embed_not_found", "❌ Embed not found."))
+            await send_ephemeral(interaction, error_msg(self.lang.get("embed_not_found", "Embed not found.")))
             return None
 
         limit = await _embed_limit(interaction.guild_id)
         if not await db_embeds.is_embed_active(self.selected_id, interaction.guild_id, limit):
-            await send_ephemeral(interaction, self.lang.get(
+            await send_ephemeral(interaction, with_emoji(NexusEmojis.LOCKED, self.lang.get(
                 "embed_inactive",
-                "🔒 This embed is inactive: your server is over its saved-embed limit. Delete older embeds or get Premium.",
-            ))
+                "This embed is inactive: your server is over its saved-embed limit. Delete older embeds or get Premium.",
+            )))
             return None
         return embed_data
 
@@ -458,7 +459,7 @@ class EmbedPickerView(NexusView):
 
         channel = _find_channel(interaction.guild, self.channel_id or embed_data["channel_id"])
         if channel is None:
-            await send_ephemeral(interaction, self.lang.get("embed_no_channel", "❌ No channel specified."))
+            await send_ephemeral(interaction, error_msg(self.lang.get("embed_no_channel", "No channel specified.")))
             return
 
         color = await db_settings.get_color(interaction.guild_id)
@@ -479,7 +480,7 @@ class EmbedPickerView(NexusView):
 
         channel = _find_channel(interaction.guild, self.channel_id)
         if channel is None:
-            await send_ephemeral(interaction, self.lang.get("embed_no_channel", "❌ No channel specified."))
+            await send_ephemeral(interaction, error_msg(self.lang.get("embed_no_channel", "No channel specified.")))
             return
 
         await interaction.response.send_modal(ScheduleModal(self.lang, embed_data, channel))
@@ -506,7 +507,7 @@ class EmbedPickerView(NexusView):
                 id=embed_id, checkmark=NexusEmojis.CHECKMARK
             )
         else:
-            message = self.lang.get("embed_not_found", "❌ Embed not found.")
+            message = error_msg(self.lang.get("embed_not_found", "Embed not found."))
         await interaction.edit_original_response(content=message, view=None)
 
         await self.reload(interaction.guild_id)
@@ -589,7 +590,7 @@ class EmbedCreateModal(NexusModal):
             channel = _find_channel(interaction.guild, self.channel_select.values[0].id)
 
         if do_post and channel is None:
-            await send_ephemeral(interaction, self.lang.get("embed_no_channel", "❌ No channel specified."))
+            await send_ephemeral(interaction, error_msg(self.lang.get("embed_no_channel", "No channel specified.")))
             return
 
         if do_save and not await db_embeds.can_save_embed(guild_id):
@@ -693,7 +694,7 @@ class EmbedEditModal(NexusModal):
         if self.channel_select.values:
             channel = _find_channel(interaction.guild, self.channel_select.values[0].id)
             if channel is None:
-                await send_ephemeral(interaction, self.lang.get("embed_no_channel", "❌ No channel specified."))
+                await send_ephemeral(interaction, error_msg(self.lang.get("embed_no_channel", "No channel specified.")))
                 return
             channel_id = channel.id
 
@@ -705,7 +706,7 @@ class EmbedEditModal(NexusModal):
             self.embed_id, guild_id, title, description, channel_id, name=name
         )
         if not updated:
-            await send_ephemeral(interaction, self.lang.get("embed_not_found", "❌ Embed not found."))
+            await send_ephemeral(interaction, error_msg(self.lang.get("embed_not_found", "Embed not found.")))
             return
 
         message = self.lang.get("embed_edited", "{checkmark} Embed #{id} has been updated.").format(
@@ -719,9 +720,9 @@ class EmbedEditModal(NexusModal):
                 "embed_edited_posts", "Updated {count} posted message(s)."
             ).format(count=result.updated)
         if result and result.failed:
-            message += "\n" + self.lang.get(
-                "embed_edited_posts_failed", "⚠️ {count} message(s) could not be updated (missing permissions?)."
-            ).format(count=result.failed)
+            message += "\n" + with_emoji(NexusEmojis.WARNING, self.lang.get(
+                "embed_edited_posts_failed", "{count} message(s) could not be updated (missing permissions?)."
+            ).format(count=result.failed))
         await send_ephemeral(interaction, message)
         if self.picker is not None:
             await self.picker.reload(guild_id, keep_selection=True)
@@ -777,7 +778,7 @@ class ScheduleModal(NexusModal):
             now_local = datetime.now(local_tz)
             if scheduled_local < now_local:
                 await interaction.followup.send(
-                    self.lang.get("embed_schedule_past", "❌ The specified time is in the past."),
+                    error_msg(self.lang.get("embed_schedule_past", "The specified time is in the past.")),
                     ephemeral=True,
                 )
                 return
@@ -807,7 +808,7 @@ class ScheduleModal(NexusModal):
 
         except ValueError:
             await interaction.followup.send(
-                self.lang.get("embed_schedule_invalid", "❌ Invalid format. Please use DD.MM.YYYY HH:MM"),
+                error_msg(self.lang.get("embed_schedule_invalid", "Invalid format. Please use DD.MM.YYYY HH:MM")),
                 ephemeral=True,
             )
 
@@ -895,7 +896,7 @@ class Embeds(commands.Cog):
 
         if not settings or not settings["rules_channel_id"]:
             await interaction.response.send_message(
-                lang.get("embed_no_rules_channel", "❌ No rules channel configured. Use `/settings` to set one."),
+                error_msg(lang.get("embed_no_rules_channel", "No rules channel configured. Use `/settings` to set one.")),
                 ephemeral=True,
             )
             return
@@ -903,7 +904,7 @@ class Embeds(commands.Cog):
         channel = self.bot.get_channel(settings["rules_channel_id"])
         if channel is None:
             await interaction.response.send_message(
-                lang.get("embed_channel_not_found", "❌ Rules channel not found."),
+                error_msg(lang.get("embed_channel_not_found", "Rules channel not found.")),
                 ephemeral=True,
             )
             return

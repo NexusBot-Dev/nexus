@@ -7,7 +7,7 @@ from config import NEXUS_COLOR, DASHBOARD_URL
 from emojis import NexusEmojis
 from cogs.utils import get_lang, MODULE_DISPLAY, CORE_MODULES
 from systems.hierarchy import check_bot_hierarchy, get_bot_position_info, can_apply_overwrites, format_issue
-from systems.ui import NexusView, send_ephemeral
+from systems.ui import NexusView, send_ephemeral, error_msg, with_emoji
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ async def _validate_restored_channels(interaction: discord.Interaction) -> dict[
             result[key] = "— *(gelöscht)*"
             continue
         _, missing = await _resolve_channel_and_check_perms(ch, interaction.guild, interaction.client.user.id, for_logging=for_logging)
+        # fest ⚠️: passt zur Legende in der Fußzeile (setup_restored_perm_hint), und Fußzeilen zeigen nur Unicode-Emojis
         result[key] = f"{ch.mention} ⚠️" if missing else ch.mention
 
     if cleanup:
@@ -239,12 +240,12 @@ async def _channel_permission_warning_embed(
         is_private = not channel.permissions_for(guild.default_role).view_channel
 
     if is_private:
-        scenario_note = lang.get("setup_channel_private", "🔒 **This channel is private.**")
+        scenario_note = with_emoji(NexusEmojis.LOCKED, lang.get("setup_channel_private", "**This channel is private.**"))
     else:
         scenario_note = lang.get("setup_channel_missing_perm", "✍️ **This channel is read-only or restricted.**")
 
     embed = discord.Embed(
-        title=lang.get("setup_perm_warning_title", "⚠️ Permissions Required"),
+        title=with_emoji(NexusEmojis.WARNING, lang.get("setup_perm_warning_title", "Permissions Required")),
         description=lang.get("setup_perm_warning_desc",
             "I do not have all required permissions in {channel}.\n\n"
             "{scenario_note}\n\n"
@@ -451,7 +452,7 @@ class LogChannelView(SetupStepView):
             )
         except discord.Forbidden:
             await send_ephemeral(
-                interaction, f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}"
+                interaction, error_msg(self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.'))
             )
             return
 
@@ -525,7 +526,7 @@ class RulesChannelView(SetupStepView):
             )
         except discord.Forbidden:
             await send_ephemeral(
-                interaction, f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}"
+                interaction, error_msg(self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.'))
             )
             return
 
@@ -599,7 +600,7 @@ class WelcomeChannelView(SetupStepView):
             )
         except discord.Forbidden:
             await send_ephemeral(
-                interaction, f"❌ {self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.')}"
+                interaction, error_msg(self.lang.get('setup_right_error', 'I am missing the \'Manage Channels\' permission.'))
             )
             return
 

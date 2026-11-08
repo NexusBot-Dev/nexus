@@ -9,7 +9,7 @@ from cogs.utils import get_lang, module_required
 from emojis import NexusEmojis
 from systems import honeypot as hp_system
 from systems.hierarchy import format_issue
-from systems.ui import ConfirmView, NexusModal, NexusView
+from systems.ui import ConfirmView, NexusModal, NexusView, error_msg, with_emoji
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ async def _hub_embed(guild: discord.Guild, lang: dict) -> tuple[discord.Embed, b
     if channel is None:
         embed.add_field(
             name=lang.get("honeypot_hub_status", "Status"),
-            value=lang.get("honeypot_hub_inactive", "❌ No honeypot set up yet."),
+            value=f"{NexusEmojis.OFF} {lang.get('honeypot_hub_inactive', 'No honeypot set up yet.')}",
             inline=False,
         )
     else:
@@ -276,7 +276,7 @@ class HoneypotTextModal(NexusModal):
                 if e.code == "perms":
                     message = format_issue(e.check, self.lang)
                 elif e.code == "exists":
-                    message = self.lang.get("honeypot_exists", "❌ A honeypot already exists.")
+                    message = error_msg(self.lang.get("honeypot_exists", "A honeypot already exists."))
                 else:
                     message = self.lang.get("setup_right_error", "I am missing the 'Manage Channels' permission.")
                 await interaction.followup.send(message, ephemeral=True)
@@ -287,13 +287,13 @@ class HoneypotTextModal(NexusModal):
         else:
             if await hp_system.get_channel(guild) is None:
                 await _show_hub(interaction, self.lang, previous=self.hub)
-                await interaction.followup.send(self.lang.get("honeypot_missing", "❌ There is no honeypot (anymore)."), ephemeral=True)
+                await interaction.followup.send(error_msg(self.lang.get("honeypot_missing", "There is no honeypot (anymore).")), ephemeral=True)
                 return
             status = await hp_system.update_texts(guild, self.title_input.value, self.text_input.value, self.lang)
             result = {
                 "updated":    self.lang.get("honeypot_text_updated", "{nexus_checkmark} Warning message updated."),
                 "reposted":   self.lang.get("honeypot_text_reposted", "{nexus_checkmark} The warning message was missing and has been posted again."),
-                "saved_only": self.lang.get("honeypot_text_saved_only", "⚠️ Saved, but the message in the channel couldn't be updated (missing permissions?)."),
+                "saved_only": with_emoji(NexusEmojis.WARNING, self.lang.get("honeypot_text_saved_only", "Saved, but the message in the channel couldn't be updated (missing permissions?).")),
             }[status].format(nexus_checkmark=NexusEmojis.CHECKMARK)
 
         await _show_hub(interaction, self.lang, previous=self.hub)

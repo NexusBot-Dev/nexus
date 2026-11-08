@@ -11,7 +11,7 @@ from config import NEXUS_COLOR, NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.hierarchy import can_apply_overwrites, can_use_channel, format_issue
 from systems.ticket_panel import PANEL_SELECT_ID, PanelError, publish_panel, refresh_panel, import_panel, reset_panel_select
-from systems.ui import NexusView, NexusModal, report_interaction_error
+from systems.ui import NexusView, NexusModal, error_msg, report_interaction_error, with_emoji
 from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
@@ -30,16 +30,16 @@ def _duration(hours: int, lang: dict) -> str:
 
 def _panel_error_text(err: PanelError, lang: dict, channel=None) -> str:
     if err.code == "no_categories":
-        return lang.get("ticket_panel_no_categories", "❌ No ticket category exists yet. Create one first with `/add_category`.")
+        return error_msg(lang.get("ticket_panel_no_categories", "No ticket category exists yet. Create one first with `/add_category`."))
     if err.code == "no_channel":
-        return lang.get("ticket_panel_need_channel", "❌ There is no panel yet — please choose a channel.")
+        return error_msg(lang.get("ticket_panel_need_channel", "There is no panel yet — please choose a channel."))
     if err.code == "no_permission":
-        return lang.get("ticket_panel_no_permission", "❌ I can't send messages in {channel}.").format(
+        return error_msg(lang.get("ticket_panel_no_permission", "I can't send messages in {channel}.").format(
             channel=channel.mention if channel else "—"
-        )
+        ))
     if err.code == "not_a_panel":
-        return lang.get("ticket_panel_not_a_panel", "❌ This message isn't a Nexus ticket panel.")
-    return lang.get("error_generic", "Something went wrong. Please try again later.")
+        return error_msg(lang.get("ticket_panel_not_a_panel", "This message isn't a Nexus ticket panel."))
+    return error_msg(lang.get("error_generic", "Something went wrong. Please try again later."))
 
 async def _set_ticket_write_access(channel: discord.TextChannel, member: discord.Member, can_send: bool) -> bool:
     """Schreibrechte des Ticket-Erstellers setzen. Scheitert still (mit Log), damit der Ticket-Flow nicht abbricht."""
@@ -79,7 +79,7 @@ async def _drop_if_channel_gone(guild: discord.Guild, ticket: dict | None) -> di
     return None
 
 def _category_gone_text(lang: dict) -> str:
-    return lang.get("ticket_category_not_found", "❌ This category was not found.")
+    return error_msg(lang.get("ticket_category_not_found", "This category was not found."))
 
 # ─── /add_category — Schritt 1: Modal für den Namen ──────────────────────────
 
@@ -129,7 +129,7 @@ class AddCategoryModal(NexusModal):
             )
         except discord.Forbidden:
             await interaction.followup.send(
-                self.lang.get("ticket_no_permission_category", "❌ I don't have permission to manage categories."),
+                error_msg(self.lang.get("ticket_no_permission_category", "I don't have permission to manage categories.")),
                 ephemeral=True,
             )
             return
@@ -303,20 +303,20 @@ class CategoryEditView(NexusView):
         has_open = await db_tickets.has_open_tickets_for_category(self.category_id)
         if has_open:
             await interaction.followup.send(
-                self.lang.get(
+                error_msg(self.lang.get(
                     "ticket_delete_blocked",
-                    "❌ This category cannot be deleted while open tickets still exist. "
+                    "This category cannot be deleted while open tickets still exist. "
                     "Please close all tickets in this category first.",
-                ),
+                )),
                 ephemeral=True,
             )
             return
 
         await interaction.edit_original_response(
-            content=self.lang.get(
+            content=with_emoji(NexusEmojis.WARNING, self.lang.get(
                 "ticket_delete_confirm_prompt",
-                "⚠️ **Are you sure?** The Discord category and its configuration will be permanently deleted.",
-            ),
+                "**Are you sure?** The Discord category and its configuration will be permanently deleted.",
+            )),
             embed=None,
             view=DeleteCategoryConfirmView(self.category_id, self.lang),
         )
@@ -348,11 +348,11 @@ class RenameCategoryModal(NexusModal):
 
         if discord_category is None:
             await interaction.followup.send(
-                self.lang.get(
+                error_msg(self.lang.get(
                     "ticket_rename_channel_missing",
-                    "❌ The linked Discord category was not found (manually deleted?). "
+                    "The linked Discord category was not found (manually deleted?). "
                     "Rename aborted — please delete and recreate the category instead.",
-                ),
+                )),
                 ephemeral=True,
             )
             return
@@ -361,7 +361,7 @@ class RenameCategoryModal(NexusModal):
             await discord_category.edit(name=new_name, reason=f"Nexus Ticketsystem — umbenannt von {interaction.user}")
         except discord.Forbidden:
             await interaction.followup.send(
-                self.lang.get("ticket_no_permission_category", "❌ I don't have permission to manage categories."),
+                error_msg(self.lang.get("ticket_no_permission_category", "I don't have permission to manage categories.")),
                 ephemeral=True,
             )
             return
@@ -404,7 +404,7 @@ class DeleteCategoryConfirmView(NexusView):
         super().__init__(lang, owner_id=None, require=None, timeout=60)
         self.category_id = category_id
         self.confirm_btn.label = lang.get("ticket_delete_confirm_btn", "Yes, delete permanently")
-        self.confirm_btn.emoji = "⚠️"
+        self.confirm_btn.emoji = NexusEmojis.WARNING
         self.cancel_btn.label  = lang.get("rr_btn_cancel", "Abort")
 
     @discord.ui.button(style=discord.ButtonStyle.danger)
@@ -415,11 +415,11 @@ class DeleteCategoryConfirmView(NexusView):
         if has_open:
             self.stop()
             await interaction.edit_original_response(
-                content=self.lang.get(
+                content=error_msg(self.lang.get(
                     "ticket_delete_blocked",
-                    "❌ This category cannot be deleted while open tickets still exist. "
+                    "This category cannot be deleted while open tickets still exist. "
                     "Please close all tickets in this category first.",
-                ),
+                )),
                 embed=None,
                 view=None,
             )
@@ -438,7 +438,7 @@ class DeleteCategoryConfirmView(NexusView):
                 await discord_category.delete(reason=f"Nexus Ticketsystem — gelöscht von {interaction.user}")
             except discord.Forbidden:
                 await interaction.followup.send(
-                    self.lang.get("ticket_no_permission_category", "❌ I don't have permission to manage categories."),
+                    error_msg(self.lang.get("ticket_no_permission_category", "I don't have permission to manage categories.")),
                     ephemeral=True,
                 )
                 return
@@ -448,11 +448,11 @@ class DeleteCategoryConfirmView(NexusView):
         except Exception as e:
             log.exception("DB-Löschung der Kategorie %s auf %s fehlgeschlagen, obwohl die Discord-Kategorie schon gelöscht war: %s", self.category_id, interaction.guild.name, e)
             await interaction.followup.send(
-                self.lang.get(
+                with_emoji(NexusEmojis.WARNING, self.lang.get(
                     "ticket_delete_db_orphaned",
-                    "⚠️ The Discord category was deleted, but an internal database error occurred. "
+                    "The Discord category was deleted, but an internal database error occurred. "
                     "Please contact bot support so the configuration can be cleaned up.",
-                ),
+                )),
                 ephemeral=True,
             )
             return
@@ -534,7 +534,7 @@ class TicketPanelModal(NexusModal):
 def _ticket_settings_embed(settings: dict, lang: dict, color: int) -> discord.Embed:
     embed = discord.Embed(title=lang.get("ticket_settings_title", "⚙️ Ticket settings"), color=color)
     embed.add_field(
-        name=lang.get("ticket_settings_closure_field", "⏳ Auto-close without response"),
+        name=with_emoji(NexusEmojis.LOADING, lang.get("ticket_settings_closure_field", "Auto-close without response")),
         value=_duration(settings["closure_timeout_hours"], lang),
         inline=True,
     )
@@ -555,7 +555,7 @@ class TicketSettingsView(NexusView):
 
     def _sync(self, settings: dict):
         self.closure_select.options = [
-            discord.SelectOption(label=_duration(h, self.lang), value=str(h), emoji="⏳",
+            discord.SelectOption(label=_duration(h, self.lang), value=str(h), emoji=NexusEmojis.LOADING,
                                  default=h == settings["closure_timeout_hours"])
             for h in db_ticket_settings.CLOSURE_OPTIONS
         ]
@@ -602,7 +602,7 @@ class TicketProblemModal(NexusModal):
         key = (interaction.guild_id, interaction.user.id, self.category_id)
         if key in _creating_tickets:
             await interaction.followup.send(
-                self.lang.get("ticket_creation_in_progress", "❌ Your ticket is already being created."),
+                error_msg(self.lang.get("ticket_creation_in_progress", "Your ticket is already being created.")),
                 ephemeral=True,
             )
             return
@@ -619,7 +619,7 @@ class TicketProblemModal(NexusModal):
         category_data = await db_ticket_categories.get_category(self.category_id, guild.id)
         if category_data is None:
             await interaction.followup.send(
-                lang.get("ticket_category_not_found", "❌ This category was not found."), ephemeral=True
+                error_msg(lang.get("ticket_category_not_found", "This category was not found.")), ephemeral=True
             )
             return
 
@@ -627,10 +627,10 @@ class TicketProblemModal(NexusModal):
         existing = await _drop_if_channel_gone(interaction.guild, existing)
         if existing is not None:
             await interaction.followup.send(
-                lang.get(
+                error_msg(lang.get(
                     "ticket_already_open",
-                    "❌ You already have an open ticket in this category: <#{channel_id}>",
-                ).format(channel_id=existing["channel_id"]),
+                    "You already have an open ticket in this category: <#{channel_id}>",
+                ).format(channel_id=existing["channel_id"])),
                 ephemeral=True,
             )
             return
@@ -638,10 +638,10 @@ class TicketProblemModal(NexusModal):
         discord_category = guild.get_channel(category_data["category_channel_id"])
         if discord_category is None:
             await interaction.followup.send(
-                lang.get(
+                error_msg(lang.get(
                     "ticket_category_channel_missing",
-                    "❌ The Discord category no longer exists. Please inform an admin.",
-                ),
+                    "The Discord category no longer exists. Please inform an admin.",
+                )),
                 ephemeral=True,
             )
             return
@@ -697,7 +697,7 @@ class TicketProblemModal(NexusModal):
             )
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("ticket_no_permission_channel", "❌ I don't have permission to create the ticket channel."),
+                error_msg(lang.get("ticket_no_permission_channel", "I don't have permission to create the ticket channel.")),
                 ephemeral=True,
             )
             return
@@ -855,7 +855,7 @@ async def _finalize_close(
     transcript_text = await _generate_transcript_text(channel)
 
     closing_embed = discord.Embed(
-        title=lang.get("ticket_closed_title", "🔒 Ticket closed"),
+        title=with_emoji(NexusEmojis.LOCKED, lang.get("ticket_closed_title", "Ticket closed")),
         description=lang.get(
             "ticket_closed_desc",
             "This channel will be automatically deleted in **{duration}**. You can find the transcript attached.",
@@ -925,12 +925,12 @@ async def _reject_stale_decision(
     Meldung je nach aktuellem Status, und die veralteten Buttons verschwinden."""
     if ticket is not None and ticket["status"] == "closed":
         if declining:
-            text = lang.get("ticket_reopen_invalid", "❌ This ticket can no longer be reopened.")
+            text = error_msg(lang.get("ticket_reopen_invalid", "This ticket can no longer be reopened."))
         else:
-            text = lang.get("ticket_already_closed", "❌ This ticket is already closed.")
+            text = error_msg(lang.get("ticket_already_closed", "This ticket is already closed."))
     else:
         # Ticket wurde inzwischen wieder geöffnet (oder existiert nicht mehr)
-        text = lang.get("ticket_close_request_outdated", "❌ This close request is no longer active.")
+        text = error_msg(lang.get("ticket_close_request_outdated", "This close request is no longer active."))
     await interaction.response.send_message(text, ephemeral=True)
 
     # Nur Buttons im eigenen Ticket-Channel anfassen — bei fremder channel_id ist die
@@ -957,7 +957,7 @@ def _build_close_request_view(ticket_id: int, lang: dict) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(
         label=lang.get("ticket_close_btn_label", "Close Ticket"),
-        emoji= "🔒",
+        emoji=NexusEmojis.LOCKED,
         style=discord.ButtonStyle.secondary,
         custom_id=f"nexus_ticket_close_request_{ticket_id}",
     ))
@@ -972,7 +972,7 @@ def _build_confirm_decline_view(ticket_id: int, lang: dict) -> discord.ui.View:
     ))
     view.add_item(discord.ui.Button(
         label=lang.get("ticket_decline_btn_label", "Decline"), style=discord.ButtonStyle.secondary,
-        emoji="❌",
+        emoji=NexusEmojis.DECLINE,
         custom_id=f"nexus_ticket_decline_{ticket_id}",
     ))
     return view
@@ -999,7 +999,7 @@ class DeclineReasonModal(NexusModal):
         if not await db_tickets.reopen_ticket(self.ticket["id"]):
             await _remove_buttons(interaction.message)
             await interaction.followup.send(
-                lang.get("ticket_reopen_invalid", "❌ This ticket can no longer be reopened."), ephemeral=True
+                error_msg(lang.get("ticket_reopen_invalid", "This ticket can no longer be reopened.")), ephemeral=True
             )
             return
         await _remove_buttons(interaction.message)
@@ -1046,7 +1046,7 @@ class ForceCloseReasonModal(NexusModal):
         )
         if not closed:
             await interaction.followup.send(
-                lang.get("ticket_already_closed", "❌ This ticket is already closed."), ephemeral=True
+                error_msg(lang.get("ticket_already_closed", "This ticket is already closed.")), ephemeral=True
             )
             return
         await interaction.followup.send(
@@ -1154,10 +1154,10 @@ class Tickets(commands.Cog):
                 await send_upsell(interaction, lang, "ticket_limit", limit=limit, max=premium_limit)
                 return
             await interaction.response.send_message(
-                lang.get(
+                error_msg(lang.get(
                     "ticket_category_limit_reached",
-                    "❌ Limit of {limit} ticket categories reached.{premium_hint}",
-                ).format(limit=limit, premium_hint=""),
+                    "Limit of {limit} ticket categories reached.{premium_hint}",
+                ).format(limit=limit, premium_hint="")),
                 ephemeral=True,
             )
             return
@@ -1175,7 +1175,7 @@ class Tickets(commands.Cog):
         category_data = await db_ticket_categories.get_category(category, interaction.guild_id)
         if category_data is None:
             await interaction.followup.send(
-                lang.get("ticket_category_not_found", "❌ This category was not found."),
+                error_msg(lang.get("ticket_category_not_found", "This category was not found.")),
                 ephemeral=True,
             )
             return
@@ -1210,10 +1210,10 @@ class Tickets(commands.Cog):
 
         if not categories:
             await interaction.response.send_message(
-                lang.get(
+                error_msg(lang.get(
                     "ticket_panel_no_categories",
-                    "❌ No ticket category exists yet. Create one first with `/add_category`.",
-                ),
+                    "No ticket category exists yet. Create one first with `/add_category`.",
+                )),
                 ephemeral=True,
             )
             return
@@ -1221,7 +1221,7 @@ class Tickets(commands.Cog):
         settings = await db_ticket_settings.get_ticket_settings(interaction.guild_id)
         if channel is None and not settings.get("panel_message_id"):
             await interaction.response.send_message(
-                lang.get("ticket_panel_need_channel", "❌ There is no panel yet — please choose a channel."),
+                error_msg(lang.get("ticket_panel_need_channel", "There is no panel yet — please choose a channel.")),
                 ephemeral=True,
             )
             return
@@ -1275,12 +1275,12 @@ class Tickets(commands.Cog):
         ticket = await db_tickets.get_ticket_by_channel(interaction.channel_id)
         if ticket is None:
             await interaction.response.send_message(
-                lang.get("ticket_not_a_ticket_channel", "❌ This is not a ticket channel."), ephemeral=True
+                error_msg(lang.get("ticket_not_a_ticket_channel", "This is not a ticket channel.")), ephemeral=True
             )
             return
         if ticket["status"] == "closed":
             await interaction.response.send_message(
-                lang.get("ticket_already_closed", "❌ This ticket is already closed."), ephemeral=True
+                error_msg(lang.get("ticket_already_closed", "This ticket is already closed.")), ephemeral=True
             )
             return
         # default_permissions lässt sich pro Server umstellen — Support-Rolle trotzdem selbst prüfen
@@ -1313,7 +1313,7 @@ class Tickets(commands.Cog):
         guild_settings = await db_settings.get_guild(interaction.guild_id)
         if not (guild_settings and guild_settings.get("modules", {}).get("tickets", False)):
             await interaction.response.send_message(
-                lang.get("ticket_module_disabled", "❌ The ticket system is currently disabled on this server."),
+                error_msg(lang.get("ticket_module_disabled", "The ticket system is currently disabled on this server.")),
                 ephemeral=True,
             )
             return
@@ -1321,7 +1321,7 @@ class Tickets(commands.Cog):
         category_data = await db_ticket_categories.get_category(category_id, interaction.guild_id)
         if category_data is None:
             await interaction.response.send_message(
-                lang.get("ticket_category_not_found", "❌ This category was not found."), ephemeral=True
+                error_msg(lang.get("ticket_category_not_found", "This category was not found.")), ephemeral=True
             )
             return
 
@@ -1329,10 +1329,10 @@ class Tickets(commands.Cog):
         existing = await _drop_if_channel_gone(interaction.guild, existing)
         if existing is not None:
             await interaction.response.send_message(
-                lang.get(
+                error_msg(lang.get(
                     "ticket_already_open",
-                    "❌ You already have an open ticket in this category: <#{channel_id}>",
-                ).format(channel_id=existing["channel_id"]),
+                    "You already have an open ticket in this category: <#{channel_id}>",
+                ).format(channel_id=existing["channel_id"])),
                 ephemeral=True,
             )
             return
@@ -1363,7 +1363,7 @@ class Tickets(commands.Cog):
 
             if not _ticket_matches(ticket, interaction) or ticket["status"] != "open":
                 await interaction.response.send_message(
-                    lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
+                    error_msg(lang.get("ticket_close_request_invalid", "This ticket cannot be closed right now.")),
                     ephemeral=True,
                 )
                 return
@@ -1378,7 +1378,7 @@ class Tickets(commands.Cog):
             if not await db_tickets.request_closure(ticket_id):
                 # Ein anderes Teammitglied war schneller
                 await interaction.response.send_message(
-                    lang.get("ticket_close_request_invalid", "❌ This ticket cannot be closed right now."),
+                    error_msg(lang.get("ticket_close_request_invalid", "This ticket cannot be closed right now.")),
                     ephemeral=True,
                 )
                 return
@@ -1398,7 +1398,7 @@ class Tickets(commands.Cog):
             ).format(duration=_duration(ticket_settings["closure_timeout_hours"], lang))
 
             embed = discord.Embed(
-                title=lang.get("ticket_pending_closure_title", "🔒 Ticket is being closed"),
+                title=with_emoji(NexusEmojis.LOCKED, lang.get("ticket_pending_closure_title", "Ticket is being closed")),
                 description=description,
                 color=discord.Color.orange(),
             )
@@ -1415,7 +1415,7 @@ class Tickets(commands.Cog):
                 return
             if interaction.user.id != ticket["user_id"]:
                 await interaction.response.send_message(
-                    lang.get("ticket_only_creator", "❌ Only the creator of this ticket can confirm this."),
+                    error_msg(lang.get("ticket_only_creator", "Only the creator of this ticket can confirm this.")),
                     ephemeral=True,
                 )
                 return
@@ -1424,7 +1424,7 @@ class Tickets(commands.Cog):
             await _remove_buttons(interaction.message)
             if not await _finalize_close(self.bot, interaction.guild, ticket, lang, closed_by_type="user_confirmed"):
                 await interaction.followup.send(
-                    lang.get("ticket_already_closed", "❌ This ticket is already closed."), ephemeral=True
+                    error_msg(lang.get("ticket_already_closed", "This ticket is already closed.")), ephemeral=True
                 )
             return
 
@@ -1438,7 +1438,7 @@ class Tickets(commands.Cog):
                 return
             if interaction.user.id != ticket["user_id"]:
                 await interaction.response.send_message(
-                    lang.get("ticket_only_creator", "❌ Only the creator of this ticket can confirm this."),
+                    error_msg(lang.get("ticket_only_creator", "Only the creator of this ticket can confirm this.")),
                     ephemeral=True,
                 )
                 return

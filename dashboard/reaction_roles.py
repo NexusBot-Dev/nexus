@@ -5,7 +5,7 @@ from database import db_settings, db_reaction_roles
 from systems.premium import is_premium
 from cogs.reaction_roles import _entry_cap, _update_dropdown_message, repost_panel, save_panel_text
 from cogs.utils import get_lang
-from systems.hierarchy import can_grant_role, can_set_up_self_roles, format_issue
+from systems.hierarchy import can_grant_role, can_set_up_self_roles, issue_text
 from .health import plain_mentions
 
 @register_action("reaction_roles", "list-groups")
@@ -82,7 +82,7 @@ async def create_message(ctx: DashCtx) -> dict:
 
     # Vor dem Posten prüfen — sonst bliebe eine Nachricht zurück, an die der User keine Rolle hängen darf
     if not (check := can_set_up_self_roles(guild, ctx.actor)):
-        raise ValueError(format_issue(check, ctx.lang))
+        raise ValueError(issue_text(check, ctx.lang))
 
     channel = guild.get_channel(channel_id)
     if channel is None:
@@ -126,7 +126,7 @@ async def add_entry(ctx: DashCtx) -> dict:
     if role is None:
         raise DashboardError("dash_err_role_gone")
     if not (check := can_grant_role(guild, role, ctx.actor)):
-        raise ValueError(plain_mentions(guild, format_issue(check, ctx.lang)))
+        raise ValueError(plain_mentions(guild, issue_text(check, ctx.lang)))
 
     channel = guild.get_channel(channel_id)
     if channel is None:
@@ -188,7 +188,7 @@ async def update_message(ctx: DashCtx) -> dict:
         raise DashboardError("dash_err_rr_description_too_long")
 
     if not (check := can_set_up_self_roles(guild, ctx.actor)):
-        raise ValueError(format_issue(check, ctx.lang))
+        raise ValueError(issue_text(check, ctx.lang))
 
     status = await save_panel_text(guild, message_id, title, description)
     if status == "gone":
@@ -216,7 +216,7 @@ async def update_entry(ctx: DashCtx) -> dict:
     if role is None:
         raise DashboardError("dash_err_role_gone")
     if not (check := can_grant_role(guild, role, ctx.actor)):
-        raise ValueError(plain_mentions(guild, format_issue(check, ctx.lang)))
+        raise ValueError(plain_mentions(guild, issue_text(check, ctx.lang)))
 
     entries = await db_reaction_roles.get_reaction_roles(guild_id, message_id)
     entry = next((e for e in entries if e["id"] == entry_id), None)
@@ -245,7 +245,7 @@ async def repost_message(ctx: DashCtx) -> dict:
     channel_id = parse_id(payload.get("channel_id"), "Gültiger Channel wird benötigt")
 
     if not (check := can_set_up_self_roles(guild, ctx.actor)):
-        raise ValueError(format_issue(check, ctx.lang))
+        raise ValueError(issue_text(check, ctx.lang))
 
     channel = guild.get_channel(channel_id)
     if not isinstance(channel, discord.TextChannel):
@@ -258,7 +258,7 @@ async def repost_message(ctx: DashCtx) -> dict:
     if result.status == "still_there":
         raise DashboardError("dash_err_rr_repost_still_there")
     if result.status == "no_perms":
-        raise ValueError(plain_mentions(guild, format_issue(result.check, ctx.lang)))
+        raise ValueError(plain_mentions(guild, issue_text(result.check, ctx.lang)))
     if result.status == "send_failed":
         raise DashboardError("dash_err_discord_rejected")
 

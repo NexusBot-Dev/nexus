@@ -2,7 +2,7 @@ import asyncio
 import discord
 from .registry import register_action, DashCtx, DashboardError, InvalidRequest
 from database import db_levels
-from systems.hierarchy import can_use_channel, can_grant_role, format_issue
+from systems.hierarchy import can_use_channel, can_grant_role, issue_text
 from .health import plain_mentions
 from systems.voice_xp import MAX_XP_PER_MINUTE as VOICE_XP_MAX
 from systems.exp_system import CHAT_XP_MAX, xp_range_error
@@ -82,7 +82,7 @@ async def set_role(ctx: DashCtx) -> dict:
         raise DashboardError("dash_err_role_gone")
 
     if not (check := can_grant_role(guild, role, ctx.actor)):
-        raise ValueError(plain_mentions(guild, format_issue(check, ctx.lang)))
+        raise ValueError(plain_mentions(guild, issue_text(check, ctx.lang)))
 
     await db_levels.set_level_role(guild_id, level, int(role_id))
     return {"level": level, "role_id": role_id, "role_name": role.name, "role_color": f"#{role.color.value:06x}" if role.color.value else "#94a3b8"}

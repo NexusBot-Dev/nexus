@@ -8,6 +8,7 @@ from database import db_settings, db_warnings
 from cogs.utils import post_logging, dm_user, get_lang, get_user_lang
 from emojis import NexusEmojis
 from systems.hierarchy import can_act_on_member, can_manage_role, format_issue, Issue
+from systems.ui import error_msg, with_emoji
 
 log = logging.getLogger(__name__)
 
@@ -132,14 +133,14 @@ class Moderation(commands.Cog):
             await member.kick(reason=reason)
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("kick_no_permission", "❌ I don't have permission to kick this user."),
+                error_msg(lang.get("kick_no_permission", "I don't have permission to kick this user.")),
                 ephemeral=True,
             )
             return
         except discord.HTTPException as e:
             log.exception("Fehler beim Kick von %s: %s", member, e)
             await interaction.followup.send(
-                lang.get("kick_error", "❌ Something went wrong while kicking this user."),
+                error_msg(lang.get("kick_error", "Something went wrong while kicking this user.")),
                 ephemeral=True,
             )
             return
@@ -200,13 +201,13 @@ class Moderation(commands.Cog):
 
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("ban_no_permission", "❌ I don't have permission to ban this user."),
+                error_msg(lang.get("ban_no_permission", "I don't have permission to ban this user.")),
                 ephemeral=True,
             )
             return
         except discord.HTTPException:
             log.exception("ban failed (guild=%s, target=%s)", interaction.guild_id, member.id)
-            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            await interaction.followup.send(error_msg(lang.get("error_occurred", "Something went wrong. Please try again.")), ephemeral=True)
             return
         await post_logging(
             self.bot,
@@ -239,7 +240,7 @@ class Moderation(commands.Cog):
 
         if not user.isdigit():
             await interaction.followup.send(
-                lang.get("unban_invalid_user", "❌ Please select a user from the suggestions."),
+                error_msg(lang.get("unban_invalid_user", "Please select a user from the suggestions.")),
                 ephemeral=True,
             )
             return
@@ -258,13 +259,13 @@ class Moderation(commands.Cog):
             )
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("unban_no_permission", "❌ I don't have permission to unban this user."),
+                error_msg(lang.get("unban_no_permission", "I don't have permission to unban this user.")),
                 ephemeral=True,
             )
             return
         except discord.NotFound:
             await interaction.followup.send(
-                lang.get("unban_not_found", "❌ This user is not banned anymore."),
+                error_msg(lang.get("unban_not_found", "This user is not banned anymore.")),
                 ephemeral=True,
             )
             return
@@ -340,13 +341,13 @@ class Moderation(commands.Cog):
             await member.add_roles(role_obj)
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("add_role_no_permission", "❌ I don't have permission to grant a role."),
+                error_msg(lang.get("add_role_no_permission", "I don't have permission to grant a role.")),
                 ephemeral=True,
             )
             return
         except discord.HTTPException:
             log.exception("add_role failed (guild=%s, target=%s)", interaction.guild_id, member.id)
-            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            await interaction.followup.send(error_msg(lang.get("error_occurred", "Something went wrong. Please try again.")), ephemeral=True)
             return
         await post_logging(
             self.bot,
@@ -408,13 +409,13 @@ class Moderation(commands.Cog):
             await member.remove_roles(role_obj)
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("remove_role_no_permission", "❌ I don't have permission to remove this role."),
+                error_msg(lang.get("remove_role_no_permission", "I don't have permission to remove this role.")),
                 ephemeral=True,
             )
             return
         except discord.HTTPException:
             log.exception("remove_role failed (guild=%s, target=%s)", interaction.guild_id, member.id)
-            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            await interaction.followup.send(error_msg(lang.get("error_occurred", "Something went wrong. Please try again.")), ephemeral=True)
             return
         await post_logging(
             self.bot,
@@ -463,13 +464,13 @@ class Moderation(commands.Cog):
             await channel.edit(slowmode_delay=duration)
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("slowmode_no_permission", "❌ I don't have permission to edit this channel."),
+                error_msg(lang.get("slowmode_no_permission", "I don't have permission to edit this channel.")),
                 ephemeral=True,
             )
             return
         except discord.HTTPException:
             log.exception("slowmode failed (guild=%s, channel=%s)", interaction.guild_id, channel.id)
-            await interaction.followup.send(lang.get("error_occurred", "❌ Something went wrong. Please try again."), ephemeral=True)
+            await interaction.followup.send(error_msg(lang.get("error_occurred", "Something went wrong. Please try again.")), ephemeral=True)
             return
 
         duration_enum = next((d for d in SlowmodeDuration if d.value == duration), None)
@@ -535,7 +536,7 @@ class Moderation(commands.Cog):
             reason = lang.get("no_reason", "No reason given")
         if duration < 0:
             await interaction.followup.send(
-                lang.get("timeout_negative", "❌ The duration cannot be negative."),
+                error_msg(lang.get("timeout_negative", "The duration cannot be negative.")),
                 ephemeral=True,
             )
             return
@@ -552,7 +553,7 @@ class Moderation(commands.Cog):
                 )
             except discord.Forbidden:
                 await interaction.followup.send(
-                    lang.get("timeout_no_permission", "❌ I don't have permission to timeout this user."),
+                    error_msg(lang.get("timeout_no_permission", "I don't have permission to timeout this user.")),
                     ephemeral=True,
                 )
                 return
@@ -575,7 +576,7 @@ class Moderation(commands.Cog):
                 )
             except discord.Forbidden:
                 await interaction.followup.send(
-                    lang.get("timeout_no_permission", "❌ I don't have permission to timeout this user."),
+                    error_msg(lang.get("timeout_no_permission", "I don't have permission to timeout this user.")),
                     ephemeral=True,
                 )
                 return
@@ -647,9 +648,9 @@ class Moderation(commands.Cog):
                 ), ephemeral=True)
         except discord.Forbidden:
             await interaction.followup.send(
-                lang.get("purge_no_permission", "❌ I don't have permission to delete messages in {channel}.").format(
+                error_msg(lang.get("purge_no_permission", "I don't have permission to delete messages in {channel}.").format(
                     channel=channel.mention,
-                ),
+                )),
                 ephemeral=True,
             )
             return
@@ -699,7 +700,7 @@ class Moderation(commands.Cog):
         )
         await dm_user(
             member,
-            title=lang.get(ModAction.WARN.key, "⚠️ You were warned"),
+            title=with_emoji(NexusEmojis.WARNING, lang.get(ModAction.WARN.key, "You were warned")),
             reason=reason,
             color=ModAction.WARN.color,
             lang=lang,

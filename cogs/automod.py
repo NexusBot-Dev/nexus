@@ -9,7 +9,7 @@ from cogs.utils import get_lang, module_required
 from systems import honeypot as hp_system
 from config import NEXUS_COLOR
 from emojis import NexusEmojis
-from systems.ui import NexusView, NexusModal
+from systems.ui import NexusView, NexusModal, error_msg, with_emoji
 
 log = logging.getLogger(__name__)
 
@@ -134,12 +134,12 @@ class AutoModView(NexusView):
             # Ohne Admin: Erkennen/Bestrafen geht, Wiederherstellen nur teilweise
             if new_status and not self.guild.me.guild_permissions.administrator:
                 await interaction.followup.send(
-                    self.lang.get(
+                    with_emoji(NexusEmojis.WARNING, self.lang.get(
                         "shield_admin_hint",
-                        "⚠️ Nexus Shield is active and will detect attacks and stop the attackers. "
+                        "Nexus Shield is active and will detect attacks and stop the attackers. "
                         "To fully **restore** deleted roles and channels with their permissions, "
                         "Nexus needs **Administrator**. Without it, restores may be incomplete.",
-                    ),
+                    )),
                     ephemeral=True,
                 )
 
@@ -153,7 +153,7 @@ class AutoModView(NexusView):
                     log.info("AutoMod Regel '%s' für %s deaktiviert.", rule_key, self.guild.name)
                 except discord.Forbidden:
                     await interaction.followup.send(
-                        self.lang.get("automod_no_permission", "❌ I don't have permission to manage AutoMod."),
+                        error_msg(self.lang.get("automod_no_permission", "I don't have permission to manage AutoMod.")),
                         ephemeral=True,
                     )
                     return
@@ -164,7 +164,7 @@ class AutoModView(NexusView):
 
                 if existing and not existing.name.startswith("Nexus —"):
                     await interaction.followup.send(
-                        self.lang.get("automod_rule_exists", "❌ An external AutoMod rule already exists for this type."),
+                        error_msg(self.lang.get("automod_rule_exists", "An external AutoMod rule already exists for this type.")),
                         ephemeral=True
                     )
                     return
@@ -175,7 +175,7 @@ class AutoModView(NexusView):
                         log.info("AutoMod Regel '%s' für %s reaktiviert.", rule_key, self.guild.name)
                     except discord.Forbidden:
                         await interaction.followup.send(
-                            self.lang.get("automod_no_permission", "❌ I don't have permission to manage AutoMod."),
+                            error_msg(self.lang.get("automod_no_permission", "I don't have permission to manage AutoMod.")),
                             ephemeral=True,
                         )
                         return
@@ -203,7 +203,7 @@ class AutoModView(NexusView):
                         log.info("AutoMod Regel '%s' für %s neu erstellt.", rule_key, self.guild.name)
                     except discord.Forbidden:
                         await interaction.followup.send(
-                            self.lang.get("automod_no_permission", "❌ I don't have permission to manage AutoMod."),
+                            error_msg(self.lang.get("automod_no_permission", "I don't have permission to manage AutoMod.")),
                             ephemeral=True,
                         )
                         return
@@ -301,7 +301,7 @@ class KeywordModal(NexusModal):
 
         except discord.Forbidden:
             await interaction.followup.send(
-                self.lang.get("automod_no_permission", "❌ I don't have permission to manage AutoMod."),
+                error_msg(self.lang.get("automod_no_permission", "I don't have permission to manage AutoMod.")),
                 ephemeral=True,
             )
 
@@ -324,7 +324,7 @@ def _automod_embed(active_rules: dict, shield_enabled: bool, lang: dict, honeypo
         rule = active_rules.get(key)
         is_active = rule is not None and rule.enabled
 
-        status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')}" if is_active else f"{lang.get('module_inactive', '❌ Disabled')}"
+        status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')}" if is_active else f"{NexusEmojis.OFF} {lang.get('module_inactive', 'Disabled')}"
 
         if key == "keywords" and is_active:
             count  = len(rule.trigger.keyword_filter or [])
@@ -332,7 +332,7 @@ def _automod_embed(active_rules: dict, shield_enabled: bool, lang: dict, honeypo
 
         embed.add_field(name=f"{name}", value=f"{status}\n{desc}", inline=False)
 
-    shield_status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')}" if shield_enabled else f"{lang.get('module_inactive', '❌ Disabled')}"
+    shield_status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')}" if shield_enabled else f"{NexusEmojis.OFF} {lang.get('module_inactive', 'Disabled')}"
     shield_desc = lang.get("automod_shield_desc", "Monitors audit logs with risk-scoring against rapid server nukes.")
     embed.add_field(name="🚨 Anti-Nuke Shield", value=f"{shield_status}\n{shield_desc}", inline=False)
 
@@ -340,7 +340,7 @@ def _automod_embed(active_rules: dict, shield_enabled: bool, lang: dict, honeypo
     stats = honeypot_stats or {}
     days = stats.get("timeout_days", db_honeypot.DEFAULT_TIMEOUT_DAYS)
     honeypot_active = honeypot_channel_id is not None
-    honeypot_status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')} — <#{honeypot_channel_id}>" if honeypot_active else f"{lang.get('module_inactive', '❌ Disabled')}"
+    honeypot_status = f"{NexusEmojis.CHECKMARK} {lang.get('module_active', 'Active')} — <#{honeypot_channel_id}>" if honeypot_active else f"{NexusEmojis.OFF} {lang.get('module_inactive', 'Disabled')}"
     honeypot_value = honeypot_status
     if honeypot_active:
         honeypot_value += "\n" + lang.get("automod_honeypot_punish", "👤 {members} · 🤖 {bots}").format(

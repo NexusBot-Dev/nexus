@@ -34,6 +34,8 @@ class Boosts(commands.Cog):
             settings = await db_settings.get_guild(member.guild.id)
             if settings is None:
                 return
+            if not await db_settings.is_module_enabled(member.guild.id, "boosts"):
+                return
 
             channel_id = settings.get("boost_channel_id") or settings.get("welcome_channel_id")
             if not channel_id:

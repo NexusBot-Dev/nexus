@@ -11,7 +11,7 @@ from cogs.utils import get_lang, module_required
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.hierarchy import PermCheck, can_grant_role, can_manage_role, can_set_up_self_roles, can_use_channel, format_issue
-from systems.ui import NexusView, NexusModal, send_ephemeral
+from systems.ui import NexusView, NexusModal, error_msg, send_ephemeral, with_emoji
 from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
@@ -58,25 +58,25 @@ def _role_issue(interaction: discord.Interaction, role: discord.Role, lang: dict
         interaction.user.id != interaction.guild.owner_id
         and role >= interaction.user.top_role
     ):
-        return lang.get(
+        return with_emoji(NexusEmojis.WARNING, lang.get(
             "rr_role_hierarchy_user",
-            "⚠️ **Error:** This role is ranked equal to or higher than your own highest role. "
+            "**Error:** This role is ranked equal to or higher than your own highest role. "
             "You cannot use it for reaction roles. Please choose a different role.",
-        )
+        ))
 
     if role.managed:
-        return lang.get(
+        return error_msg(lang.get(
             "rr_role_managed",
-            "❌ **Error:** This role is managed by an integration (e.g., another bot or Server Booster). "
+            "**Error:** This role is managed by an integration (e.g., another bot or Server Booster). "
             "This role cannot be used for reaction roles. Please choose a different role.",
-        )
+        ))
 
     if role >= interaction.guild.me.top_role:
-        return lang.get(
+        return with_emoji(NexusEmojis.WARNING, lang.get(
             "rr_role_hierarchy",
-            "⚠️ **Error:** This role is **above** me in the server hierarchy. "
+            "**Error:** This role is **above** me in the server hierarchy. "
             "I do not have permission to assign this role to users. Please move my role higher up in your server settings."
-        )
+        ))
 
     if not (check := can_grant_role(interaction.guild, role, interaction.user)):
         return format_issue(check, lang)
@@ -91,10 +91,10 @@ def _entry_cap(display_mode: str) -> int:
     return _MAX_ENTRIES.get(display_mode, _MAX_ENTRIES["reaction"])
 
 def _limit_text(lang: dict, cap: int) -> str:
-    return lang.get(
+    return error_msg(lang.get(
         "rr_edit_limit_reached",
-        "❌ This panel already has the maximum of {max} roles. Remove a role first or create a second panel.",
-    ).format(max=cap)
+        "This panel already has the maximum of {max} roles. Remove a role first or create a second panel.",
+    ).format(max=cap))
 
 # ─── Setup Flow Views ────────────────────────────────────────────────────────
 
@@ -175,7 +175,7 @@ class ReactionRoleCreateModal(NexusModal):
         except discord.HTTPException as e:
             log.warning("[RR] Konnte RR-Nachricht in %s nicht senden: %s", self.channel.id, e)
             await interaction.response.send_message(
-                self.lang.get("error_forbidden", "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong."),
+                error_msg(self.lang.get("error_forbidden", "I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.")),
                 ephemeral=True,
             )
             return
@@ -281,7 +281,7 @@ class EmojiInputView(NexusView):
         # 1. Update der Setup-Nachricht: Warte auf Reaktion
         await interaction.response.edit_message(
             embed=discord.Embed(
-                title=self.lang.get("rr_waiting_emoji_title", "⏳ Waiting for Emoji..."),
+                title=with_emoji(NexusEmojis.LOADING, self.lang.get("rr_waiting_emoji_title", "Waiting for Emoji...")),
                 description=self.lang.get("rr_waiting_emoji_desc", 
                     "React to the created message in {channel} now!\n\n"
                     "You have **60 seconds**.",
@@ -308,10 +308,10 @@ class EmojiInputView(NexusView):
                     isinstance(reaction.emoji, discord.Emoji) and not reaction.emoji.is_usable()
                 ):
                     await interaction.followup.send(
-                        self.lang.get(
+                        error_msg(self.lang.get(
                             "rr_emoji_foreign",
-                            "❌ I can't use this emoji because it's from a server I'm not on. Please pick another one.",
-                        ),
+                            "I can't use this emoji because it's from a server I'm not on. Please pick another one.",
+                        )),
                         ephemeral=True,
                     )
                     continue
@@ -323,11 +323,11 @@ class EmojiInputView(NexusView):
                 if existing_rr is not None:
                     # Wir bringen den User zurück zur Rollenauswahl, damit er neu ansetzen kann
                     await interaction.followup.send(
-                        self.lang.get(
+                        with_emoji(NexusEmojis.WARNING, self.lang.get(
                             "rr_emoji_already_set",
-                            "⚠️ **Notice:** The emoji {emoji_str} is already assigned to this message.\n"
+                            "**Notice:** The emoji {emoji_str} is already assigned to this message.\n"
                             "Returning you to the selection so you can try a different role or emoji!",          
-                        ).format(emoji_str=emoji_str),
+                        ).format(emoji_str=emoji_str)),
                         ephemeral=True
                     )
                     await interaction.edit_original_response(
@@ -384,7 +384,7 @@ class EmojiInputView(NexusView):
                     view=EmojiInputView(self.bot, self.owner_id, self.channel, self.panel_message, self.role, self.lang, from_edit=self.from_edit),
                 )
                 await interaction.followup.send(
-                    self.lang.get("rr_timeout", "❌ Time expired. Click the button again.",),
+                    error_msg(self.lang.get("rr_timeout", "Time expired. Click the button again.",)),
                     ephemeral=True,
                 )
                 break
@@ -406,14 +406,15 @@ class ModeSelectView(NexusView):
             self.unique_btn.emoji = discord.PartialEmoji.from_str("🎯")
             self.unique_btn.style = discord.ButtonStyle.primary
         else:
-            self.unique_btn.label = lang.get("rr_btn_unique_free", "🔒 Unique (Premium)")
+            self.unique_btn.label = lang.get("rr_btn_unique_free", "Unique (Premium)")
+            self.unique_btn.emoji = NexusEmojis.LOCKED
             self.unique_btn.style = discord.ButtonStyle.secondary
 
     @discord.ui.button(label="Toggle", style=discord.ButtonStyle.success)
     async def toggle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._save_and_continue(interaction, mode="toggle")
 
-    @discord.ui.button(label="🔒 Unique (Premium)", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Unique (Premium)", style=discord.ButtonStyle.secondary)
     async def unique_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()   # ohne Premium: Hinweis als neue Nachricht, sonst weiter in derselben
         if not await is_premium(interaction.guild_id):
@@ -448,7 +449,7 @@ class ModeSelectView(NexusView):
             try:
                 await self.panel_message.add_reaction(self.emoji)
             except discord.HTTPException:
-                await send_ephemeral(interaction, self.lang.get("rr_emoji_failed", "❌ Emoji could not be added to the message."))
+                await send_ephemeral(interaction, error_msg(self.lang.get("rr_emoji_failed", "Emoji could not be added to the message.")))
                 return
 
         await db_reaction_roles.add_reaction_role(
@@ -653,10 +654,10 @@ def _step_group_select_embed(lang: dict, color: int) -> discord.Embed:
 # ─── /reactionrole_edit — Übersicht + Hub ────────────────────────────────────
 
 def _panel_gone_text(lang: dict) -> str:
-    return lang.get(
+    return error_msg(lang.get(
         "rr_edit_panel_gone",
-        "❌ This reaction role panel no longer exists (deleted in the meantime?).",
-    )
+        "This reaction role panel no longer exists (deleted in the meantime?).",
+    ))
 
 async def _fetch_panel_message(
     guild: discord.Guild, channel_id: int, message_id: int,
@@ -915,22 +916,22 @@ class PanelEditView(NexusView):
                 channel=self.channel.mention, url=self.panel_message.jump_url
             ))
         elif self.status == "message_gone":
-            lines.append(lang.get(
+            lines.append(with_emoji(NexusEmojis.WARNING, lang.get(
                 "rr_edit_message_gone",
-                "⚠️ The panel message in {channel} was deleted. Click **Repost** to post it again — all roles are kept.",
-            ).format(channel=self.channel.mention))
+                "The panel message in {channel} was deleted. Click **Repost** to post it again — all roles are kept.",
+            ).format(channel=self.channel.mention)))
         elif self.status == "channel_gone":
-            lines.append(lang.get(
+            lines.append(with_emoji(NexusEmojis.WARNING, lang.get(
                 "rr_edit_channel_gone",
-                "⚠️ The panel's channel no longer exists. Click **Repost** and pick a new channel — all roles are kept.",
-            ))
+                "The panel's channel no longer exists. Click **Repost** and pick a new channel — all roles are kept.",
+            )))
         else:
             # Kein Lesezugriff: konkret sagen, was fehlt (Forbidden trotz passender Rechte → generischer Text)
             issue = format_issue(can_use_channel(self.channel, "read_message_history"), lang)
-            lines.append(issue or lang.get(
+            lines.append(issue or error_msg(lang.get(
                 "error_forbidden",
-                "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
-            ))
+                "I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
+            )))
 
         mode = self.msg_ref["display_mode"]
         if mode == "dropdown":
@@ -1066,15 +1067,15 @@ class PanelTextModal(NexusModal):
                 "💾 Text saved. The panel message is currently not reachable — the new text will be used when you repost it.",
             )
         elif status == "not_own":
-            warning = self.lang.get(
+            warning = with_emoji(NexusEmojis.WARNING, self.lang.get(
                 "rr_edit_not_own_message",
-                "⚠️ Text saved, but this panel message wasn't posted by me, so I can't edit it.",
-            )
+                "Text saved, but this panel message wasn't posted by me, so I can't edit it.",
+            ))
         elif status == "failed":
-            warning = self.lang.get(
+            warning = error_msg(self.lang.get(
                 "error_forbidden",
-                "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
-            )
+                "I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
+            ))
         else:
             warning = None
 
@@ -1180,11 +1181,11 @@ class PanelEntrySelectView(NexusView):
         await _show_hub(interaction, hub.bot, self.owner_id, hub.message_id, self.lang, previous=self)
         if reactions_left:
             await interaction.followup.send(
-                self.lang.get(
+                with_emoji(NexusEmojis.WARNING, self.lang.get(
                     "rr_edit_reactions_left",
-                    "⚠️ Roles removed, but I couldn't clear the members' reactions (missing **Manage Messages**). "
+                    "Roles removed, but I couldn't clear the members' reactions (missing **Manage Messages**). "
                     "They no longer do anything and can be removed manually.",
-                ),
+                )),
                 ephemeral=True,
             )
 
@@ -1213,7 +1214,7 @@ class PanelChangeRoleView(NexusView):
             # Eintrag inzwischen woanders entfernt — zurück in den Hub, der zeigt den aktuellen Stand
             await _show_hub(interaction, self.hub.bot, self.owner_id, self.hub.message_id, self.lang, previous=self)
             await interaction.followup.send(
-                self.lang.get("rr_edit_entry_gone", "❌ This entry no longer exists."), ephemeral=True
+                error_msg(self.lang.get("rr_edit_entry_gone", "This entry no longer exists.")), ephemeral=True
             )
             return
 
@@ -1262,7 +1263,7 @@ class PanelRepostView(NexusView):
         channel = guild.get_channel(select.values[0].id)
         if not isinstance(channel, discord.TextChannel):
             await interaction.response.send_message(
-                self.lang.get("error_generic", "❌ Something went wrong. Please try again later."), ephemeral=True
+                error_msg(self.lang.get("error_generic", "Something went wrong. Please try again later.")), ephemeral=True
             )
             return
 
@@ -1275,7 +1276,7 @@ class PanelRepostView(NexusView):
             return
         if result.status == "send_failed":
             await interaction.followup.send(
-                self.lang.get("error_forbidden", "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong."),
+                error_msg(self.lang.get("error_forbidden", "I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.")),
                 ephemeral=True,
             )
             return
@@ -1285,10 +1286,10 @@ class PanelRepostView(NexusView):
         await _show_hub(interaction, hub.bot, self.owner_id, new_id, self.lang, previous=self)
         if failed := result.failed:
             await interaction.followup.send(
-                self.lang.get(
+                with_emoji(NexusEmojis.WARNING, self.lang.get(
                     "rr_edit_repost_partial",
-                    "⚠️ Panel reposted, but I couldn't restore: {items}. Remove and re-add these roles if needed.",
-                ).format(items=" ".join(failed)),
+                    "Panel reposted, but I couldn't restore: {items}. Remove and re-add these roles if needed.",
+                ).format(items=" ".join(failed))),
                 ephemeral=True,
             )
 
@@ -1459,7 +1460,7 @@ class ReactionRoles(commands.Cog):
             msg_id = int(message_id)
         except ValueError:
             await interaction.followup.send(
-                lang.get("invalid_id", "❌ Invalid ID."), ephemeral=True
+                error_msg(lang.get("invalid_id", "Invalid ID.")), ephemeral=True
             )
             return
 
@@ -1467,7 +1468,7 @@ class ReactionRoles(commands.Cog):
         roles = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
         if not msg_ref and not roles:
             await interaction.followup.send(
-                lang.get("rr_not_found", "❌ This reaction role no longer exists."), ephemeral=True
+                error_msg(lang.get("rr_not_found", "This reaction role no longer exists.")), ephemeral=True
             )
             return
 
@@ -1515,14 +1516,14 @@ class ReactionRoles(commands.Cog):
         try:
             msg_id = int(message_id)
         except ValueError:
-            await interaction.followup.send(lang.get("invalid_id", "❌ Invalid ID."), ephemeral=True)
+            await interaction.followup.send(error_msg(lang.get("invalid_id", "Invalid ID.")), ephemeral=True)
             return
 
         msg_ref = await db_reaction_roles.get_message_ref(interaction.guild_id, msg_id)
         roles = await db_reaction_roles.get_reaction_roles(interaction.guild_id, msg_id)
         if not msg_ref and not roles:
             await interaction.followup.send(
-                lang.get("rr_not_found", "❌ This reaction role no longer exists."), ephemeral=True
+                error_msg(lang.get("rr_not_found", "This reaction role no longer exists.")), ephemeral=True
             )
             return
 
@@ -1607,7 +1608,7 @@ class ReactionRoles(commands.Cog):
 
         if not roles:
             await interaction.response.send_message(
-                lang.get("rr_not_found", "This reaction role no longer exists."), ephemeral=True
+                error_msg(lang.get("rr_not_found", "This reaction role no longer exists.")), ephemeral=True
             )
             return
 
@@ -1635,7 +1636,7 @@ class ReactionRoles(commands.Cog):
 
         if not options:
             await interaction.response.send_message(
-                lang.get("rr_not_found", "This reaction role no longer exists."), ephemeral=True
+                error_msg(lang.get("rr_not_found", "This reaction role no longer exists.")), ephemeral=True
             )
             return
 
@@ -1664,7 +1665,7 @@ class ReactionRoles(commands.Cog):
 
         if not roles:
             await interaction.followup.send(
-                lang.get("rr_not_found", "This reaction role no longer exists."), ephemeral=True
+                error_msg(lang.get("rr_not_found", "This reaction role no longer exists.")), ephemeral=True
             )
             return
 
@@ -1726,16 +1727,16 @@ class ReactionRoles(commands.Cog):
         except discord.HTTPException as e:
             log.warning("[RR] Dropdown-Rollenänderung auf %s fehlgeschlagen: %s", interaction.guild_id, e)
             await interaction.followup.send(
-                lang.get("rr_no_permission", "❌ I don't have permission to manage roles."), ephemeral=True
+                error_msg(lang.get("rr_no_permission", "I don't have permission to manage roles.")), ephemeral=True
             )
             return
 
         if skipped:
             await interaction.followup.send(
-                lang.get(
+                with_emoji(NexusEmojis.WARNING, lang.get(
                     "rr_roles_partially_updated",
-                    "⚠️ Your roles were updated, but I couldn't change: {roles}. Please let a server admin know.",
-                ).format(roles=", ".join(r.mention for r in skipped)),
+                    "Your roles were updated, but I couldn't change: {roles}. Please let a server admin know.",
+                ).format(roles=", ".join(r.mention for r in skipped))),
                 ephemeral=True,
             )
             return

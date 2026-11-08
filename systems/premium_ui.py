@@ -12,6 +12,7 @@ from config import NEXUS_FOOTER, PREMIUM_SKU_ID
 from database import db_limits, db_settings
 from emojis import NexusEmojis
 from systems.premium import PremiumInfo, get_premium_info
+from systems.ui import with_emoji
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def describe_status(info: PremiumInfo | None, lang: dict) -> tuple[str, bool, st
     """Status-Text für /premium.
     Rückgabe: (Text, Kauf-Button zeigen?, optionaler Hinweis)."""
     if info is None:
-        return lang.get("premium_status_none", "❌ This server doesn't have Premium."), True, None
+        return f"{NexusEmojis.OFF} {lang.get('premium_status_none', 'This server does not have Premium.')}", True, None
 
     def when() -> dict:
         return {
@@ -47,7 +48,7 @@ def describe_status(info: PremiumInfo | None, lang: dict) -> tuple[str, bool, st
         } if info.expires_at else {"date": "—", "relative": "—"}
 
     if not info.active:
-        text = lang.get("premium_status_expired", "❌ Premium expired on {date}.").format(**when())
+        text = f"{NexusEmojis.OFF} " + lang.get("premium_status_expired", "Premium expired on {date}.").format(**when())
         return text, True, None
 
     if info.expires_at is None:
@@ -60,9 +61,9 @@ def describe_status(info: PremiumInfo | None, lang: dict) -> tuple[str, bool, st
         return text.format(nexus_checkmark=NexusEmojis.CHECKMARK), False, None
 
     if info.source == "discord":
-        text = lang.get(
-            "premium_status_sub_ending", "⏳ Subscription cancelled — Premium runs until {date} ({relative})."
-        ).format(**when())
+        text = with_emoji(NexusEmojis.LOADING, lang.get(
+            "premium_status_sub_ending", "Subscription cancelled — Premium runs until {date} ({relative})."
+        ).format(**when()))
         hint = lang.get(
             "premium_hint_resume", "You can resume it in your Discord settings under **Subscriptions**."
         )
@@ -103,7 +104,7 @@ async def build_overview(guild_id: int, lang: dict) -> tuple[discord.Embed, bool
     if hint:
         status_text += f"\n{hint}"
 
-    embed = discord.Embed(title=lang.get("premium_title", "⭐ Nexus Premium"), color=await db_settings.get_color(guild_id))
+    embed = discord.Embed(title=with_emoji(NexusEmojis.PREMIUM, lang.get("premium_title", "Nexus Premium")), color=await db_settings.get_color(guild_id))
     embed.add_field(name=lang.get("premium_status_field", "Status"), value=status_text, inline=False)
 
     perk_lines = await limit_lines(guild_id, lang)
@@ -181,7 +182,7 @@ async def send_upsell(interaction: discord.Interaction, lang: dict, feature: str
     if extra:
         description += f"\n\n{extra}"
     embed = discord.Embed(
-        title=lang.get(f"premium_upsell_{feature}_title", "⭐ This feature requires Nexus Premium").format(**values),
+        title=with_emoji(NexusEmojis.PREMIUM, lang.get(f"premium_upsell_{feature}_title", "This feature requires Nexus Premium").format(**values)),
         description=description,
         color=await db_settings.get_color(interaction.guild_id),
     )

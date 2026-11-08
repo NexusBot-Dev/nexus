@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from cachetools import TTLCache
 from lists.topgg import post_commands_to_topgg
 from lists.discordbotlist import post_commands_to_dbl
+from systems.ui import error_msg
 from systems.command_sync import retry_sync, sync_targets
 
 DNS_CACHE_SECONDS = 300
@@ -211,7 +212,7 @@ class Nexus(commands.AutoShardedBot):
 
         # 2. User fehlt ein Recht → freundliche Meldung
         if isinstance(error, app_commands.MissingPermissions):
-            msg = lang.get("no_permission", "❌ You don't have permission to use this command.")
+            msg = lang.get("no_permission", "You don't have permission to use this command.")
 
         # 3. Andere Checks (z.B. module_required) antworten selbst → still
         elif isinstance(error, app_commands.CheckFailure):
@@ -233,16 +234,16 @@ class Nexus(commands.AutoShardedBot):
                 interaction.command.qualified_name if interaction.command else "?",
                 interaction.guild_id, original.text,
             )
-            msg = lang.get(
+            msg = error_msg(lang.get(
                 "error_forbidden",
-                "❌ I'm missing permissions or my role is too low for this. "
+                "I'm missing permissions or my role is too low for this. "
                 "Run `/diagnose` to see what's wrong.",
-            )
+            ))
 
         # 6. Alles andere
         else:
             log.exception("Unbehandelter Command-Fehler:", exc_info=error)
-            msg = lang.get("error_generic", "❌ Something went wrong. Please try again later.")
+            msg = error_msg(lang.get("error_generic", "Something went wrong. Please try again later."))
 
         try:
             if interaction.response.is_done():

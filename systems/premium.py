@@ -120,7 +120,6 @@ async def set_premium_from_discord(
 async def grant_premium_until(
     bot, guild_id, expires_at, source, reason, stack: bool = False,
 ) -> GrantResult:
-    ...
     now = datetime.now(timezone.utc)
     async with db.pool.acquire() as conn:
         await conn.begin()

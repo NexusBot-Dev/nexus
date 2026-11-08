@@ -1,10 +1,23 @@
 import logging
 import discord
+from emojis import NexusEmojis
 
 log = logging.getLogger(__name__)
 
 
 # ─── Gemeinsame Fehlerausgabe ────────────────────────────────────────────────
+
+def with_emoji(emoji: str, text: str) -> str:
+    """Text mit Emoji aus emojis.py davor, z. B. with_emoji(NexusEmojis.WARNING, …) — die Texte selbst enthalten keins.
+    Nur für Stellen, an denen Discord Emojis anzeigt (Nachricht, Embed-Titel/-Text/-Feld), nicht für Dashboard-Texte."""
+    return f"{emoji} {text}"
+
+
+def error_msg(text: str) -> str:
+    """Fehlermeldung für Discord: Emoji aus emojis.py davor (die Texte selbst enthalten keins).
+    Nicht für Texte ans Dashboard — dort würde ein eigenes Discord-Emoji als Rohtext erscheinen."""
+    return f"{NexusEmojis.ERROR} {text}"
+
 
 async def send_ephemeral(interaction: discord.Interaction, msg: str) -> None:
     """Antwortet ephemeral — egal ob die Interaction schon beantwortet/deferred ist."""
@@ -36,13 +49,13 @@ async def report_interaction_error(
 
     if isinstance(original, discord.Forbidden):
         log.warning("Forbidden in %s auf %s: %s", where, interaction.guild_id, original.text)
-        msg = lang.get(
+        msg = error_msg(lang.get(
             "error_forbidden",
-            "❌ I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
-        )
+            "I'm missing permissions or my role is too low for this. Run `/diagnose` to see what's wrong.",
+        ))
     else:
         log.exception("Unbehandelter Fehler in %s:", where, exc_info=error)
-        msg = lang.get("error_generic", "❌ Something went wrong. Please try again later.")
+        msg = error_msg(lang.get("error_generic", "Something went wrong. Please try again later."))
 
     await send_ephemeral(interaction, msg)
 
@@ -86,14 +99,14 @@ class NexusView(discord.ui.View):
     # 1. Zugriff ─────────────────────────────────────────────────────────────
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.owner_id is not None and interaction.user.id != self.owner_id:
-            await send_ephemeral(interaction, self.lang.get(
-                "view_not_yours", "❌ This menu belongs to someone else. Run the command yourself."
-            ))
+            await send_ephemeral(interaction, error_msg(self.lang.get(
+                "view_not_yours", "This menu belongs to someone else. Run the command yourself."
+            )))
             return False
 
         if self.require and not getattr(interaction.user.guild_permissions, self.require, False):
             await send_ephemeral(interaction, self.lang.get(
-                self.DENY_KEY, "❌ You don't have permission to use this."
+                self.DENY_KEY, "You don't have permission to use this."
             ))
             return False
 
