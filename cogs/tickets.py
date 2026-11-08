@@ -12,6 +12,7 @@ from emojis import NexusEmojis
 from systems.hierarchy import can_apply_overwrites, can_use_channel, format_issue
 from systems.ticket_panel import PANEL_SELECT_ID, PanelError, publish_panel, refresh_panel, import_panel, reset_panel_select
 from systems.ui import NexusView, NexusModal, report_interaction_error
+from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
 
@@ -1149,16 +1150,14 @@ class Tickets(commands.Cog):
 
         if current_count >= limit:
             premium_limit = await db_limits.get_limit(interaction.guild_id, "ticket_categories", True)
+            if not premium and premium_limit > limit:
+                await send_upsell(interaction, lang, "ticket_limit", limit=limit, max=premium_limit)
+                return
             await interaction.response.send_message(
                 lang.get(
                     "ticket_category_limit_reached",
                     "❌ Limit of {limit} ticket categories reached.{premium_hint}",
-                ).format(
-                    limit=limit,
-                    premium_hint="" if premium else lang.get(
-                        "ticket_category_limit_premium_hint", " With Premium, up to {max} are possible."
-                    ).format(max=premium_limit),
-                ),
+                ).format(limit=limit, premium_hint=""),
                 ephemeral=True,
             )
             return

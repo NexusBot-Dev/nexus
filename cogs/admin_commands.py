@@ -11,6 +11,7 @@ from emojis import NexusEmojis
 from translations import TRANSLATIONS
 from systems.premium import is_premium
 from systems.ui import NexusView, NexusModal
+from systems.premium_ui import send_upsell
 
 ALL_TIMEZONES = sorted(list(zoneinfo.available_timezones()))
 
@@ -274,15 +275,10 @@ class SettingsView(NexusView):
         stored = stored if stored and stored != NEXUS_COLOR else None
 
         if not await is_premium(interaction.guild_id):
-            text = self.lang.get(
-                "color_premium_required",
-                "⭐ A custom embed color is a Premium feature. See `/premium` for details.",
-            )
-            if stored:
-                text += "\n" + self.lang.get(
-                    "color_premium_stored_hint", "Your saved color {color} becomes active again with Premium.",
-                ).format(color=f"`#{stored:06X}`")
-            await interaction.response.send_message(text, ephemeral=True)
+            extra = self.lang.get(
+                "color_premium_stored_hint", "Your saved color {color} becomes active again with Premium.",
+            ).format(color=f"`#{stored:06X}`") if stored else ""
+            await send_upsell(interaction, self.lang, "color", extra=extra)
             return
 
         await interaction.response.send_modal(EmbedColorModal(self.lang, stored))

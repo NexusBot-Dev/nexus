@@ -79,6 +79,7 @@ COMMANDS: dict[str, str] = {
     "cmd_level_roles_desc":     "Level-Rollen verwalten",
     "cmd_levelup_channel_desc": "Channel für Level-Up-Nachrichten festlegen",
     "cmd_xp_channels_desc":     "Channels festlegen, in denen es keine XP gibt",
+    "cmd_xp_settings_desc": "XP pro Nachricht und Voice-XP einstellen",
 
     # ─── MEE6 Importer Commands ─────────────────────────────────────────
     "cmd_import_mee6_desc": "XP aus deinem öffentlichen MEE6-Leaderboard importieren",

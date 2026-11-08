@@ -50,6 +50,7 @@ MODULE_INFO = {
             "level_roles":       "help_cmd_level_roles",
             "levelup_channel":   "help_cmd_levelup_channel",
             "xp_channels":       "help_cmd_xp_channels",
+            "xp_settings":       "help_cmd_xp_settings",
             "import_mee6":       "help_cmd_import_mee6",
         }
     },

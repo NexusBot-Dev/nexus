@@ -17,6 +17,7 @@ def forget_guild(guild_id: int) -> None:
 UPDATABLE_LEVELS_COLUMNS = frozenset({
     "xp_min", "xp_max", "currency_name", "points_min", "points_max",
     "cooldown", "shop_enabled", "levelup_channel_id",
+    "voice_xp_enabled", "voice_xp_min", "voice_xp_max",
 })
 
 async def get_or_create_user(guild_id: int, user_id: int) -> dict:
@@ -36,31 +37,41 @@ async def get_or_create_user(guild_id: int, user_id: int) -> dict:
                 return {"guild_id": guild_id, "user_id": user_id, "xp": 0, "level": 1, "last_xp": None}
             return row
 
-async def add_xp(guild_id: int, user_id: int, amount: int) -> dict | None:
+async def _change_xp(guild_id: int, user_id: int, compute, *, touch_last_xp: bool = False) -> dict:
+    """Ändert die XP eines Mitglieds ohne verlorene Updates: Die Zeile wird gesperrt (SELECT … FOR UPDATE),
+    bis die neuen Werte geschrieben sind. Gleichzeitige Gutschriften (Chat, Voice, Mod-Befehle) warten
+    aufeinander, statt sich gegenseitig zu überschreiben. compute(alte_xp) -> neue_xp."""
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
+            # Zeile vorher in einer eigenen, sofort festgeschriebenen Anweisung anlegen: In der Transaktion
+            # würden zwei gleichzeitige Erst-Gutschriften sonst aufeinander warten (Deadlock)
             await cur.execute(
-                "SELECT xp, level FROM levels WHERE guild_id = %s AND user_id = %s",
+                "INSERT INTO levels (guild_id, user_id) VALUES (%s, %s) ON DUPLICATE KEY UPDATE user_id = user_id",
                 (guild_id, user_id),
             )
-            row = await cur.fetchone()
-
-            if row is None:
+            await conn.begin()
+            try:
                 await cur.execute(
-                    "INSERT INTO levels (guild_id, user_id, xp, level, last_xp) VALUES (%s, %s, %s, %s, NOW())",
-                    (guild_id, user_id, amount, 1),
+                    "SELECT xp, level FROM levels WHERE guild_id = %s AND user_id = %s FOR UPDATE",
+                    (guild_id, user_id),
                 )
-                return {"old_level": 1, "new_level": 1, "xp": amount}
+                row = await cur.fetchone()
+                new_xp = compute(row["xp"])
+                new_level = calculate_level(new_xp)
+                await cur.execute(
+                    f"UPDATE levels SET xp = %s, level = %s{', last_xp = NOW()' if touch_last_xp else ''} "
+                    "WHERE guild_id = %s AND user_id = %s",
+                    (new_xp, new_level, guild_id, user_id),
+                )
+                await conn.commit()
+            except BaseException:
+                await conn.rollback()
+                raise
+    return {"old_level": row["level"], "new_level": new_level, "xp": new_xp}
 
-            old_level = row["level"]
-            new_xp    = row["xp"] + amount
-            new_level = calculate_level(new_xp)
-
-            await cur.execute(
-                "UPDATE levels SET xp = %s, level = %s, last_xp = NOW() WHERE guild_id = %s AND user_id = %s",
-                (new_xp, new_level, guild_id, user_id),
-            )
-            return {"old_level": old_level, "new_level": new_level, "xp": new_xp}
+async def add_xp(guild_id: int, user_id: int, amount: int) -> dict:
+    """XP aus Aktivität (Chat, Voice)."""
+    return await _change_xp(guild_id, user_id, lambda xp: xp + amount, touch_last_xp=True)
 
 async def get_user_xp(guild_id: int, user_id: int) -> dict:
     return await get_or_create_user(guild_id, user_id)
@@ -79,27 +90,8 @@ async def set_level(guild_id: int, user_id: int, level: int) -> dict:
     return {"xp": xp, "level": level}
 
 async def add_xp_mod(guild_id: int, user_id: int, amount: int) -> dict:
-    async with db.pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            await cur.execute(
-                "SELECT xp FROM levels WHERE guild_id = %s AND user_id = %s",
-                (guild_id, user_id),
-            )
-            row = await cur.fetchone()
-            current_xp = row["xp"] if row else 0
-            old_level  = calculate_level(current_xp)
-
-            new_xp     = max(0, current_xp + amount)
-            new_level  = calculate_level(new_xp)
-
-            await cur.execute(
-                """INSERT INTO levels (guild_id, user_id, xp, level)
-                   VALUES (%s, %s, %s, %s)
-                   ON DUPLICATE KEY UPDATE xp = %s, level = %s""",
-                (guild_id, user_id, new_xp, new_level, new_xp, new_level),
-            )
-
-            return {"xp": new_xp, "old_level": old_level, "new_level": new_level}
+    """XP per Mod-Befehl ändern (/add_xp, /remove_xp) — nie unter 0."""
+    return await _change_xp(guild_id, user_id, lambda xp: max(0, xp + amount))
 
 async def remove_xp_mod(guild_id: int, user_id: int, amount: int) -> dict:
     return await add_xp_mod(guild_id, user_id, -amount)
@@ -198,7 +190,8 @@ async def get_levels_settings(guild_id: int) -> dict:
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id, mee6_imported_at
+                """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id, mee6_imported_at,
+                          voice_xp_enabled, voice_xp_min, voice_xp_max
                    FROM levels_settings WHERE guild_id = %s""",
                 (guild_id,),
             )
@@ -211,7 +204,8 @@ async def get_levels_settings(guild_id: int) -> dict:
                     (guild_id,),
                 )
                 await cur.execute(
-                    """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id, mee6_imported_at
+                    """SELECT xp_min, xp_max, currency_name, points_min, points_max, cooldown, shop_enabled, levelup_channel_id, mee6_imported_at,
+                          voice_xp_enabled, voice_xp_min, voice_xp_max
                        FROM levels_settings WHERE guild_id = %s""",
                     (guild_id,),
                 )

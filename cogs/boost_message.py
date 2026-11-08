@@ -7,6 +7,7 @@ from systems.premium import is_premium
 from cogs.utils import get_lang, module_required
 from emojis import NexusEmojis
 from systems.ui import NexusView, NexusModal
+from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
 
@@ -105,11 +106,13 @@ class DeleteConfirmView(NexusView):
 # ─── Haupt-Panel ────────────────────────────────────────────────────────
 
 class BoostManageView(NexusView):
-    def __init__(self, owner_id: int, guild_id: int, lang: dict, messages: list[dict], limit: int):
+    def __init__(self, owner_id: int, guild_id: int, lang: dict, messages: list[dict], limit: int,
+                 upgrade_max: int | None = None):
         super().__init__(lang, owner_id=owner_id, require=None, timeout=120)
         self.guild_id = guild_id
         self.messages = messages
         self.limit = limit
+        self.upgrade_max = upgrade_max   # Limit mit Premium, falls ein Upgrade mehr erlaubt (sonst None)
         self._update_buttons()
 
     def _update_buttons(self):
@@ -117,12 +120,16 @@ class BoostManageView(NexusView):
         self.edit_btn.label = self.lang.get("boost_msg_btn_edit", "✏️ Edit")
         self.delete_btn.label = self.lang.get("boost_msg_btn_delete", "🗑️ Delete")
 
-        self.add_btn.disabled = len(self.messages) >= self.limit
+        # Ohne Premium bleibt „Hinzufügen“ am Limit klickbar und zeigt den Premium-Hinweis
+        self.add_btn.disabled = len(self.messages) >= self.limit and self.upgrade_max is None
         self.edit_btn.disabled = len(self.messages) == 0
         self.delete_btn.disabled = len(self.messages) == 0
 
     @discord.ui.button(style=discord.ButtonStyle.success)
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if len(self.messages) >= self.limit:
+            await send_upsell(interaction, self.lang, "boost_limit", limit=self.limit, max=self.upgrade_max)
+            return
         await interaction.response.send_modal(BoostMessageModal(self.lang, self.guild_id))
 
     @discord.ui.button(style=discord.ButtonStyle.primary)
@@ -193,9 +200,11 @@ class BoostMessages(commands.Cog):
         messages = await db_boosts.get_boost_messages(interaction.guild_id)
         premium = await is_premium(interaction.guild_id)
         limit = await db_limits.get_limit(interaction.guild_id, "boost_messages", premium)
+        premium_limit = await db_limits.get_limit(interaction.guild_id, "boost_messages", True)
+        upgrade_max = premium_limit if not premium and premium_limit > limit else None
 
         embed = _build_boost_embed(messages, lang, color, limit)
-        view = BoostManageView(interaction.user.id, interaction.guild_id, lang, messages, limit)
+        view = BoostManageView(interaction.user.id, interaction.guild_id, lang, messages, limit, upgrade_max)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 

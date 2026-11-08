@@ -3,15 +3,16 @@ import discord
 import random
 from typing import Optional, Union
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime, timezone
 from database import db_settings, db_levels, db_activity
-from systems.exp_system import XP_COOLDOWN
+from systems.exp_system import XP_COOLDOWN, CHAT_XP_MAX, xp_range_error
 from cogs.utils import post_logging, get_lang, module_required
 from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.ui import NexusView, NexusModal, send_ephemeral
 from systems.hierarchy import can_use_channel, can_grant_role, format_issue
+from systems import voice_xp
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +22,12 @@ _xp_cooldown: dict[tuple[int, int], datetime] = {}
 class Levels(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def cog_load(self):
+        self.voice_xp_loop.start()
+
+    async def cog_unload(self):
+        self.voice_xp_loop.cancel()
 
     # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -173,6 +180,45 @@ class Levels(commands.Cog):
                 )
         except Exception:
             log.exception("Fehler in on_message für %s auf %s", message.author, message.guild.name)
+
+    # ─── Voice-XP ────────────────────────────────────────────────────────────────
+
+    @tasks.loop(seconds=voice_xp.TICK_SECONDS)
+    async def voice_xp_loop(self):
+        for guild in list(self.bot.guilds):
+            try:
+                await self.award_voice_xp(guild)
+            except Exception:
+                log.exception("Voice-XP auf %s fehlgeschlagen.", guild.id)
+
+    @voice_xp_loop.before_loop
+    async def _before_voice_xp(self):
+        await self.bot.wait_until_ready()
+
+    async def award_voice_xp(self, guild: discord.Guild):
+        """Eine Minute Voice-XP für diesen Server (siehe systems/voice_xp.py)."""
+        # Erst der billige Blick in den Cache: auf den meisten Servern sitzt gerade niemand zu zweit im Voice
+        channels = [c for c in guild.voice_channels if len(c.members) >= voice_xp.MIN_ACTIVE]
+        if not channels:
+            return
+        if not await db_settings.is_module_enabled(guild.id, "levels"):
+            return
+        settings = await db_levels.get_levels_settings(guild.id)
+        if not settings.get("voice_xp_enabled"):
+            return
+
+        excluded = await db_levels.get_excluded_channels(guild.id)
+        afk_channel_id = guild.afk_channel.id if guild.afk_channel else None
+        cap = voice_xp.MAX_XP_PER_MINUTE   # auch für Werte, die vor Einführung des Höchstwerts gespeichert wurden
+        low, high = sorted((min(settings["voice_xp_min"], cap), min(settings["voice_xp_max"], cap)))
+        lang = None
+        for channel in channels:
+            for member in voice_xp.eligible_members(channel, afk_channel_id=afk_channel_id, excluded=excluded):
+                result = await db_levels.add_xp(guild.id, member.id, random.randint(low, high))
+                if result and result["new_level"] > result["old_level"]:
+                    lang = lang or await get_lang(guild.id)
+                    # Ohne Level-Up-Kanal landet die Nachricht im Text-Chat des Voice-Kanals
+                    await self._handle_level_up(guild, member, channel, result, lang)
 
     # ─── Commands ────────────────────────────────────────────────────────────────
 
@@ -445,6 +491,17 @@ class Levels(commands.Cog):
         )
         view.bind(interaction)
 
+    @app_commands.command(name="xp_settings", description=app_commands.locale_str("cmd_xp_settings_desc"))
+    @app_commands.default_permissions(manage_guild=True)
+    @module_required("levels")
+    async def xp_settings(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lang = await get_lang(interaction.guild_id)
+        settings = await db_levels.get_levels_settings(interaction.guild_id)
+        view = XpSettingsView(lang, settings)
+        await interaction.followup.send(embed=await _xp_settings_embed(interaction.guild_id, lang, settings), view=view, ephemeral=True)
+        view.bind(interaction)
+
 # ─── Views & Modals ──────────────────────────────────────────────────────────
 
 class LevelRolesView(NexusView):
@@ -677,7 +734,7 @@ class LevelExcludeView(NexusView):
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
         channel_types=[discord.ChannelType.text, discord.ChannelType.news,
-                       discord.ChannelType.forum, discord.ChannelType.category],
+                       discord.ChannelType.forum, discord.ChannelType.voice, discord.ChannelType.category],
         min_values=0,
         max_values=25,
         row=0,
@@ -690,6 +747,111 @@ class LevelExcludeView(NexusView):
         await interaction.edit_original_response(
             embed=await _exclude_embed(interaction.guild, self.lang), view=self,
         )
+
+# ─── /xp_settings ────────────────────────────────────────────────────────────
+
+async def _xp_settings_embed(guild_id: int, lang: dict, settings: dict) -> discord.Embed:
+    embed = discord.Embed(
+        title=lang.get("xps_title", "⚙️ XP settings"),
+        description=lang.get(
+            "xps_desc",
+            "Voice XP is earned every minute while at least two members are unmuted in the same voice channel.",
+        ),
+        color=await db_settings.get_color(guild_id),
+    )
+    embed.add_field(
+        name=lang.get("xps_chat_field", "💬 Chat XP"),
+        value=lang.get("xps_chat_value", "{min}–{max} XP per message · cooldown {cooldown}s").format(
+            min=settings["xp_min"], max=settings["xp_max"], cooldown=XP_COOLDOWN,
+        ),
+        inline=False,
+    )
+    status = (lang.get("xps_voice_on", "✅ On") if settings["voice_xp_enabled"]
+              else lang.get("xps_voice_off", "❌ Off"))
+    embed.add_field(
+        name=lang.get("xps_voice_field", "🎙️ Voice XP"),
+        value=lang.get("xps_voice_value", "{status} · {min}–{max} XP per minute").format(
+            status=status, min=settings["voice_xp_min"], max=settings["voice_xp_max"],
+        ),
+        inline=False,
+    )
+    embed.set_footer(text=NEXUS_FOOTER)
+    return embed
+
+
+class XpSettingsView(NexusView):
+    def __init__(self, lang: dict, settings: dict):
+        super().__init__(lang, timeout=300)
+        self.settings = settings
+        self.btn_chat.label = lang.get("xps_btn_chat", "Chat XP")
+        self.btn_chat.emoji = "💬"
+        self.btn_voice.label = lang.get("xps_btn_voice", "Voice XP")
+        self.btn_voice.emoji = "🎙️"
+        enabled = bool(settings["voice_xp_enabled"])
+        self.btn_toggle.label = (lang.get("xps_btn_voice_disable", "Disable voice XP") if enabled
+                                 else lang.get("xps_btn_voice_enable", "Enable voice XP"))
+        self.btn_toggle.style = discord.ButtonStyle.secondary if enabled else discord.ButtonStyle.success
+
+    async def refresh(self, interaction: discord.Interaction) -> None:
+        """Neue Werte laden und die Übersicht an derselben Stelle neu zeigen."""
+        settings = await db_levels.get_levels_settings(interaction.guild_id)
+        embed = await _xp_settings_embed(interaction.guild_id, self.lang, settings)
+        await self.show(interaction, XpSettingsView(self.lang, settings), embed=embed)
+
+    @discord.ui.button(style=discord.ButtonStyle.primary)
+    async def btn_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(XpRangeModal(self, "chat"))
+
+    @discord.ui.button(style=discord.ButtonStyle.primary)
+    async def btn_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(XpRangeModal(self, "voice"))
+
+    @discord.ui.button(style=discord.ButtonStyle.success)
+    async def btn_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await db_levels.update_levels_settings(
+            interaction.guild_id, voice_xp_enabled=not self.settings["voice_xp_enabled"],
+        )
+        await self.refresh(interaction)
+
+
+class XpRangeModal(NexusModal):
+    """Min./Max. XP — für Chat (pro Nachricht, bis 1000) oder Voice (pro Minute, bis 150)."""
+
+    def __init__(self, parent: XpSettingsView, kind: str):
+        lang = parent.lang
+        self.parent, self.kind = parent, kind
+        self.max_xp = CHAT_XP_MAX if kind == "chat" else voice_xp.MAX_XP_PER_MINUTE
+        prefix = "" if kind == "chat" else "voice_"
+        self.columns = (f"{prefix}xp_min", f"{prefix}xp_max")
+        super().__init__(lang, title=lang.get(f"xps_modal_{kind}_title", "Chat XP per message" if kind == "chat" else "Voice XP per minute"))
+        self.min_input = discord.ui.TextInput(
+            label=lang.get("xps_modal_min_label", "Minimum (1–{max})").format(max=self.max_xp),
+            default=str(parent.settings[self.columns[0]]), max_length=4,
+        )
+        self.max_input = discord.ui.TextInput(
+            label=lang.get("xps_modal_max_label", "Maximum (1–{max})").format(max=self.max_xp),
+            default=str(parent.settings[self.columns[1]]), max_length=4,
+        )
+        self.add_item(self.min_input)
+        self.add_item(self.max_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            xp_min, xp_max = int(self.min_input.value.strip()), int(self.max_input.value.strip())
+        except ValueError:
+            xp_min = xp_max = None
+        problem = xp_range_error(xp_min, xp_max, self.max_xp)
+        if problem:
+            key = ("dash_err_lvl_xp_min_gt_max" if problem == "min_gt_max"
+                   else "dash_err_lvl_xp_range" if self.kind == "chat" else "dash_err_lvl_voice_xp_range")
+            await interaction.response.send_message(
+                "❌ " + self.lang.get(key, "Invalid values.").format(max=self.max_xp), ephemeral=True,
+            )
+            return
+        await db_levels.update_levels_settings(interaction.guild_id, **dict(zip(self.columns, (xp_min, xp_max))))
+        await self.parent.refresh(interaction)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Levels(bot))

@@ -8,6 +8,7 @@ from discord.ext import commands, tasks
 from datetime import datetime
 from database import db_settings, db_embeds, db_limits
 from systems.premium import is_premium
+from systems.premium_ui import send_upsell
 from cogs.utils import get_lang
 from emojis import NexusEmojis
 from systems.ui import NexusModal, NexusView, ConfirmView, send_ephemeral
@@ -21,6 +22,14 @@ SAVE_NAME_MAX = 80
 VIEW_PERMISSION = "manage_messages"
 
 # ─── Helfer ──────────────────────────────────────────────────────────────────
+
+async def _embed_limit_reached(interaction: discord.Interaction, lang: dict) -> None:
+    """Embed-Limit erreicht: ohne Premium der Premium-Hinweis, mit Premium die normale Meldung."""
+    limit = await _embed_limit(interaction.guild_id)
+    if not await is_premium(interaction.guild_id) and await db_limits.get_limit(interaction.guild_id, "saved_embeds", True) > limit:
+        await send_upsell(interaction, lang, "embed_limit", limit=limit)
+        return
+    await send_ephemeral(interaction, lang.get("embed_limit_reached", "❌ Limit of {limit} saved embeds reached.").format(limit=limit))
 
 async def _embed_limit(guild_id: int) -> int:
     """Aktuelles Limit gespeicherter Embeds (Free/Premium)."""
@@ -202,9 +211,7 @@ class EmbedHubView(NexusView):
     async def btn_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         if not await is_premium(interaction.guild_id):
-            await send_ephemeral(interaction, self.lang.get(
-                "embed_schedule_premium", "⭐ Scheduled posting is a Premium feature!"
-            ))
+            await send_upsell(interaction, self.lang, "schedule")
             return
         await self._open_picker(interaction, "schedule")
 
@@ -586,10 +593,7 @@ class EmbedCreateModal(NexusModal):
             return
 
         if do_save and not await db_embeds.can_save_embed(guild_id):
-            limit = await _embed_limit(guild_id)
-            await send_ephemeral(interaction, self.lang.get(
-                "embed_limit_reached", "❌ Limit of {limit} saved embeds reached."
-            ).format(limit=limit))
+            await _embed_limit_reached(interaction, self.lang)
             return
 
         color = await db_settings.get_color(guild_id)
@@ -780,11 +784,7 @@ class ScheduleModal(NexusModal):
 
             # Die geplante Kopie belegt einen Embed-Slot -> Limit gilt auch hier
             if not await db_embeds.can_save_embed(interaction.guild_id):
-                limit = await _embed_limit(interaction.guild_id)
-                await interaction.followup.send(
-                    self.lang.get("embed_limit_reached", "❌ Limit of {limit} saved embeds reached.").format(limit=limit),
-                    ephemeral=True,
-                )
+                await _embed_limit_reached(interaction, self.lang)
                 return
 
             await db_embeds.save_embed(

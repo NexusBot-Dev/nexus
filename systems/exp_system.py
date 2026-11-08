@@ -2,6 +2,18 @@ import bisect
 
 XP_COOLDOWN = 60  # Sekunden
 MAX_PRECOMPUTED_LEVEL = 250
+CHAT_XP_MAX = 1000   # pro Nachricht (Voice-Höchstwert: systems/voice_xp.MAX_XP_PER_MINUTE)
+
+def xp_range_error(xp_min, xp_max, max_xp: int) -> str | None:
+    """Prüft eine XP-Spanne (Dashboard und /xp_settings): ganze Zahlen von 1 bis max_xp, Minimum ≤ Maximum.
+    Rückgabe: None, "range" (ungültig/außerhalb) oder "min_gt_max"."""
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (xp_min, xp_max)):
+        return "range"
+    if not (1 <= xp_min <= max_xp and 1 <= xp_max <= max_xp):
+        return "range"
+    if xp_min > xp_max:
+        return "min_gt_max"
+    return None
 
 def xp_for_level(level: int) -> int:
     """

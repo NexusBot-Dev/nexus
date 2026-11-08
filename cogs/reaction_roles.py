@@ -12,6 +12,7 @@ from config import NEXUS_FOOTER
 from emojis import NexusEmojis
 from systems.hierarchy import PermCheck, can_grant_role, can_manage_role, can_set_up_self_roles, can_use_channel, format_issue
 from systems.ui import NexusView, NexusModal, send_ephemeral
+from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
 
@@ -416,9 +417,7 @@ class ModeSelectView(NexusView):
     async def unique_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()   # ohne Premium: Hinweis als neue Nachricht, sonst weiter in derselben
         if not await is_premium(interaction.guild_id):
-            await interaction.followup.send(
-                self.lang.get("rr_premium_unique"), ephemeral=True
-            )
+            await send_upsell(interaction, self.lang, "rr_unique")
             return
         await self._save_and_continue(interaction, mode="unique")
 

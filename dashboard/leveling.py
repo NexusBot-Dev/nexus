@@ -4,9 +4,11 @@ from .registry import register_action, DashCtx, DashboardError, InvalidRequest
 from database import db_levels
 from systems.hierarchy import can_use_channel, can_grant_role, format_issue
 from .health import plain_mentions
+from systems.voice_xp import MAX_XP_PER_MINUTE as VOICE_XP_MAX
+from systems.exp_system import CHAT_XP_MAX, xp_range_error
 
 MAX_EXCLUDED = 25
-_EXCLUDABLE = (discord.TextChannel, discord.ForumChannel, discord.CategoryChannel)
+_EXCLUDABLE = (discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.CategoryChannel)
 
 def _exclude_target(ch) -> dict:
     return {
@@ -21,7 +23,7 @@ async def get_excluded(ctx: DashCtx) -> dict:
     guild, guild_id = ctx.guild, ctx.guild_id
 
     excluded = await db_levels.get_excluded_channels(guild_id)
-    targets = [_exclude_target(c) for c in (*guild.categories, *guild.text_channels, *guild.forums)]
+    targets = [_exclude_target(c) for c in (*guild.categories, *guild.text_channels, *guild.forums, *guild.voice_channels)]
     known = {t["id"] for t in targets}
     return {
         # Gelöschte Channels werden ausgeblendet und beim nächsten Speichern entfernt
@@ -134,6 +136,9 @@ async def get_xp_settings(ctx: DashCtx) -> dict:
         "points_max": settings["points_max"],
         "shop_enabled": settings["shop_enabled"],
         "levelup_channel_id": str(settings["levelup_channel_id"]) if settings.get("levelup_channel_id") else None,
+        "voice_xp_enabled": bool(settings["voice_xp_enabled"]),
+        "voice_xp_min": settings["voice_xp_min"],
+        "voice_xp_max": settings["voice_xp_max"],
     }
 
 @register_action("leveling", "set-levelup-channel")
@@ -158,18 +163,34 @@ async def set_levelup_channel(ctx: DashCtx) -> dict:
     await db_levels.update_levels_settings(guild_id, levelup_channel_id=channel.id)
     return {"levelup_channel_id": str(channel.id)}
 
+@register_action("leveling", "set-voice-xp")
+async def set_voice_xp(ctx: DashCtx) -> dict:
+    payload = ctx.payload
+    enabled, xp_min, xp_max = payload.get("enabled"), payload.get("xp_min"), payload.get("xp_max")
+    if not isinstance(enabled, bool):
+        raise InvalidRequest("enabled muss true/false sein")
+    _check_xp_range(xp_min, xp_max, VOICE_XP_MAX, "dash_err_lvl_voice_xp_range")
+
+    await db_levels.update_levels_settings(
+        ctx.guild_id, voice_xp_enabled=enabled, voice_xp_min=xp_min, voice_xp_max=xp_max,
+    )
+    return {"voice_xp_enabled": enabled, "voice_xp_min": xp_min, "voice_xp_max": xp_max}
+
+def _check_xp_range(xp_min, xp_max, max_xp: int = CHAT_XP_MAX, error: str = "dash_err_lvl_xp_range") -> None:
+    """Gleiche Regeln wie /xp_settings (systems/exp_system.xp_range_error)."""
+    problem = xp_range_error(xp_min, xp_max, max_xp)
+    if problem == "range":
+        raise DashboardError(error, max=max_xp)
+    if problem == "min_gt_max":
+        raise DashboardError("dash_err_lvl_xp_min_gt_max")
+
 @register_action("leveling", "set-xp-settings")
 async def set_xp_settings(ctx: DashCtx) -> dict:
     guild_id, payload = ctx.guild_id, ctx.payload
     xp_min = payload.get("xp_min")
     xp_max = payload.get("xp_max")
 
-    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (xp_min, xp_max)):
-        raise DashboardError("dash_err_lvl_xp_range")
-    if not (1 <= xp_min <= 1000) or not (1 <= xp_max <= 1000):
-        raise DashboardError("dash_err_lvl_xp_range")
-    if xp_min > xp_max:
-        raise DashboardError("dash_err_lvl_xp_min_gt_max")
+    _check_xp_range(xp_min, xp_max)
 
     await db_levels.update_levels_settings(guild_id, xp_min=xp_min, xp_max=xp_max)
     return {"xp_min": xp_min, "xp_max": xp_max}

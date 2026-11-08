@@ -12,6 +12,7 @@ from systems.ui import NexusView, NexusModal
 from systems.alert_dispatch import ALERT_CHANNEL_PERMS, finish_ended_streams
 from systems.hierarchy import missing_perms, perm_label
 from systems import stream_alert_service as alert_service
+from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
 
@@ -263,6 +264,12 @@ class AddChannelModal(NexusModal):
         try:
             await alert_service.add_alert(interaction.guild_id, self.platform_value, login, self.channel.id, message)
         except alert_service.AlertError as e:
+            if e.reason == "limit" and not await is_premium(interaction.guild_id):
+                premium_max = await db_limits.get_limit(interaction.guild_id, f"stream_alerts_{self.platform_value}", True)
+                if premium_max > e.params["limit"]:
+                    await send_upsell(interaction, lang, "alert_limit", limit=e.params["limit"], max=premium_max,
+                                      platform=PLATFORM_DISPLAY[self.platform_value]["label"])
+                    return
             await interaction.followup.send(alert_error_text(lang, e, login), ephemeral=True)
             return
 

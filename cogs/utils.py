@@ -8,53 +8,6 @@ from config import NEXUS_COLOR, NEXUS_FOOTER
 
 log = logging.getLogger(__name__)
 
-MODULE_COMMANDS = {
-    "moderation": [
-        "kick", "ban", "unban", "warn", "warnings", "unwarn",
-        "clearwarnings", "add_role", "remove_role", "set_slowmode",
-        "purge_messages", "timeout",
-    ],
-    "levels": [
-        "rank", "leaderboard", "set_level", "add_xp", "remove_xp",
-        "wipe_xp", "level_roles", "import_mee6",
-    ],
-    "welcome": [
-        "welcome_message",
-        "goodbye",
-    ],
-    "reaction_roles": [
-        "reactionrole_create",
-        "reactionrole_list",
-        "reactionrole_delete",
-    ],
-    "boosts": [
-        "boost_message",
-    ],
-    "embeds": [
-        "embed",
-        "post_rules",
-    ],
-    "automod": ["automod", "honeypot"],
-    "help": ["help", "info"],
-    "stream_alerts": [
-        "alert_add",
-        "alert_remove",
-        "alert_list",
-        "alert_role",
-        "alert_edit",
-    ],
-    "tickets": [
-        "add_category",
-        "edit_category",
-        "ticket_panel",
-        "force_close",
-        "ticket_settings",
-    ],
-    "giveaways": [
-       "giveaways"
-    ],
-}
-
 CORE_MODULES = {"moderation", "embeds", "giveaways"}
 
 # Anzeige-Metadaten für die "Modul deaktiviert"-Karte

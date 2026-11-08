@@ -81,6 +81,8 @@ class FakeMember:
         self.name = self.display_name = name
         self.bot = bot
         self.roles = [guild.default_role, *roles]
+        self.voice = None   # VoiceState, solange das Mitglied in einem Voice-Kanal ist (FakeVoiceChannel.join)
+        self.display_avatar = types.SimpleNamespace(url=f"https://cdn.discordapp.com/embed/avatars/{self.id % 6}.png")
 
     @property
     def mention(self):
@@ -236,6 +238,43 @@ class FakeTextChannel(discord.TextChannel):
         return f"<FakeTextChannel #{self.name} {self.id}>"
 
 
+class FakeVoiceChannel(discord.VoiceChannel):
+    """Voice-Kanal mit Text-Chat. Mitglieder kommen per join() hinein, mit Mute-/Deaf-Status."""
+
+    def __init__(self, guild, name: str, *, position: int = 0, category_id: int | None = None):
+        self.id = next_id()
+        self.guild = guild
+        self.name = name
+        self.position = position
+        self.category_id = category_id
+        self.messages: dict[int, FakeMessage] = {}
+        self.bot_denied: set[str] = set()
+        self._members: list = []
+
+    @property
+    def members(self):
+        return list(self._members)
+
+    @property
+    def type(self):
+        return discord.ChannelType.voice
+
+    @property
+    def mention(self):
+        return f"<#{self.id}>"
+
+    def join(self, member, *, self_mute=False, mute=False, self_deaf=False, deaf=False):
+        member.voice = types.SimpleNamespace(channel=self, self_mute=self_mute, mute=mute, self_deaf=self_deaf, deaf=deaf)
+        self._members.append(member)
+        return member
+
+    permissions_for = FakeTextChannel.permissions_for
+    send = FakeTextChannel.send
+
+    def __repr__(self):
+        return f"<FakeVoiceChannel {self.name} {self.id}>"
+
+
 class FakeGuild(discord.Guild):
     """Ein Server mit Owner, einem Admin, einem normalen Mitglied und dem Bot.
 
@@ -270,6 +309,7 @@ class FakeGuild(discord.Guild):
         self.member = FakeMember(self, "member", [])
         self._me = FakeMember(self, "Nexus", [self.bot_role], bot=True)
         self.members_by_id = {m.id: m for m in (self.owner_member, self.admin, self.moderator, self.member, self._me)}
+        self.afk_channel_obj = None
 
     # ── Lesen ────────────────────────────────────────────────────────────────
     @property
@@ -294,7 +334,23 @@ class FakeGuild(discord.Guild):
 
     @property
     def text_channels(self):
-        return sorted(self.channels_by_id.values(), key=lambda c: c.position)
+        return sorted((c for c in self.channels_by_id.values() if isinstance(c, FakeTextChannel)), key=lambda c: c.position)
+
+    @property
+    def voice_channels(self):
+        return sorted((c for c in self.channels_by_id.values() if isinstance(c, FakeVoiceChannel)), key=lambda c: c.position)
+
+    @property
+    def categories(self):
+        return []
+
+    @property
+    def forums(self):
+        return []
+
+    @property
+    def afk_channel(self):
+        return self.afk_channel_obj
 
     @property
     def members(self):
@@ -326,6 +382,11 @@ class FakeGuild(discord.Guild):
     def add_text_channel(self, name: str, **kwargs) -> FakeTextChannel:
         """Für den Testaufbau: Kanal anlegen, ohne dass es als Bot-Aktion zählt."""
         channel = FakeTextChannel(self, name, **kwargs)
+        self.channels_by_id[channel.id] = channel
+        return channel
+
+    def add_voice_channel(self, name: str, **kwargs) -> FakeVoiceChannel:
+        channel = FakeVoiceChannel(self, name, position=len(self.channels_by_id), **kwargs)
         self.channels_by_id[channel.id] = channel
         return channel
 
@@ -410,3 +471,55 @@ class FakeBot:
     @property
     def guilds(self):
         return list(self.guilds_by_id.values())
+
+
+class FakeInteraction:
+    """Nachgebaute Component-Interaction: zeichnet ephemere Antworten und Bearbeitungen auf.
+    reject_sku: Discord lehnt Nachrichten mit Kauf-Button ab (SKU nicht veröffentlicht)."""
+
+    def __init__(self, guild, *, reject_sku=False):
+        self.guild, self.guild_id, self.user = guild, guild.id, guild.admin
+        self.message = None   # Slash-Command: keine Nachricht mit Komponenten
+        self.reject_sku = reject_sku
+        self.sent: list[dict] = []
+        self.edits: list[dict] = []
+        self.modals: list = []
+        interaction = self
+
+        class Response:
+            done = False
+
+            def is_done(self):
+                return self.done
+
+            async def defer(self, **kwargs):
+                self.done = True
+
+            async def send_message(self, content=None, **kwargs):
+                self.done = True
+                interaction.sent.append({"content": content, **kwargs})
+
+            async def edit_message(self, **kwargs):
+                self.done = True
+                interaction._check(kwargs.get("view"))
+                interaction.edits.append(kwargs)
+
+            async def send_modal(self, modal):
+                self.done = True
+                interaction.modals.append(modal)
+
+        class Followup:
+            async def send(self, content=None, **kwargs):
+                interaction._check(kwargs.get("view"))
+                interaction.sent.append({"content": content, **kwargs})
+                return types.SimpleNamespace(id=len(interaction.sent))
+
+        self.response, self.followup = Response(), Followup()
+
+    def _check(self, view):
+        if self.reject_sku and view and any(getattr(i, "sku_id", None) for i in view.children):
+            raise bad_request(50035, "Invalid Form Body")
+
+    async def edit_original_response(self, **kwargs):
+        self._check(kwargs.get("view"))
+        self.edits.append(kwargs)
