@@ -5,7 +5,6 @@ einen `AlertError` in ihre eigene Meldung; hier passiert alles ab der Limit-Prü
 """
 import logging
 from dataclasses import dataclass
-
 from database import db_limits, db_stream_alerts
 from systems.platform_registry import PLATFORM_HANDLERS
 from systems.premium import is_premium

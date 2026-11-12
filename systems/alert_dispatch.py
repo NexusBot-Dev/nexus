@@ -6,11 +6,9 @@ Kanal-Auflösung, Ping-Rolle, Senden (inkl. AllowedMentions) und Parallelisierun
 """
 import asyncio
 import logging
+import discord
 from datetime import datetime, timedelta
 from typing import Callable
-
-import discord
-
 from cogs.utils import get_lang
 from config import NEXUS_COLOR, NEXUS_FOOTER
 from database import db_limits, db_stream_alerts

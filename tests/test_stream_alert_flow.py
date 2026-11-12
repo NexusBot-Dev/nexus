@@ -14,6 +14,7 @@ import integrations.twitch as twitch_module
 import integrations.youtube_polling as youtube_module
 from database import db_stream_alerts
 from systems import alert_dispatch
+from emojis import NexusEmojis
 from tests.conftest import query, query_one, t
 from tests.fakes import message_id
 
@@ -236,7 +237,7 @@ def test_hinweis_wenn_bot_im_alert_kanal_nicht_schreiben_darf(guild):
     assert channel_warning(lang, None) == ""
 
     readonly = guild.add_text_channel("nur-lesen", bot_denied={"send_messages"})
-    assert channel_warning(lang, readonly) == "\n" + t("alert_channel_missing_perms", channel=readonly.mention, perms="`Send Messages`")
+    assert channel_warning(lang, readonly) == f"\n{NexusEmojis.WARNING} " + t("alert_channel_missing_perms", channel=readonly.mention, perms="`Send Messages`")
 
     hidden = guild.add_text_channel("versteckt", bot_denied={"view_channel", "send_messages", "embed_links"})
     assert "`View Channel`, `Send Messages`, `Embed Links`" in channel_warning(lang, hidden)

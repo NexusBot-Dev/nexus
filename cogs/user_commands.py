@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import time
 import discord
 from discord import app_commands
 from discord.ext import commands
 from config import INVITE_URL, NEXUS_FOOTER
 from database import db_giveaways, db_levels, db_settings, db_activity
 from emojis import NexusEmojis
-from systems.card_generator import generate_rank_card
+from systems.card_generator import AVATAR_SIZE, generate_rank_card
 from systems.exp_system import xp_for_level
 from systems.ui import with_emoji
 from .utils import get_user_lang, module_required
@@ -157,10 +158,13 @@ class UserCommands(commands.Cog):
         silent: bool = False,
     ):
         await interaction.response.defer(ephemeral=silent)
+        started = time.perf_counter()
 
         target = member or interaction.user
-        data = await db_levels.get_user_xp(interaction.guild_id, target.id)
-        rank = await db_levels.get_user_rank(interaction.guild_id, target.id)
+        data, rank = await asyncio.gather(
+            db_levels.get_user_xp(interaction.guild_id, target.id),
+            db_levels.get_user_rank(interaction.guild_id, target.id),
+        )
         xp = data["xp"]
         level = data["level"]
 
@@ -168,12 +172,15 @@ class UserCommands(commands.Cog):
         level_end   = xp_for_level(level + 1)
         xp_in_level = max(0, xp - level_start)
         xp_needed   = level_end - level_start
+        t_db = time.perf_counter()
 
+        # Statisch und in 512 px statt 1024 px (bei animierten Avataren sonst ein GIF mit mehreren MB)
         try:
-            avatar_bytes = await target.display_avatar.read()
+            avatar_bytes = await target.display_avatar.with_format("png").with_size(AVATAR_SIZE).read()
         except discord.HTTPException:
             log.warning("Avatar-Download fehlgeschlagen für %s, Fallback auf Default-Avatar.", target.id)
             avatar_bytes = await target.default_avatar.read()
+        t_avatar = time.perf_counter()
 
         card_buffer = await asyncio.to_thread(
             generate_rank_card,
@@ -184,9 +191,17 @@ class UserCommands(commands.Cog):
             rank=rank,
             level=level,
         )
+        card_size = card_buffer.getbuffer().nbytes
+        t_card = time.perf_counter()
 
-        file = discord.File(card_buffer, filename="rank.png")
+        file = discord.File(card_buffer, filename="rank.webp")
         await interaction.followup.send(file=file, ephemeral=silent)
+        t_sent = time.perf_counter()
+        log.info(
+            "/rank in Guild %s: DB %.2fs · Avatar %.2fs (%d KB) · Karte %.2fs (%d KB) · Senden %.2fs · gesamt %.2fs",
+            interaction.guild_id, t_db - started, t_avatar - t_db, len(avatar_bytes) // 1024,
+            t_card - t_avatar, card_size // 1024, t_sent - t_card, t_sent - started,
+        )
 
 async def setup(bot):
     await bot.add_cog(UserCommands(bot))

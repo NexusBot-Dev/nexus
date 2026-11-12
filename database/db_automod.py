@@ -10,8 +10,10 @@ def forget_guild(guild_id: int) -> None:
 
 async def get_antinuke(guild_id: int) -> int:
     """Liest den Status von Anti-Nuke aus (0 oder 1) — gecacht."""
-    if guild_id in _antinuke_cache:
-        return _antinuke_cache[guild_id]
+    # Ein Blick in den Cache: Mit „in“ und danach [] kann der Eintrag dazwischen ablaufen (KeyError)
+    cached = _antinuke_cache.get(guild_id)
+    if cached is not None:
+        return cached
 
     async with db.pool.acquire() as conn:
         async with conn.cursor() as cur:

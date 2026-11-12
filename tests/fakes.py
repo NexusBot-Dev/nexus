@@ -8,10 +8,12 @@ FakeGuild erbt von discord.Guild, weil der Bot-Code an einigen Stellen isinstanc
 (z. B. systems.hierarchy.missing_perms). Das echte __init__ wird nie aufgerufen; alles, was der Code liest,
 ist hier überschrieben.
 """
+import io
 import itertools
 import types
 
 import discord
+from PIL import Image
 
 _ids = itertools.count(100_000_000_000_000_000)
 
@@ -74,6 +76,37 @@ class FakeRole:
         return self.position <= other.position
 
 
+class FakeAsset:
+    """Avatar wie bei discord.py: Format und Größe stehen in der URL, read() lädt das Bild.
+    image: was read() liefert (Standard: ein kleines PNG); fail: read() scheitert wie ein CDN-Fehler."""
+
+    def __init__(self, url: str, *, image: bytes | None = None, fail: bool = False):
+        self.url, self.image, self.fail = url, image, fail
+        self.reads: list[str] = []   # URLs, die gelesen wurden
+
+    def _replace(self, url: str) -> "FakeAsset":
+        clone = FakeAsset(url, image=self.image, fail=self.fail)
+        clone.reads = self.reads
+        return clone
+
+    def with_format(self, fmt: str) -> "FakeAsset":
+        base, _, query = self.url.partition("?")
+        return self._replace(f"{base.rsplit('.', 1)[0]}.{fmt}" + (f"?{query}" if query else ""))
+
+    def with_size(self, size: int) -> "FakeAsset":
+        return self._replace(f"{self.url.partition('?')[0]}?size={size}")
+
+    async def read(self) -> bytes:
+        self.reads.append(self.url)
+        if self.fail:
+            raise not_found(0)
+        if self.image is None:
+            buffer = io.BytesIO()
+            Image.new("RGB", (128, 128), (200, 60, 90)).save(buffer, "PNG")
+            self.image = buffer.getvalue()
+        return self.image
+
+
 class FakeMember:
     def __init__(self, guild, name: str, roles: list[FakeRole], *, bot: bool = False, id: int | None = None):
         self.id = id or next_id()
@@ -82,7 +115,8 @@ class FakeMember:
         self.bot = bot
         self.roles = [guild.default_role, *roles]
         self.voice = None   # VoiceState, solange das Mitglied in einem Voice-Kanal ist (FakeVoiceChannel.join)
-        self.display_avatar = types.SimpleNamespace(url=f"https://cdn.discordapp.com/embed/avatars/{self.id % 6}.png")
+        self.display_avatar = FakeAsset(f"https://cdn.discordapp.com/embed/avatars/{self.id % 6}.png")
+        self.default_avatar = FakeAsset(f"https://cdn.discordapp.com/embed/avatars/{self.id % 6}.png")
 
     @property
     def mention(self):
@@ -298,7 +332,7 @@ class FakeGuild(discord.Guild):
         self.bot_role = FakeRole(self, "Nexus", 8, bot_permissions or discord.Permissions(
             manage_channels=True, manage_roles=True, manage_messages=True, view_channel=True,
             send_messages=True, embed_links=True, read_message_history=True, kick_members=True,
-            ban_members=True, moderate_members=True, manage_guild=True, add_reactions=True,
+            ban_members=True, moderate_members=True, manage_guild=True, add_reactions=True, create_events=True,
         ))
         self.role_list = [self._default_role, self.mod_role, self.bot_role, self.admin_role]
 
@@ -310,6 +344,8 @@ class FakeGuild(discord.Guild):
         self._me = FakeMember(self, "Nexus", [self.bot_role], bot=True)
         self.members_by_id = {m.id: m for m in (self.owner_member, self.admin, self.moderator, self.member, self._me)}
         self.afk_channel_obj = None
+        self.events_by_id: dict[int, FakeScheduledEvent] = {}
+        self.max_events = 100   # Discord: höchstens 100 geplante oder laufende Events pro Server
 
     # ── Lesen ────────────────────────────────────────────────────────────────
     @property
@@ -378,6 +414,14 @@ class FakeGuild(discord.Guild):
     async def fetch_automod_rules(self):
         return list(self.automod_rules)
 
+    def get_scheduled_event(self, event_id: int):
+        return self.events_by_id.get(event_id)
+
+    async def fetch_scheduled_event(self, event_id: int, **kwargs):
+        if (event := self.events_by_id.get(event_id)) is None:
+            raise not_found(10070)
+        return event
+
     # ── Schreiben ────────────────────────────────────────────────────────────
     def add_text_channel(self, name: str, **kwargs) -> FakeTextChannel:
         """Für den Testaufbau: Kanal anlegen, ohne dass es als Bot-Aktion zählt."""
@@ -396,6 +440,29 @@ class FakeGuild(discord.Guild):
         channel = self.add_text_channel(name, overwrites=overwrites, position=len(self.channels_by_id))
         self.calls.append(("guild.create_text_channel", channel.id, name))
         return channel
+
+    async def create_scheduled_event(self, *, name, start_time, end_time, location, entity_type, privacy_level,
+                                     description=discord.utils.MISSING, image=discord.utils.MISSING, reason=None):
+        if not self.me.guild_permissions.create_events:
+            raise forbidden()
+        if entity_type is not discord.EntityType.external or not location or end_time is None:
+            raise bad_request(50035, "Events mit Link als Ort brauchen Ort und Endzeit")
+        if len(name) > 100 or len(location) > 100 or (description and len(description) > 1000):
+            raise bad_request(50035, "Text zu lang")
+        if sum(e.status is not discord.EventStatus.completed for e in self.events_by_id.values()) >= self.max_events:
+            raise bad_request(30038, "Maximum number of guild scheduled events reached")
+        event = FakeScheduledEvent(self, name=name, description=description or None, start_time=start_time,
+                                   end_time=end_time, location=location, privacy_level=privacy_level,
+                                   image=None if image is discord.utils.MISSING else image)
+        self.events_by_id[event.id] = event
+        self.calls.append(("guild.create_scheduled_event", event.id, name))
+        return event
+
+    def add_scheduled_event(self, name: str, start_time, end_time, **kwargs) -> "FakeScheduledEvent":
+        """Für den Testaufbau: ein Event, das jemand im Server angelegt hat."""
+        event = FakeScheduledEvent(self, name=name, start_time=start_time, end_time=end_time, **kwargs)
+        self.events_by_id[event.id] = event
+        return event
 
     def add_role(self, name: str, position: int, **permissions) -> FakeRole:
         """Für den Testaufbau: eine Rolle anlegen (Position 1 = ganz unten, Bot steht auf 8, Admin auf 10)."""
@@ -425,6 +492,35 @@ class FakeGuild(discord.Guild):
 
     def __repr__(self):
         return f"<FakeGuild {self.name} {self.id}>"
+
+
+class FakeScheduledEvent:
+    """Ein Server-Event. Discord startet und beendet Events mit Link als Ort selbst — im Test setzt man status."""
+
+    def __init__(self, guild, *, name, start_time, end_time, location="https://example.com", description=None,
+                 privacy_level=discord.PrivacyLevel.guild_only, image=None):
+        self.guild = guild
+        self.id = next_id()
+        self.name, self.description, self.location = name, description, location
+        self.start_time, self.end_time = start_time, end_time
+        self.privacy_level, self.image = privacy_level, image
+        self.status = discord.EventStatus.scheduled
+
+    async def edit(self, **kwargs):
+        if self.status is not discord.EventStatus.scheduled:
+            raise bad_request(180000, "Cannot modify a finished event")
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.guild.calls.append(("event.edit", self.id, tuple(sorted(kwargs))))
+        return self
+
+    async def delete(self, *, reason=None):
+        if self.guild.events_by_id.pop(self.id, None) is None:
+            raise not_found(10070)
+        self.guild.calls.append(("event.delete", self.id))
+
+    def __repr__(self):
+        return f"<FakeScheduledEvent {self.name!r} {self.start_time:%d.%m. %H:%M}>"
 
 
 class FakeBot:

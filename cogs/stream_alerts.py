@@ -12,6 +12,7 @@ from systems.ui import NexusView, NexusModal, error_msg, with_emoji
 from systems.alert_dispatch import ALERT_CHANNEL_PERMS, finish_ended_streams
 from systems.hierarchy import missing_perms, perm_label
 from systems import stream_alert_service as alert_service
+from systems import schedule_images, stream_schedule
 from systems.premium_ui import send_upsell
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,299 @@ def channel_warning(lang: dict, channel: discord.abc.GuildChannel | None) -> str
         "alert_channel_missing_perms",
         "Heads up: I'm missing permissions in {channel} ({perms}). Until that's fixed, no alerts will show up there.",
     ).format(channel=channel.mention, perms=", ".join(f"`{perm_label(p)}`" for p in miss)))
+
+
+# ─── /stream_schedule ────────────────────────────────────────────────────────
+
+# Fehlerzustände aus dem letzten Abgleich → (Übersetzungsschlüssel, englischer Fallback)
+SCHEDULE_ERRORS = {
+    stream_schedule.ERR_PERMISSION: ("sched_err_missing_permission", "I'm missing the **Create Events** permission."),
+    stream_schedule.ERR_NO_SCHEDULE: ("sched_err_no_schedule", "There is no stream schedule on Twitch."),
+    stream_schedule.ERR_TWITCH: ("sched_err_twitch_error", "Twitch couldn't be reached — retrying within the hour."),
+    stream_schedule.ERR_DISCORD: ("sched_err_discord_error", "Discord didn't accept every event — retrying within the hour."),
+}
+
+
+# Bildquelle → (Übersetzungsschlüssel, englischer Fallback)
+SCHEDULE_IMAGES = {
+    stream_schedule.IMAGE_BANNER: ("sched_image_banner", "Game banner"),
+    stream_schedule.IMAGE_OFFLINE: ("sched_image_offline", "Offline image"),
+    stream_schedule.IMAGE_NONE: ("sched_image_none", "No image"),
+    stream_schedule.IMAGE_CUSTOM: ("sched_image_custom", "Own image"),
+}
+
+
+def _image_label(source: str, lang: dict) -> str:
+    key, fallback = SCHEDULE_IMAGES[source]
+    return lang.get(key, fallback)
+
+
+def _schedule_status(entry: stream_schedule.ScheduleEntry, lang: dict, premium: bool) -> str:
+    if not entry.enabled:
+        return f"{NexusEmojis.OFF} {lang.get('sched_off', 'Off')}"
+    if not entry.active:
+        return lang.get("alert_inactive_premium", "⏸️ Inactive (Premium limit)")
+    text = f"{NexusEmojis.ON} {lang.get('sched_on', 'On')} · " + lang.get(
+        "sched_events", "Upcoming events: {count}").format(count=entry.events)
+    text += " · " + lang.get("sched_image_line", "Image: {source}").format(
+        source=_image_label(stream_schedule.effective_image_source(entry, premium), lang))
+    if premium and entry.custom_text:
+        text += " · " + lang.get("sched_text_custom", "Own text")
+    if entry.error in SCHEDULE_ERRORS:
+        key, fallback = SCHEDULE_ERRORS[entry.error]
+        text += "\n> " + with_emoji(NexusEmojis.WARNING, lang.get(key, fallback))
+    return text
+
+
+async def schedule_panel(bot, guild: discord.Guild, lang: dict) -> tuple[discord.Embed, "StreamScheduleView | None"]:
+    """Übersicht von /stream_schedule — ohne Twitch-Alert nur ein Hinweis, ohne Auswahl."""
+    overview = await stream_schedule.get_overview(guild)
+    description = lang.get(
+        "sched_desc",
+        "Dates from the Twitch schedule show up as server events — for the next **{days} days**. "
+        "I check every hour and update or remove events when the schedule changes.",
+    ).format(days=overview.days)
+    if not overview.premium and overview.premium_limit > overview.limit:
+        description += "\n" + lang.get(
+            "sched_premium_hint", "With Premium: up to {max} streamers.",
+        ).format(max=overview.premium_limit)
+    if not overview.can_create_events:
+        description += "\n\n" + with_emoji(NexusEmojis.WARNING, lang.get(
+            "sched_missing_permission",
+            "I'm missing the **Create Events** permission — until it's granted, I can't create any events.",
+        ))
+    embed = discord.Embed(
+        title=lang.get("sched_title", "📅 Stream schedule as events"),
+        description=description,
+        color=await db_settings.get_color(guild.id),
+    )
+    embed.set_footer(text=NEXUS_FOOTER)
+    if not overview.entries:
+        embed.add_field(name="\u200b", value=lang.get(
+            "sched_no_twitch", "No Twitch channel is being monitored yet. Add one first with `/alert_add`.",
+        ), inline=False)
+        return embed, None
+
+    used = sum(e.enabled for e in overview.entries)
+    display = PLATFORM_DISPLAY["twitch"]
+    embed.add_field(
+        name=f"{display['emoji']} {display['label']} · {min(used, overview.limit)}/{overview.limit}",
+        value="\n".join(f"> **{e.streamer_name}** — {_schedule_status(e, lang, overview.premium)}" for e in overview.entries),
+        inline=False,
+    )
+    return embed, StreamScheduleView(bot, lang, overview.entries, premium=overview.premium)
+
+
+class StreamScheduleView(NexusView):
+    """Auswahl 1: einen Twitch-Kanal ein- oder ausschalten. Auswahl 2: Bildquelle eines eingeschalteten Kanals.
+    Button „Text & Bild“: eigene Beschreibung und eigenes Bild (Premium). Danach zeigt sich die Übersicht neu."""
+
+    def __init__(self, bot, lang: dict, entries: list[stream_schedule.ScheduleEntry], *, premium: bool):
+        super().__init__(lang, timeout=300)
+        self.bot = bot
+        self.premium = premium
+        self.entries = {e.monitored_channel_id: e for e in entries}
+        self.select_streamer.placeholder = lang.get("sched_select_placeholder", "Turn a streamer on or off…")
+        self.select_streamer.options = [
+            discord.SelectOption(
+                label=e.streamer_name[:100], value=str(e.monitored_channel_id),
+                description=lang.get("sched_opt_disable", "Turn off") if e.enabled else lang.get("sched_opt_enable", "Turn on"),
+                emoji=NexusEmojis.ON if e.enabled else NexusEmojis.OFF,
+            )
+            for e in entries
+        ][:25]
+        # Pro eingeschaltetem Kanal die jeweils anderen Quellen, z. B. „Rusirda → Offline-Bild“
+        self.select_image.placeholder = lang.get("sched_image_placeholder", "Change image…")
+        self.select_image.options = [
+            discord.SelectOption(
+                label=f"{e.streamer_name} → {_image_label(source, lang)}"[:100], value=f"{e.monitored_channel_id}:{source}",
+            )
+            for e in entries if e.enabled
+            for source in stream_schedule.IMAGE_SOURCES if source != stream_schedule.effective_image_source(e, premium)
+            and (source != stream_schedule.IMAGE_CUSTOM or (premium and e.custom_image_hash))   # nur mit Premium und Bild
+        ][:25]
+        if not self.select_image.options:
+            self.remove_item(self.select_image)
+        self.enabled_entries = [e for e in entries if e.enabled]
+        self.custom_button.label = lang.get("sched_custom_button", "Text & image")
+        if not self.enabled_entries:
+            self.remove_item(self.custom_button)
+
+    @discord.ui.select(row=0)
+    async def select_streamer(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
+        entry = self.entries[int(select.values[0])]
+        try:
+            await stream_schedule.set_enabled(self.bot, interaction.guild_id, entry.monitored_channel_id, not entry.enabled)
+        except stream_schedule.ScheduleError as e:
+            if e.reason == "limit" and e.params["max"] > e.params["limit"]:   # mit Premium mehr möglich
+                await send_upsell(interaction, self.lang, "stream_schedule_limit", limit=e.params["limit"], max=e.params["max"])
+            elif e.reason == "limit":
+                await interaction.followup.send(error_msg(self.lang.get(
+                    "sched_limit_reached", "Limit of {limit} streamers reached. Turn another one off first.",
+                ).format(limit=e.params["limit"])), ephemeral=True)
+            # not_monitored: Alert inzwischen entfernt — die neue Übersicht zeigt es
+        embed, view = await schedule_panel(self.bot, interaction.guild, self.lang)
+        await self.show(interaction, view or NexusView(self.lang), embed=embed)
+
+    @discord.ui.select(row=1)
+    async def select_image(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.defer()
+        monitored_channel_id, source = select.values[0].split(":", 1)
+        try:
+            await stream_schedule.set_image_source(self.bot, interaction.guild_id, int(monitored_channel_id), source)
+        except stream_schedule.ScheduleError:
+            pass   # inzwischen ausgeschaltet — die neue Übersicht zeigt es
+        embed, view = await schedule_panel(self.bot, interaction.guild, self.lang)
+        await self.show(interaction, view or NexusView(self.lang), embed=embed)
+
+    @discord.ui.button(row=2, style=discord.ButtonStyle.secondary, emoji="✏️")
+    async def custom_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await is_premium(interaction.guild_id):
+            await send_upsell(interaction, self.lang, "stream_schedule_custom")
+            return
+        if len(self.enabled_entries) == 1:
+            await interaction.response.send_modal(ScheduleCustomModal(self, self.enabled_entries[0]))
+            return
+        await self.show(interaction, ScheduleCustomPickView(self))   # Übersicht bleibt stehen, nur die Auswahl wechselt
+
+    async def refresh(self, interaction: discord.Interaction) -> None:
+        """Übersicht in derselben Nachricht neu aufbauen (nach Formular oder Auswahl)."""
+        embed, view = await schedule_panel(self.bot, interaction.guild, self.lang)
+        await self.show(interaction, view or NexusView(self.lang), embed=embed)
+
+
+class ScheduleCustomPickView(NexusView):
+    """Mehrere eingeschaltete Streamer: erst auswählen, für wen Text und Bild gelten."""
+
+    def __init__(self, panel: StreamScheduleView):
+        super().__init__(panel.lang, timeout=300)
+        self.bot = panel.bot
+        self.panel = panel
+        self.select_entry.placeholder = panel.lang.get("sched_custom_pick", "Text & image for which streamer?")
+        self.select_entry.options = [
+            discord.SelectOption(label=e.streamer_name[:100], value=str(e.monitored_channel_id))
+            for e in panel.enabled_entries
+        ][:25]
+        self.back.label = panel.lang.get("sched_custom_back", "Back")
+
+    @discord.ui.select(row=0)
+    async def select_entry(self, interaction: discord.Interaction, select: discord.ui.Select):
+        entry = next(e for e in self.panel.enabled_entries if str(e.monitored_channel_id) == select.values[0])
+        await interaction.response.send_modal(ScheduleCustomModal(self, entry))
+
+    @discord.ui.button(row=1, style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.refresh(interaction)
+
+    async def refresh(self, interaction: discord.Interaction) -> None:
+        embed, view = await schedule_panel(self.bot, interaction.guild, self.lang)
+        await self.show(interaction, view or NexusView(self.lang), embed=embed)
+
+
+# Gründe aus schedule_images.ImageRejected → (Übersetzungsschlüssel, englischer Fallback)
+SCHEDULE_IMAGE_PROBLEMS = {
+    "too_large": ("sched_custom_err_too_large", "The image is too large — at most {mb} MB."),
+    "too_many_pixels": ("sched_custom_err_too_many_pixels", "The image has too many pixels."),
+    "not_an_image": ("sched_custom_err_not_an_image", "That's not a supported image — please use PNG, JPG or WebP."),
+}
+
+
+class ScheduleCustomModal(NexusModal):
+    """Eigene Beschreibung und eigenes Bild für einen Streamer (Premium). Danach einmal abgleichen und die
+    Übersicht neu zeigen; Fehler kommen als eigene, nur sichtbare Nachricht."""
+
+    def __init__(self, origin: "StreamScheduleView | ScheduleCustomPickView", entry: stream_schedule.ScheduleEntry):
+        lang = origin.lang
+        super().__init__(lang, title=lang.get("sched_custom_title", "Text & image: {streamer}").format(
+            streamer=entry.streamer_name))
+        self.origin, self.entry = origin, entry
+        self.bot = origin.bot
+        placeholders = " ".join(f"{{{p}}}" for p in stream_schedule.TEXT_PLACEHOLDERS)
+
+        self.text_input = discord.ui.TextInput(
+            style=discord.TextStyle.paragraph, required=False, max_length=stream_schedule.MAX_TEXT_LENGTH,
+            default=entry.custom_text or "",
+            placeholder=lang.get("sched_custom_text_placeholder", "Live now: {title}")[:100],
+        )
+        self.add_item(discord.ui.Label(
+            text=lang.get("sched_custom_text_label", "Description"),
+            description=lang.get("sched_custom_text_hint", "Placeholders: {placeholders} · empty = default text")
+            .format(placeholders=placeholders)[:100],
+            component=self.text_input,
+        ))
+
+        self.image_upload = discord.ui.FileUpload(required=False, max_values=1)
+        self.add_item(discord.ui.Label(
+            text=lang.get("sched_custom_image_label", "Image (cropped to 800×320)"),
+            description=lang.get("sched_custom_image_hint", "PNG, JPG or WebP, max. {mb} MB · empty = keep current")
+            .format(mb=schedule_images.MAX_UPLOAD_BYTES // (1024 * 1024))[:100],
+            component=self.image_upload,
+        ))
+
+        self.remove_image = None
+        if entry.custom_image_hash:
+            self.remove_image = discord.ui.Checkbox()
+            self.add_item(discord.ui.Label(
+                text=lang.get("sched_custom_remove_label", "Remove own image"),
+                description=lang.get("sched_custom_remove_hint", "The game banner is used again.")[:100],
+                component=self.remove_image,
+            ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        guild_id, mc_id = interaction.guild_id, self.entry.monitored_channel_id
+        problems: list[str] = []
+        premium_lost = changed = False
+        try:
+            text = self.text_input.value.strip() or None
+            if text != self.entry.custom_text:
+                await stream_schedule.set_custom_text(self.bot, guild_id, mc_id, text, sync=False)
+                changed = True
+            upload = self.image_upload.values[0] if self.image_upload.values else None
+            if upload is not None:
+                problem = await self._store_image(guild_id, mc_id, upload)
+                if problem:
+                    problems.append(problem)
+                else:
+                    changed = True
+            elif self.remove_image is not None and self.remove_image.value:
+                await stream_schedule.set_custom_image(self.bot, guild_id, mc_id, None, sync=False)
+                changed = True
+        except stream_schedule.ScheduleError as e:
+            if e.reason == "premium":   # Premium inzwischen abgelaufen
+                premium_lost = True
+            elif e.reason == "text_too_long":
+                problems.append(self.lang.get("sched_custom_err_text_too_long", "The text is too long — at most {max} characters.")
+                                .format(max=e.params["max"]))
+            # not_enabled: inzwischen ausgeschaltet — die neue Übersicht zeigt es
+        if changed:
+            await stream_schedule.sync_guild(self.bot, guild_id)
+        await self.origin.refresh(interaction)
+        if premium_lost:
+            await send_upsell(interaction, self.lang, "stream_schedule_custom")
+        for problem in problems:
+            await interaction.followup.send(error_msg(problem), ephemeral=True)
+
+    async def _store_image(self, guild_id: int, mc_id: int, upload: discord.Attachment) -> str | None:
+        """Bild laden und speichern. Gibt den Fehlertext zurück, wenn es abgelehnt wurde."""
+        mb = schedule_images.MAX_UPLOAD_BYTES // (1024 * 1024)
+        if upload.size > schedule_images.MAX_UPLOAD_BYTES:   # gar nicht erst herunterladen
+            key, fallback = SCHEDULE_IMAGE_PROBLEMS["too_large"]
+            return self.lang.get(key, fallback).format(mb=mb)
+        try:
+            data = await upload.read()
+        except discord.HTTPException:
+            return self.lang.get("sched_custom_err_download", "I couldn't load the image — please try again.")
+        try:
+            await stream_schedule.set_custom_image(self.bot, guild_id, mc_id, data, sync=False)
+        except stream_schedule.ScheduleError as e:
+            if e.reason != "image_rejected":
+                raise
+            key, fallback = SCHEDULE_IMAGE_PROBLEMS.get(e.params["problem"], SCHEDULE_IMAGE_PROBLEMS["not_an_image"])
+            return self.lang.get(key, fallback).format(mb=mb)
+        return None
 
 
 class AlertMessageModal(NexusModal):
@@ -592,6 +886,19 @@ class StreamAlerts(commands.Cog):
             view=view,
             ephemeral=True,
         )
+        view.bind(interaction)
+
+    @app_commands.command(name="stream_schedule", description=app_commands.locale_str("cmd_stream_schedule_desc"))
+    @app_commands.default_permissions(manage_guild=True)
+    @module_required("stream_alerts")
+    async def stream_schedule_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        lang = await get_lang(interaction.guild_id)
+        embed, view = await schedule_panel(self.bot, interaction.guild, lang)
+        if view is None:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.bind(interaction)
 
 async def setup(bot):

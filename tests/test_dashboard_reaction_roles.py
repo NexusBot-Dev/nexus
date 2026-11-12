@@ -164,7 +164,7 @@ async def test_rolle_mit_mod_rechten_nur_fuer_admins(dash, rr):
     payload = {"channel_id": panel["channel_id"], "message_id": panel["message_id"],
                "role_id": str(mod_rolle.id), "emoji": "🔨"}
     error = await dash.error(RR, "add-entry", payload, user=rr.role_manager)
-    assert error.startswith("❌ @Mini-Mod hat Moderations-/Admin-Rechte")
+    assert error.startswith("@Mini-Mod hat Moderations-/Admin-Rechte")   # im Dashboard ohne Discord-Emoji
     await dash.ok(RR, "add-entry", payload, user=rr.admin)
 
 
@@ -323,7 +323,7 @@ async def test_neu_posten_ohne_rechte_im_zielkanal(dash, rr):
     rr.channel.messages.clear()
     neu = rr.add_text_channel("gesperrt", bot_denied={"add_reactions"})
     error = await dash.error(RR, "repost-message", {"message_id": panel["message_id"], "channel_id": str(neu.id)})
-    assert error.startswith("❌") and "Add Reactions" in error
+    assert error.startswith(t("perm_issue_missing_perms", perms="")[:10]) and "Add Reactions" in error
     assert neu.messages == {}
 
 

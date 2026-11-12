@@ -1,8 +1,8 @@
 """Gemeinsame Logik für gepostete Embeds (Bot + Dashboard):
 Embed bauen, Posts merken und bei Bearbeitung alle noch existierenden Nachrichten aktualisieren."""
 import logging
-from dataclasses import dataclass
 import discord
+from dataclasses import dataclass
 from config import NEXUS_FOOTER
 from database import db_embeds, db_settings
 

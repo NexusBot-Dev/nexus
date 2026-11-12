@@ -46,9 +46,11 @@ def invalidate_cache(guild_id: int) -> None:
     _premium_cache.pop(guild_id, None)
 
 async def is_premium(guild_id: int) -> bool:
-    # 1. Schneller In-Memory Return (TTLCache prüft Ablaufzeit automatisch)
-    if guild_id in _premium_cache:
-        return _premium_cache[guild_id]
+    # 1. Schneller In-Memory Return (TTLCache prüft Ablaufzeit automatisch).
+    # Ein Blick in den Cache: Mit „in“ und danach [] kann der Eintrag dazwischen ablaufen (KeyError)
+    cached = _premium_cache.get(guild_id)
+    if cached is not None:
+        return cached
 
     # 2. Datenbank abfragen
     async with db.pool.acquire() as conn:

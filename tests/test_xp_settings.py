@@ -4,6 +4,7 @@ import pytest
 from cogs.help import MODULE_INFO
 from cogs.levels import Levels, XpRangeModal
 from database import db_levels
+from emojis import NexusEmojis
 from tests.conftest import run, t
 from tests.fakes import FakeInteraction
 from translations import TRANSLATIONS
@@ -40,7 +41,7 @@ async def test_uebersicht(cog, guild):
     assert message["embed"].title == t("xps_title")
     assert field_values(message["embed"]) == [
         t("xps_chat_value", min=15, max=25, cooldown=60),
-        t("xps_voice_value", status=t("xps_voice_off"), min=5, max=8),
+        t("xps_voice_value", status=f"{NexusEmojis.OFF} {t('xps_voice_off')}", min=5, max=8),
     ]
     assert message["view"].btn_toggle.label == t("xps_btn_voice_enable")
 
@@ -52,7 +53,7 @@ async def test_voice_xp_ein_und_ausschalten(cog, guild):
     assert (await db_levels.get_levels_settings(guild.id))["voice_xp_enabled"]
 
     [edit] = interaction.edits   # dieselbe Nachricht, neu aufgebaut
-    assert field_values(edit["embed"])[1] == t("xps_voice_value", status=t("xps_voice_on"), min=5, max=8)
+    assert field_values(edit["embed"])[1] == t("xps_voice_value", status=f"{NexusEmojis.ON} {t('xps_voice_on')}", min=5, max=8)
     assert edit["view"].btn_toggle.label == t("xps_btn_voice_disable")
 
     await edit["view"].btn_toggle.callback(FakeInteraction(guild))
@@ -83,7 +84,7 @@ async def test_ungueltige_werte(cog, guild, kind, low, high, error):
     _, message = await open_panel(cog, guild)
     interaction = await submit(message["view"], kind, low, high, guild)
     key, params = error
-    assert [m["content"] for m in interaction.sent] == ["❌ " + t(key, **params)]
+    assert [m["content"] for m in interaction.sent] == [f"{NexusEmojis.ERROR} " + t(key, **params)]
     assert interaction.edits == []
     settings = await db_levels.get_levels_settings(guild.id)
     assert (settings["xp_min"], settings["xp_max"], settings["voice_xp_min"], settings["voice_xp_max"]) == (15, 25, 5, 8)

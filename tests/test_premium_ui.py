@@ -5,6 +5,7 @@ import discord
 
 from cogs.embeds import EmbedHubView
 from config import PREMIUM_SKU_ID
+from emojis import NexusEmojis
 from systems import premium_ui
 from tests.conftest import query, set_premium, t
 from tests.fakes import FakeInteraction
@@ -32,7 +33,7 @@ async def test_planen_ohne_premium_zeigt_hinweis_mit_kauf_button(guild):
     interaction = await click_schedule(guild)
     [message] = interaction.sent
     assert message["ephemeral"] is True
-    assert message["embed"].title == t("premium_upsell_schedule_title")
+    assert message["embed"].title == f"{NexusEmojis.PREMIUM} " + t("premium_upsell_schedule_title")
     assert message["embed"].description == t("premium_upsell_schedule_desc", embeds=100)   # Limit aus feature_limits
     view = message["view"]
     assert has_buy_button(view)
@@ -45,8 +46,8 @@ async def test_mehr_infos_zeigt_premium_uebersicht_an_derselben_stelle(guild):
     await view.more_info.callback(interaction)
 
     [edit] = interaction.edits
-    assert edit["embed"].title == t("premium_title")
-    assert edit["embed"].fields[0].value == t("premium_status_none")
+    assert edit["embed"].title == f"{NexusEmojis.PREMIUM} " + t("premium_title")
+    assert edit["embed"].fields[0].value == f"{NexusEmojis.OFF} " + t("premium_status_none")
     assert has_buy_button(edit["view"])
     assert len(interaction.sent) == 1   # keine zweite Nachricht
 
@@ -55,7 +56,7 @@ async def test_sku_abgelehnt_hinweis_ohne_kauf_button(guild):
     """Ist die SKU (noch) nicht veröffentlicht, kommt der Hinweis trotzdem — nur ohne Kauf-Button."""
     interaction = await click_schedule(guild, reject_sku=True)
     [message] = interaction.sent
-    assert message["embed"].title == t("premium_upsell_schedule_title")
+    assert message["embed"].title == f"{NexusEmojis.PREMIUM} " + t("premium_upsell_schedule_title")
     assert not has_buy_button(message["view"])
     await message["view"].more_info.callback(interaction)
     assert interaction.edits[0]["view"] is None
@@ -84,6 +85,8 @@ FEATURES = {
     "embed_limit": {"limit": 5},
     "welcome_limit": {"limit": 1, "max": 5},
     "boost_limit": {"limit": 1, "max": 5},
+    "stream_schedule_limit": {"limit": 1, "max": 5},
+    "stream_schedule_custom": {},
 }
 
 
@@ -93,7 +96,7 @@ def test_jeder_hinweis_hat_texte_in_allen_sprachen():
             values = {"embeds": 100, **params}
             title = lang[f"premium_upsell_{feature}_title"].format(**values)
             desc = lang[f"premium_upsell_{feature}_desc"].format(**values)
-            assert title.startswith("⭐") and "{" not in title + desc, (code, feature)
+            assert title and not title.startswith("⭐") and "{" not in title + desc, (code, feature)   # ⭐ setzt der Code davor
 
 
 def upsell_of(interaction) -> discord.Embed:
@@ -107,7 +110,7 @@ async def test_reaction_roles_unique_modus(guild, bot):
     interaction = FakeInteraction(guild)
     view = ModeSelectView(bot, guild.admin.id, None, None, None, "🎮", LANG, has_premium=False)
     await view.unique_btn.callback(interaction)
-    assert upsell_of(interaction).title == t("premium_upsell_rr_unique_title")
+    assert upsell_of(interaction).title == f"{NexusEmojis.PREMIUM} " + t("premium_upsell_rr_unique_title")
 
 
 async def test_eigene_farbe_mit_gespeicherter_farbe(guild):
@@ -116,7 +119,7 @@ async def test_eigene_farbe_mit_gespeicherter_farbe(guild):
     interaction = FakeInteraction(guild)
     await SettingsView(guild.admin.id, LANG, guild.id).change_color.callback(interaction)
     embed = upsell_of(interaction)
-    assert embed.title == t("premium_upsell_color_title")
+    assert embed.title == f"{NexusEmojis.PREMIUM} " + t("premium_upsell_color_title")
     assert embed.description.endswith(t("color_premium_stored_hint", color="`#FF0000`"))
 
     await set_premium(guild)   # mit Premium öffnet sich das Farb-Formular
@@ -149,28 +152,30 @@ async def test_embed_limit(guild):
     await set_premium(guild)   # mit Premium: normale Meldung
     interaction = FakeInteraction(guild)
     await _embed_limit_reached(interaction, LANG)
-    assert [m["content"] for m in interaction.sent] == [t("embed_limit_reached", limit=100)]
+    assert [m["content"] for m in interaction.sent] == [f"{NexusEmojis.ERROR} " + t("embed_limit_reached", limit=100)]
 
 
 async def test_willkommensnachrichten_limit(guild):
-    from cogs.welcome_message import WelcomeManageView
+    from cogs.welcome_message import WELCOME
+    from systems.message_panel import MessageManageView
     messages = [{"id": 1, "message": "Hallo {user}"}]
-    view = WelcomeManageView(guild.admin.id, guild.id, LANG, messages, 1, upgrade_max=5)
+    view = MessageManageView(WELCOME, guild.admin.id, guild.id, LANG, messages, 1, upgrade_max=5)
     assert not view.add_btn.disabled   # ohne Premium klickbar, zeigt den Hinweis
     interaction = FakeInteraction(guild)
     await view.add_btn.callback(interaction)
     assert upsell_of(interaction).description == t("premium_upsell_welcome_limit_desc", limit=1, max=5)
 
     # Mit Premium (kein Upgrade mehr möglich) ist der Button am Limit gesperrt
-    assert WelcomeManageView(guild.admin.id, guild.id, LANG, messages, 1).add_btn.disabled
+    assert MessageManageView(WELCOME, guild.admin.id, guild.id, LANG, messages, 1).add_btn.disabled
 
 
 async def test_boost_nachrichten_limit(guild):
-    from cogs.boost_message import BoostManageView
-    view = BoostManageView(guild.admin.id, guild.id, LANG, [{"id": 1, "message": "Danke!"}], 1, upgrade_max=5)
+    from cogs.boost_message import BOOST
+    from systems.message_panel import MessageManageView
+    view = MessageManageView(BOOST, guild.admin.id, guild.id, LANG, [{"id": 1, "message": "Danke!"}], 1, upgrade_max=5)
     interaction = FakeInteraction(guild)
     await view.add_btn.callback(interaction)
-    assert upsell_of(interaction).title == t("premium_upsell_boost_limit_title")
+    assert upsell_of(interaction).title == f"{NexusEmojis.PREMIUM} " + t("premium_upsell_boost_limit_title")
 
 
 async def test_stream_alert_limit(guild, platforms):
@@ -192,5 +197,5 @@ async def test_stream_alert_limit(guild, platforms):
     [message] = interaction.sent
     assert has_buy_button(message["view"])
     embed = message["embed"]
-    assert embed.title == t("premium_upsell_alert_limit_title", platform="Twitch")
+    assert embed.title == f"{NexusEmojis.PREMIUM} " + t("premium_upsell_alert_limit_title", platform="Twitch")
     assert embed.description == t("premium_upsell_alert_limit_desc", limit=1, max=5, platform="Twitch")

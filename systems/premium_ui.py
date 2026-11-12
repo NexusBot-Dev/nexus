@@ -5,9 +5,7 @@ bietet direkt den Kauf-Button an und über „Mehr Infos“ die volle /premium-�
 """
 import asyncio
 import logging
-
 import discord
-
 from config import NEXUS_FOOTER, PREMIUM_SKU_ID
 from database import db_limits, db_settings
 from emojis import NexusEmojis
@@ -25,6 +23,7 @@ PERK_LIMITS = (
     ("stream_alerts_twitch",  "premium_perk_alerts_twitch",  "{emoji} Twitch alerts",     NexusEmojis.Integrations.TWITCH),
     ("stream_alerts_youtube", "premium_perk_alerts_youtube", "{emoji} YouTube alerts",    NexusEmojis.Integrations.YOUTUBE),
     ("stream_alerts_kick",    "premium_perk_alerts_kick",    "{emoji} Kick alerts",       NexusEmojis.Integrations.KICK),
+    ("stream_schedule_streamers", "premium_perk_stream_schedule", "{emoji} Stream schedule sync", "📅"),
 )
 # Premium-Features ohne Zahl (Übersetzungs-Key, Fallback)
 PERK_FEATURES = (

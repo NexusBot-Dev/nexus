@@ -33,3 +33,9 @@ def guild_lock(guild_id: int, platform: str) -> asyncio.Lock:
 def streamer_lock(platform: str, platform_channel_id: str) -> asyncio.Lock:
     """Alles, was den gemeinsamen Eintrag eines Streamers (und sein Webhook-Abo) anlegt oder löscht."""
     return _lock(("streamer", platform, str(platform_channel_id)))
+
+
+def schedule_lock(guild_id: int) -> asyncio.Lock:
+    """Streamplan-Abgleich eines Servers (stündlich und sofort nach dem Einschalten) — sonst legen zwei
+    gleichzeitige Abgleiche dasselbe Event doppelt an. Auch das Einschalten (Limit-Prüfung) läuft darunter."""
+    return _lock(("schedule", guild_id))

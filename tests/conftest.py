@@ -84,8 +84,8 @@ from translations import TRANSLATIONS  # noqa: E402
 # Grenzwerte wie in der Produktion (feature_limits ist die einzige Tabelle mit festen Daten)
 FEATURE_LIMITS = {
     "boost_messages": (1, 5), "saved_embeds": (5, 100), "stream_alerts_kick": (1, 5),
-    "stream_alerts_twitch": (1, 5), "stream_alerts_youtube": (1, 3), "ticket_categories": (2, 10),
-    "welcome_messages": (1, 5),
+    "stream_alerts_twitch": (1, 5), "stream_alerts_youtube": (1, 3), "stream_schedule_days": (7, 7),
+    "stream_schedule_streamers": (1, 5), "ticket_categories": (2, 10), "welcome_messages": (1, 5),
 }
 
 # ── Eine Event-Loop für alles ─────────────────────────────────────────────────────────────────────
@@ -244,6 +244,13 @@ def dash(bot, guild):
     client = run(start())
     yield Dashboard(client, guild)
     run(client.close())
+
+
+@pytest.fixture
+def twitch(monkeypatch):
+    """Twitch-Streampläne und Offline-Bilder (tests/stream_schedule_fakes.py)."""
+    from tests.stream_schedule_fakes import FakeTwitch
+    return FakeTwitch(monkeypatch)
 
 
 class FakePlatforms:

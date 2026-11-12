@@ -1,7 +1,6 @@
+import discord
 from dataclasses import dataclass, field
 from enum import Enum
-
-import discord
 from systems.ui import error_msg
 
 # ─── Ergebnis-Typ ──────────────────────────────────────────────────────────────

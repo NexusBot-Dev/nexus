@@ -104,6 +104,7 @@ MODULE_INFO = {
             "alert_list":   "help_cmd_alert_list",
             "alert_remove": "help_cmd_alert_remove",
             "alert_role":   "help_cmd_alert_role",
+            "stream_schedule": "help_cmd_stream_schedule",
         }
     },
     "Tickets": {
@@ -148,10 +149,17 @@ ALWAYS_SHOWN = {
 class HelpView(NexusView):
     """Ein Dropdown statt Buttons: bis zu 25 Einträge, kein Zeilen-/Spalten-Limit wie bei Buttons."""
 
-    def __init__(self, owner_id: int, lang: dict, color: int, active_modules: dict):
+    def __init__(self, owner_id: int, lang: dict, color: int, active_modules: dict, available: set[str] | None = None):
+        """available: Befehle, die es auf diesem Server gibt — Befehle nur für andere Server (z. B. in der Testphase
+        nur auf dem Dev-Server) fallen dann aus der Hilfe. None: alle aus MODULE_INFO."""
         super().__init__(lang, owner_id=owner_id, require=None, timeout=120)
         self.color          = color
         self.active_modules = active_modules
+        self.modules = {
+            module: {**info, "commands": {cmd: key for cmd, key in info["commands"].items()
+                                          if available is None or cmd in available}}
+            for module, info in MODULE_INFO.items()
+        }
         self.current_page   = "overview"
         self.select_module.placeholder = lang.get("help_select_placeholder", "Select a module …")
         self._refresh_options()
@@ -169,7 +177,7 @@ class HelpView(NexusView):
     def _refresh_options(self):
         """Baut die Optionen neu auf, damit der aktuelle Eintrag als Vorauswahl markiert ist."""
         active = [
-            (module, info) for module, info in MODULE_INFO.items()
+            (module, info) for module, info in self.modules.items()
             if self._is_active(module, info) and info["commands"]
         ]
         total_commands = len(ALWAYS_SHOWN["commands"]) + sum(len(info["commands"]) for _, info in active)
@@ -198,7 +206,7 @@ class HelpView(NexusView):
     @discord.ui.select(min_values=1, max_values=1)
     async def select_module(self, interaction: discord.Interaction, select: discord.ui.Select):
         choice = select.values[0]
-        self.current_page = choice if choice in MODULE_INFO else "overview"
+        self.current_page = choice if choice in self.modules else "overview"
         self._refresh_options()
         embed = self._overview_embed() if self.current_page == "overview" else self._module_embed(self.current_page)
         await interaction.response.edit_message(embed=embed, view=self)
@@ -224,7 +232,7 @@ class HelpView(NexusView):
         )
 
         # Aktive Module
-        for module, info in MODULE_INFO.items():
+        for module, info in self.modules.items():
             if not self._is_active(module, info) or not info["commands"]:
                 continue
             embed.add_field(
@@ -237,7 +245,7 @@ class HelpView(NexusView):
         return embed
 
     def _module_embed(self, module: str) -> discord.Embed:
-        info  = MODULE_INFO[module]
+        info  = self.modules[module]
         embed = discord.Embed(
             title=self.lang.get(info["name_key"], f"{info['emoji']} {module}"),
             color=self.color,
@@ -264,7 +272,10 @@ class Help(commands.Cog):
         settings = await db_settings.get_or_create_guild(interaction.guild_id)
         modules  = settings.get("modules", {})
 
-        view  = HelpView(interaction.user.id, lang, color, modules)
+        # Globale Befehle plus die nur für diesen Server angemeldeten
+        available = {c.name for c in self.bot.tree.get_commands()}
+        available |= {c.name for c in self.bot.tree.get_commands(guild=discord.Object(interaction.guild_id))}
+        view  = HelpView(interaction.user.id, lang, color, modules, available)
         embed = view._overview_embed()
 
         await interaction.followup.send(

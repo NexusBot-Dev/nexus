@@ -102,6 +102,7 @@ COMMANDS: dict[str, str] = {
     "cmd_alert_platform_desc":  "Selecione a plataforma (ex: Twitch, YouTube)",
     "cmd_alert_channel_desc":   "Em qual canal os alertas devem ser enviados?",
     "cmd_alert_edit_desc":      "Altera o canal ou a mensagem de uma live monitorada",
+    "cmd_stream_schedule_desc": "Cria eventos do servidor a partir da agenda da Twitch",
 
     # ─── Announcement Commands ───────────────────────────────────────
     "cmd_announcement_desc":         "Ativar/desativar anúncios e definir canal",

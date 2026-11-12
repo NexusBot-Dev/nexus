@@ -6,7 +6,6 @@ behebt (z. B. 400 wegen einer ungültigen Command-Definition), werden nur gelogg
 """
 import asyncio
 import logging
-
 import aiohttp
 import discord
 from discord import app_commands

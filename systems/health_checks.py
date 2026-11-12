@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import discord
+from dataclasses import dataclass
 from database import db_levels, db_reaction_roles, db_stream_alerts
 from systems.hierarchy import (
     can_manage_role, can_use_channel, missing_perms,

@@ -184,8 +184,10 @@ async def remove_level_role(guild_id: int, level: int):
 async def get_levels_settings(guild_id: int) -> dict:
     """Gibt die Level-Einstellungen einer Guild zurück (XP-Range, Punkte-Range,
     Currency-Name, Cooldown). Legt bei Bedarf eine Zeile mit den Tabellen-Defaults an."""
-    if guild_id in _levels_settings_cache:
-        return copy.deepcopy(_levels_settings_cache[guild_id])
+    # Ein Blick in den Cache: Mit „in“ und danach [] kann der Eintrag dazwischen ablaufen (KeyError)
+    cached = _levels_settings_cache.get(guild_id)
+    if cached is not None:
+        return copy.deepcopy(cached)
 
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:

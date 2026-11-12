@@ -30,8 +30,10 @@ UPDATABLE_COLUMNS = frozenset({
 })
 
 async def get_guild(guild_id: int) -> dict | None:
-    if guild_id in _settings_cache:
-        return copy.deepcopy(_settings_cache[guild_id])
+    # Ein Blick in den Cache: Mit „in“ und danach [] kann der Eintrag dazwischen ablaufen (KeyError)
+    cached = _settings_cache.get(guild_id)
+    if cached is not None:
+        return copy.deepcopy(cached)
 
     async with db.pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:

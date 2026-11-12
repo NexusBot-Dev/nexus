@@ -4,11 +4,9 @@ Gemeinsamer Ablauf für /welcome_message und /boost_message — die beiden unter
 Datenbank-Funktionen, Modul, Limit und Texten (MessageKind). Die Texte heißen <key>_msg_<name>,
 z. B. welcome_msg_panel_title bzw. boost_msg_panel_title.
 """
+import discord
 from dataclasses import dataclass
 from typing import Awaitable, Callable
-
-import discord
-
 from database import db_limits, db_settings
 from emojis import NexusEmojis
 from systems.premium import is_premium

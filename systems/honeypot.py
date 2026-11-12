@@ -4,11 +4,9 @@ Alles, was in Discord landet (Warn-Nachricht, Standardtitel), nutzt die Bot-Spra
 Aufrufer aus dem Dashboard übergeben dafür get_lang(guild_id), nicht die Dashboard-Sprache.
 """
 import logging
+import discord
 from dataclasses import dataclass
 from datetime import timedelta
-
-import discord
-
 from database import db_honeypot, db_settings
 from systems.hierarchy import PermCheck, can_act_on_member, can_apply_overwrites
 
