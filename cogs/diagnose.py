@@ -87,7 +87,7 @@ class Diagnose(commands.Cog):
         if has_alerts:
             if not alert_lines:
                 alert_lines = [f"{OK} " + lang.get("diag_alerts_ok", "All alert channels and ping roles are fine.")]
-            embed.add_field(name=lang.get("diag_section_alerts", "📡 Stream alerts"), value=_lines(alert_lines, lang), inline=False)
+            embed.add_field(name=f"{NexusEmojis.Modules.BROADCAST} {lang.get('diag_section_alerts', 'Stream alerts')}", value=_lines(alert_lines, lang), inline=False)
 
         # ─── 4. Rollen aus Modulen (Levels, Reaction Roles) ────────────────
         if modules.get("levels") or modules.get("reaction_roles"):
@@ -100,7 +100,7 @@ class Diagnose(commands.Cog):
         if modules.get("tickets"):
             ticket_lines = _section_lines(issues, "tickets")
             ticket_text = _lines(ticket_lines, lang) if ticket_lines else f"{OK} " + lang.get("diag_tickets_ok", "Tickets can be created.")
-            embed.add_field(name=lang.get("diag_section_tickets", "🎫 Tickets"), value=ticket_text, inline=False)
+            embed.add_field(name=f"{NexusEmojis.Modules.TICKET} {lang.get('diag_section_tickets', 'Tickets')}", value=ticket_text, inline=False)
 
         # ─── Fazit ─────────────────────────────────────────────────────────
         if problems:

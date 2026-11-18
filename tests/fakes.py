@@ -11,6 +11,7 @@ ist hier überschrieben.
 import io
 import itertools
 import types
+from datetime import timedelta
 
 import discord
 from PIL import Image
@@ -55,6 +56,8 @@ class FakeRole:
         self.position = position
         self.permissions = permissions or discord.Permissions.none()
         self.managed = False
+        self.color = discord.Color.default()
+        self.hoist = self.mentionable = False
 
     @property
     def mention(self):
@@ -62,6 +65,10 @@ class FakeRole:
 
     def is_default(self):
         return self.id == self.guild.id
+
+    @property
+    def members(self):
+        return [m for m in self.guild.members if self in m.roles]
 
     def __lt__(self, other):
         return self.position < other.position
@@ -135,6 +142,19 @@ class FakeMember:
             value |= role.permissions.value
         perms = discord.Permissions(value)
         return discord.Permissions.all() if perms.administrator else perms
+
+    async def timeout(self, until, *, reason=None):
+        """Wie discord.Member.timeout: Discord lehnt ein Ende nach mehr als 28 Tagen ab."""
+        if until is not None and until - discord.utils.utcnow() > timedelta(days=28):
+            raise bad_request(50035, "Invalid communication_disabled_until")
+        self.timed_out_until = until
+        self.guild.calls.append(("member.timeout", self.id, until))
+
+    async def send(self, content=None, *, embed=None, **kwargs):
+        """DM — dms_closed: der User hat DMs vom Server abgeschaltet."""
+        if getattr(self, "dms_closed", False):
+            raise forbidden(50007)
+        self.guild.calls.append(("member.dm", self.id, embed or content))
 
     def __str__(self):
         return self.name
@@ -323,7 +343,11 @@ class FakeGuild(discord.Guild):
         self.preferred_locale = discord.Locale.german if locale == "de" else discord.Locale.american_english
         self.calls: list[tuple] = []
         self.channels_by_id: dict[int, FakeTextChannel] = {}
+        self.unavailable = False   # True: Discord-Störung, Server-Daten fehlen
+        self.vanity_url_code: str | None = None
+        self.invite_list: list = []   # Einladungen (siehe add_invite)
         self.automod_rules: list = []
+        self.automod_fetches = 0
         self.emoji_ids: set[int] = set()   # eigene Server-Emojis (für add_reaction)
 
         self._default_role = FakeRole(self, "@everyone", 0, discord.Permissions.none(), id=self.id)
@@ -346,6 +370,14 @@ class FakeGuild(discord.Guild):
         self.afk_channel_obj = None
         self.events_by_id: dict[int, FakeScheduledEvent] = {}
         self.max_events = 100   # Discord: höchstens 100 geplante oder laufende Events pro Server
+
+    # Mitgliederliste vollständig geladen (discord.Guild.chunked rechnet mit Gateway-Daten)
+    chunked = True
+
+    async def chunk(self, *, cache: bool = True):
+        self.calls.append(("chunk",))
+        self.chunked = True
+        return self.members
 
     # ── Lesen ────────────────────────────────────────────────────────────────
     @property
@@ -411,7 +443,27 @@ class FakeGuild(discord.Guild):
             raise not_found(10007)
         return member
 
+    def add_invite(self, code: str, *, expires_in: timedelta | None = None, max_uses: int = 0, uses: int = 0):
+        """Für den Testaufbau: Einladung des Servers. expires_in=None: läuft nie ab."""
+        now = discord.utils.utcnow()
+        invite = types.SimpleNamespace(
+            code=code, guild=self, max_uses=max_uses, uses=uses, created_at=now,
+            expires_at=now + expires_in if expires_in is not None else None,
+            max_age=int(expires_in.total_seconds()) if expires_in is not None else 0,
+        )
+        self.invite_list.append(invite)
+        return invite
+
+    async def invites(self):
+        if not self.me.guild_permissions.manage_guild:
+            raise forbidden()
+        return list(self.invite_list)
+
     async def fetch_automod_rules(self):
+        # Wie Discord: ohne „Server verwalten“ gibt es 403 (viele davon können den Bot vorübergehend sperren)
+        self.automod_fetches += 1
+        if not self.me.guild_permissions.manage_guild:
+            raise forbidden()
         return list(self.automod_rules)
 
     def get_scheduled_event(self, event_id: int):
@@ -433,6 +485,24 @@ class FakeGuild(discord.Guild):
         channel = FakeVoiceChannel(self, name, position=len(self.channels_by_id), **kwargs)
         self.channels_by_id[channel.id] = channel
         return channel
+
+    def add_automod_rule(self, name: str, trigger_type, *, by_nexus: bool = True, enabled: bool = True, **trigger) -> "FakeAutoModRule":
+        """Für den Testaufbau: Regel anlegen — von Nexus (by_nexus) oder von einem Admin."""
+        rule = FakeAutoModRule(
+            self, name=name, trigger=discord.AutoModTrigger(type=trigger_type, **trigger),
+            creator_id=self.me.id if by_nexus else self.admin.id, enabled=enabled,
+        )
+        self.automod_rules.append(rule)
+        return rule
+
+    async def create_automod_rule(self, *, name, event_type, trigger, actions, enabled=True, reason=None, **kwargs):
+        if not self.me.guild_permissions.manage_guild:
+            raise forbidden()
+        rule = FakeAutoModRule(self, name=name, trigger=trigger, creator_id=self.me.id, actions=actions, enabled=enabled)
+        rule.event_type = event_type
+        self.automod_rules.append(rule)
+        self.calls.append(("guild.create_automod_rule", rule.id, name))
+        return rule
 
     async def create_text_channel(self, name: str, *, overwrites=None, reason=None, **kwargs):
         if not self.me.guild_permissions.manage_channels:
@@ -470,6 +540,22 @@ class FakeGuild(discord.Guild):
         self.role_list.append(role)
         return role
 
+    def _can_moderate(self, user_id: int) -> bool:
+        target = self.members_by_id.get(user_id)
+        return target is None or (user_id != self.owner_id and target.top_role < self.me.top_role)
+
+    async def kick(self, member, *, reason=None):
+        if not self.me.guild_permissions.kick_members or not self._can_moderate(member.id):
+            raise forbidden(50013)
+        self.members_by_id.pop(member.id, None)
+        self.calls.append(("guild.kick", member.id, reason))
+
+    async def ban(self, user, *, reason=None, delete_message_seconds=86400):
+        if not self.me.guild_permissions.ban_members or not self._can_moderate(user.id):
+            raise forbidden(50013)
+        self.members_by_id.pop(user.id, None)
+        self.calls.append(("guild.ban", user.id, reason))
+
     def add_member(self, name: str, *roles: FakeRole) -> FakeMember:
         member = FakeMember(self, name, list(roles))
         self.members_by_id[member.id] = member
@@ -492,6 +578,36 @@ class FakeGuild(discord.Guild):
 
     def __repr__(self):
         return f"<FakeGuild {self.name} {self.id}>"
+
+
+class FakeAutoModRule:
+    """Nachgebaute AutoMod-Regel. creator_id entscheidet, ob Nexus sie als eigene erkennt."""
+
+    def __init__(self, guild, *, name, trigger, creator_id, actions=(), enabled=True, id: int | None = None):
+        self.id = id or next_id()
+        self.guild = guild
+        self.name = name
+        self.trigger = trigger
+        self.creator_id = creator_id
+        self.actions = list(actions)
+        self.enabled = enabled
+        self.exempt_role_ids: set[int] = set()
+        self.exempt_channel_ids: set[int] = set()
+
+    async def edit(self, *, reason=None, **kwargs):
+        if not self.guild.me.guild_permissions.manage_guild:
+            raise forbidden()
+        for key, value in kwargs.items():
+            if key in ("exempt_roles", "exempt_channels"):   # wie discord.py: Objekte rein, IDs in der Regel
+                setattr(self, f"{key[:-1]}_ids", {o.id for o in value})
+            else:
+                setattr(self, key, value)
+        self.guild.calls.append(("automod.edit", self.id, tuple(sorted(kwargs))))
+        return self
+
+    async def delete(self, *, reason=None):
+        self.guild.automod_rules.remove(self)
+        self.guild.calls.append(("automod.delete", self.id))
 
 
 class FakeScheduledEvent:

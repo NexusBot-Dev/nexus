@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 from database import db_settings
 from emojis import NexusEmojis
-from config import NEXUS_FOOTER
+from config import NEXUS_FOOTER, SUPPORT_INVITE_URL
 from translations import LOCALE_MAP
 from cogs.utils import get_user_lang
 from systems.ui import NexusView, with_emoji
@@ -308,7 +308,7 @@ class Help(commands.Cog):
         )
         embed.add_field(
             name=lang.get("info_support", "💬 Support"),
-            value="[Support-Server](https://discord.gg/YFCrvBb6t3)",
+            value=f"[Support-Server]({SUPPORT_INVITE_URL})",
             inline=True,
         )
         embed.add_field(

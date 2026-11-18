@@ -6,7 +6,7 @@ from pathlib import Path
 from discord import app_commands
 from discord.ext import commands
 from database import init_pool, close_pool
-from config import DISCORD_TOKEN, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, INVITE_URL, NEXUS_FOOTER, APPLICATION_ID
+from config import DISCORD_TOKEN, DEV_GUILD_ID, SUPPORT_GUILD_ID, NEXUS_COLOR, INVITE_URL, NEXUS_FOOTER, APPLICATION_ID, SUPPORT_INVITE_URL
 from translations import TRANSLATIONS, LOCALE_MAP, COMMAND_LOCALES
 from datetime import datetime, timezone
 from cachetools import TTLCache
@@ -57,7 +57,7 @@ class DMResponseView(discord.ui.View):
         self.add_item(discord.ui.Button(
             label="Support Server",
             style=discord.ButtonStyle.link,
-            url="https://discord.gg/YFCrvBb6t3",
+            url=SUPPORT_INVITE_URL,
             emoji="💬"
         ))
 
@@ -218,7 +218,16 @@ class Nexus(commands.AutoShardedBot):
         elif isinstance(error, app_commands.CheckFailure):
             return
 
-        # 4. Interaktion abgelaufen (10062): Antworten geht nicht mehr — ein weiterer Versuch erzeugt nur
+        # 4. Ausgewählte Person ist nicht (mehr) auf dem Server: Discords Personenauswahl lässt auch
+        #    Nicht-Mitglieder zu, dann kommt statt eines Members nur ein User an. Kein Bot-Fehler.
+        elif isinstance(error, app_commands.TransformerError) and error.type is discord.AppCommandOptionType.user:
+            log.info(
+                "/%s auf %s: %s ist kein Mitglied des Servers.",
+                interaction.command.qualified_name if interaction.command else "?", interaction.guild_id, error.value,
+            )
+            msg = error_msg(lang.get("error_not_member", "That person isn't on this server (anymore)."))
+
+        # 5. Interaktion abgelaufen (10062): Antworten geht nicht mehr — ein weiterer Versuch erzeugt nur
         #    denselben Fehler. Die Ursache steht in der [DIAG]-Zeile davor.
         elif isinstance(original, discord.NotFound) and original.code == 10062:
             log.warning(
@@ -227,7 +236,7 @@ class Nexus(commands.AutoShardedBot):
             )
             return
 
-        # 5. Nexus fehlt ein Recht / Hierarchie
+        # 6. Nexus fehlt ein Recht / Hierarchie
         elif isinstance(original, discord.Forbidden):
             log.warning(
                 "Forbidden in /%s auf %s: %s",
@@ -240,7 +249,7 @@ class Nexus(commands.AutoShardedBot):
                 "Run `/diagnose` to see what's wrong.",
             ))
 
-        # 6. Alles andere
+        # 7. Alles andere
         else:
             log.exception("Unbehandelter Command-Fehler:", exc_info=error)
             msg = error_msg(lang.get("error_generic", "Something went wrong. Please try again later."))
@@ -261,6 +270,8 @@ class Nexus(commands.AutoShardedBot):
         await close_pool()
         await super().close()
 
-bot = Nexus()
-# log_handler=None: Logging ist oben per basicConfig eingerichtet — sonst stünde jede discord.py-Meldung doppelt im Log
-bot.run(DISCORD_TOKEN, log_handler=None)
+# Nur beim Start als Skript (python bot.py) — so lässt sich bot.py in Tests importieren, ohne zu starten
+if __name__ == "__main__":
+    bot = Nexus()
+    # log_handler=None: Logging ist oben per basicConfig eingerichtet — sonst stünde jede discord.py-Meldung doppelt im Log
+    bot.run(DISCORD_TOKEN, log_handler=None)

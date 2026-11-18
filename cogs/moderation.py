@@ -9,6 +9,7 @@ from cogs.utils import post_logging, dm_user, get_lang, get_user_lang
 from emojis import NexusEmojis
 from systems.hierarchy import can_act_on_member, can_manage_role, format_issue, Issue
 from systems.ui import error_msg, with_emoji
+from systems.timeouts import MAX_TIMEOUT_MINUTES, timeout_until
 
 log = logging.getLogger(__name__)
 
@@ -558,11 +559,19 @@ class Moderation(commands.Cog):
                 )
                 return
 
+        elif duration > MAX_TIMEOUT_MINUTES:
+            # Discord erlaubt höchstens 28 Tage — sonst käme nur eine allgemeine Fehlermeldung
+            await interaction.followup.send(
+                error_msg(lang.get(
+                    "timeout_too_long", "A timeout can last at most 28 days ({max} minutes).",
+                ).format(max=MAX_TIMEOUT_MINUTES)),
+                ephemeral=True,
+            )
+            return
         else:
             from datetime import timedelta
-            until = discord.utils.utcnow() + timedelta(minutes=duration)
             try:
-                await member.timeout(until, reason=reason)
+                await member.timeout(timeout_until(timedelta(minutes=duration)), reason=reason)
                 log_title = lang.get("log_timeout_set", "{mod} timed out {target} for {duration} minutes.").format(
                     mod=interaction.user,
                     target=member,

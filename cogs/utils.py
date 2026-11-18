@@ -110,6 +110,11 @@ async def toggle_module(
     await db_settings.set_module(guild.id, module, enable)
     log.info("Modul '%s' für %s %s.", module, guild.name, "aktiviert" if enable else "deaktiviert")
 
+    if module == "automod":
+        # Nexus-Regeln in Discord pausieren bzw. wieder einschalten (nicht löschen, Wortlisten bleiben)
+        from systems.automod_rules import on_module_toggled
+        await on_module_toggled(guild, enable, lang)
+
     if module == "automod" and not enable:
         from systems.honeypot import cleanup as cleanup_honeypot
         settings = await db_settings.get_guild(guild.id)

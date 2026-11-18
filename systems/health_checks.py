@@ -1,6 +1,6 @@
 import discord
 from dataclasses import dataclass
-from database import db_levels, db_reaction_roles, db_stream_alerts
+from database import db_levels, db_reaction_roles, db_stream_alerts, db_stream_schedule
 from systems.hierarchy import (
     can_manage_role, can_use_channel, missing_perms,
     dangerous_roles_above_bot, everyone_is_dangerous, perm_label,
@@ -181,5 +181,17 @@ async def get_guild_issues(guild: discord.Guild, settings: dict, lang: dict) -> 
                     "diag_alert_role_unmentionable",
                     "🔔 {role} can't be pinged: it isn't mentionable and I lack “Mention Everyone”",
                 ).format(role=role.mention)))
+
+        # Streamplan als Discord-Events: braucht „Events erstellen“ — nur, wenn der Abgleich für einen
+        # überwachten Twitch-Kanal eingeschaltet ist (sonst wäre der Hinweis nur Rauschen)
+        if not guild.me.guild_permissions.create_events:
+            from systems import stream_schedule   # spät: stream_schedule zieht viele Module nach
+            twitch_ids = {s["monitored_channel_id"] for s in subs if s["platform"] == stream_schedule.PLATFORM}
+            syncs = await db_stream_schedule.get_syncs_for_guild(guild.id)
+            if stream_schedule.is_available(guild.id) and any(r["monitored_channel_id"] in twitch_ids for r in syncs):
+                issues.append(GuildIssue("alerts", "error", lang.get(
+                    "diag_schedule_missing_perm",
+                    "📅 Stream schedule: I'm missing `Create Events` — no events can be created or updated.",
+                )))
 
     return issues

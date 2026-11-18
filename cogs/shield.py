@@ -9,7 +9,9 @@ from typing import Literal
 from database import db_settings
 from database import db_automod
 from cogs.utils import get_lang, get_member_safe
+from systems import shield_prompts, shield_whitelist
 from systems.ui import with_emoji
+from systems.timeouts import MAX_TIMEOUT, timeout_until
 from emojis import NexusEmojis
 
 log = logging.getLogger(__name__)
@@ -178,8 +180,7 @@ async def _quarantine_member(member: discord.Member, roles_reason: str, timeout_
     """Rollen entfernen + 28 Tage Timeout. Der Timeout wird auch versucht, wenn das Entfernen scheitert."""
     removed = await _strip_roles(member, roles_reason)
     try:
-        until = discord.utils.utcnow() + timedelta(days=28) - timedelta(minutes=5)
-        await member.timeout(until, reason=timeout_reason)
+        await member.timeout(timeout_until(MAX_TIMEOUT), reason=timeout_reason)
     except (discord.Forbidden, discord.HTTPException) as e:
         log.warning("[SHIELD] Konnte %s nicht timeouten: %s", member, e)
     return removed
@@ -265,7 +266,7 @@ async def _send_shield_log(
             title=with_emoji(NexusEmojis.WARNING, lang.get("shield_warn_title", "Nexus Shield — Suspicious Activity")),
             description=lang.get(
                 "shield_warn_desc",
-                "{user} triggered the early warning (Score: {score}). Deleted roles and channels were restored, nobody was punished. If this repeats within {minutes} minutes, the full reaction follows.",
+                "{user} triggered the early warning (Score: {score}). Nobody was punished. If this repeats within {minutes} minutes, the full reaction follows.",
             ).format(user=attacker.mention, score=f"{total_score:.2f}", minutes=ESCALATION_WINDOW_SECONDS // 60),
             color=discord.Color.orange(),
         )
@@ -345,6 +346,18 @@ async def _send_shield_log(
             value=invite_status,
             inline=False,
         )
+
+    if warning and attacker_is_bot:
+        embed.add_field(
+            name=lang.get("shield_warn_trusted_title", "Trusted bot?"),
+            value=lang.get(
+                "shield_warn_trusted_hint",
+                "If this bot does this on purpose (e.g. auto roles), the server owner or an administrator can "
+                "add it to the Shield whitelist in the dashboard (AutoMod → Shield). Then it's no longer scored.",
+            ),
+            inline=False,
+        )
+
     embed.set_footer(text="Nexus • Anti-Nuke Shield")
 
     try:
@@ -589,6 +602,37 @@ class Shield(commands.Cog):
             "hoist": role.hoist,
             "mentionable": role.mentionable,
         })
+        # erst nach dem Merken fürs Restore — das zählt beim Angriff jede Millisekunde
+        await shield_whitelist.forget(role.guild.id, role.id)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        # Bot verlässt den Server → Whitelist-Eintrag weg; kommt er wieder, wird neu entschieden
+        if member.bot:
+            await shield_whitelist.forget(member.guild.id, member.id)
+
+    # ─── Rückfragen zur Whitelist, wenn ein Bot Mod-Rechte bekommt (systems/shield_prompts.py) ─────
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        if member.bot:
+            await self._prompt_safely(shield_prompts.on_member_join(member), member.guild)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if after.bot:
+            await self._prompt_safely(shield_prompts.on_member_update(before, after), after.guild)
+
+    @commands.Cog.listener()
+    async def on_guild_role_update(self, before: discord.Role, after: discord.Role):
+        await self._prompt_safely(shield_prompts.on_role_update(before, after), after.guild)
+
+    @staticmethod
+    async def _prompt_safely(coro, guild: discord.Guild):
+        try:
+            await coro
+        except Exception:
+            log.exception("[SHIELD] Whitelist-Rückfrage auf %s fehlgeschlagen.", guild.id)
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User):
@@ -625,6 +669,10 @@ class Shield(commands.Cog):
             return
 
         if not bool(await db_automod.get_antinuke(guild.id)):
+            return
+
+        # Bots und Rollen auf der Whitelist werden wie der Besitzer gar nicht bewertet (systems/shield_whitelist.py)
+        if await shield_whitelist.is_exempt(guild, user):
             return
 
         # extra.count-Absicherung gegen gebündelte Events
@@ -794,3 +842,4 @@ class Shield(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Shield(bot))
+    bot.add_dynamic_items(shield_prompts.PromptButton)   # Ja/Nein unter Rückfragen, auch nach Neustart

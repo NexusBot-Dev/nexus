@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from database import db_honeypot, db_settings
 from systems.hierarchy import PermCheck, can_act_on_member, can_apply_overwrites
+from systems.timeouts import timeout_until
 
 log = logging.getLogger(__name__)
 
@@ -218,8 +219,8 @@ async def punish(guild: discord.Guild, member: discord.Member, action: str, days
         return PunishResult(False, check)
     try:
         if action == "timeout":
-            until = discord.utils.utcnow() + timedelta(days=days)
-            await member.timeout(until, reason="[Nexus Honeypot] Nachricht im Honeypot-Channel gepostet")
+            # Bei „28 Tage“ sonst knapp über Discords Grenze → Discord lehnt den Timeout ab
+            await member.timeout(timeout_until(timedelta(days=days)), reason="[Nexus Honeypot] Nachricht im Honeypot-Channel gepostet")
         elif action == "kick":
             await guild.kick(member, reason="[Nexus Honeypot] Nachricht im Honeypot-Channel gepostet")
         else:

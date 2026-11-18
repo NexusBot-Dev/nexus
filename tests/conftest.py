@@ -86,6 +86,7 @@ FEATURE_LIMITS = {
     "boost_messages": (1, 5), "saved_embeds": (5, 100), "stream_alerts_kick": (1, 5),
     "stream_alerts_twitch": (1, 5), "stream_alerts_youtube": (1, 3), "stream_schedule_days": (7, 7),
     "stream_schedule_streamers": (1, 5), "ticket_categories": (2, 10), "welcome_messages": (1, 5),
+    "automod_escalation_steps": (1, 5),
 }
 
 # ── Eine Event-Loop für alles ─────────────────────────────────────────────────────────────────────
@@ -159,6 +160,13 @@ def _clear_caches():
     db_limits._limits_cache.clear()
     db_limits._cache_loaded_at = 0
     dashboard_auth._request_log.clear()   # Rate-Limit: sonst bremst es nach 60 Requests die Tests aus
+
+
+@pytest.fixture(autouse=True)
+def automod_v2_released(monkeypatch):
+    """Die AutoMod-Tests prüfen die Funktionen selbst — die Sperre der Testphase prüft test_automod_v2_gate.py."""
+    from systems import automod_rules
+    monkeypatch.setattr(automod_rules, "RELEASED", True)
 
 
 @pytest.fixture(autouse=True)

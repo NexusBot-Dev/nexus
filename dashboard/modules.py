@@ -1,6 +1,7 @@
 from .registry import register_action, DashCtx, DashboardError, InvalidRequest
-from cogs.utils import CORE_MODULES, MODULE_DISPLAY
+from cogs.utils import CORE_MODULES, MODULE_DISPLAY, get_lang
 from database import db_settings
+from systems import automod_rules
 
 ALLOWED_MODULES = set(db_settings.DEFAULT_MODULES.keys())
 
@@ -25,6 +26,10 @@ async def toggle_modules(ctx: DashCtx) -> dict:
             raise DashboardError("dash_err_modules_always_on", module=name)
 
     await db_settings.set_modules(guild_id, changes)
+
+    if "automod" in changes:
+        # Nexus-Regeln in Discord pausieren bzw. wieder einschalten (nicht löschen, Wortlisten bleiben)
+        await automod_rules.on_module_toggled(ctx.guild, changes["automod"], await get_lang(guild_id))
 
     if changes.get("automod") is False:
         settings = await db_settings.get_guild(guild_id)
